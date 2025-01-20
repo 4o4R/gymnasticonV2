@@ -1,0 +1,7 @@
+lib/*
+node_modules
+
+*.sw*
+*~
+
+deploy/pi-sdcard/pi-gen

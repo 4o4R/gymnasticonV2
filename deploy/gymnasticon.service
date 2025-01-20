@@ -1,0 +1,17 @@
+[Unit]
+Description=Gymnasticon Bike Bridge
+After=bluetooth.service network.target
+Requires=bluetooth.service
+
+[Service]
+Type=simple
+User=root
+ExecStartPre=/bin/sleep 10
+ExecStart=/usr/bin/node /opt/gymnasticon/lib/app/cli.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

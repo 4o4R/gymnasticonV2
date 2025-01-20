@@ -1,0 +1,22 @@
+[Unit]
+Description=Gymnasticon
+After=bluetooth.target
+Requires=bluetooth.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=PATH=/opt/gymnasticon/node/bin
+WorkingDirectory=/opt/gymnasticon
+User=pi
+Group=pi
+ExecStart=/opt/gymnasticon/node/bin/gymnasticon --config /etc/gymnasticon.json
+RestartSec=1
+Restart=always
+
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+
