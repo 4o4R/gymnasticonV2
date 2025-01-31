@@ -15,6 +15,8 @@ const KEISER_STATS_NEWVER_MINOR = 30; // Version Minor when broadcast interval w
 const KEISER_STATS_TIMEOUT_OLD = 30.0; // Old Bike: If no stats received within 30 sec, reset power and cadence to 0
 const KEISER_STATS_TIMEOUT_NEW = 20.0; // New Bike: If no stats received within 20 sec, reset power and cadence to 0
 const KEISER_BIKE_TIMEOUT = 60.0; // Consider bike disconnected if no stats have been received for 60 sec / 1 minutes
+const CYCLING_POWER_MEASUREMENT_UUID = '2A63';
+const CSC_MEASUREMENT_UUID = '2A5B';
 
 const debuglog = require('debug')('gym:bikes:keiser');
 
@@ -95,26 +97,35 @@ export class KeiserBikeClient extends EventEmitter {
       this.noble.on('scanStop', this.restartScan);
 }
 
+
 async setupServices() {
-      // Setup Power service
-      this.powerService = new BluetoothService(CYCLING_POWER_SERVICE_UUID);
-      this.powerCharacteristic = new BluetoothCharacteristic({
-        uuid: CYCLING_POWER_MEASUREMENT_UUID,
-        properties: ['notify']
-      });
-  
-      // Setup CSC service
-      this.cscService = new BluetoothService(CSC_SERVICE_UUID);
-      this.cscCharacteristic = new BluetoothCharacteristic({
-        uuid: CSC_MEASUREMENT_UUID,
-        properties: ['notify']
-      });
-  
-      // Add characteristics to services
-      this.powerService.addCharacteristic(this.powerCharacteristic);
-      this.cscService.addCharacteristic(this.cscCharacteristic);
-}
-  /**
+    try {
+      // Get existing services from peripheral
+      const services = await this.peripheral.discoverServicesAsync([
+        this.CYCLING_POWER_SERVICE_UUID,
+        this.CSC_SERVICE_UUID
+      ]);
+
+      // Set up power service
+      const powerService = services.find(s => s.uuid === this.CYCLING_POWER_SERVICE_UUID);
+      if (powerService) {
+        const characteristics = await powerService.discoverCharacteristicsAsync([CYCLING_POWER_MEASUREMENT_UUID]);
+        this.powerCharacteristic = characteristics[0];
+        await this.powerCharacteristic.subscribeAsync();
+      }
+
+      // Set up CSC service  
+      const cscService = services.find(s => s.uuid === this.CSC_SERVICE_UUID);
+      if (cscService) {
+        const characteristics = await cscService.discoverCharacteristicsAsync([CSC_MEASUREMENT_UUID]);
+        this.cscCharacteristic = characteristics[0];
+        await this.cscCharacteristic.subscribeAsync();
+      }
+    } catch (error) {
+      console.error('Error setting up Keiser bike services:', error);
+      throw error;
+    }
+}  /**
    * Get the bike's MAC address.
    * @returns {string} mac address
    */
