@@ -6,6 +6,12 @@
 
 Gymnasticon enables obsolete and/or proprietary exercise bikes to work with Zwift and other training apps. Support for new bikes can be added easily. The diagram below shows an example of how it works with the Flywheel Home Bike.
 
+## Install
+# New installation command for modern RPi OS
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt-get install -y nodejs bluetooth bluez libbluetooth-dev libudev-dev
+
+
 <p align="center">
 <img src="docs/diagram.png">
 </p>

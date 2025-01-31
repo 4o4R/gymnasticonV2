@@ -14,12 +14,12 @@ export class BleServer extends EventEmitter {
   constructor(bleno, name, services) {
     super();
     this.bleno = bleno;
-    // Add modern connection parameters
+    // Update BLE connection parameters for modern Bluetooth 5.0+
     this.connectionParams = {
-      minInterval: 7.5,
-      maxInterval: 15,
+      minInterval: 15, // Increased for better stability
+      maxInterval: 30,
       latency: 0,
-      supervisionTimeout: 4000
+      supervisionTimeout: 6000 // Extended supervision timeout
     };
     this.state = 'stopped'; // stopped | starting | started | connected
     this.name = name;
