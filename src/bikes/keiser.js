@@ -116,8 +116,16 @@ export class KeiserBikeClient extends EventEmitter {
            if (fixed.cadence !== payload.cadence) {
              debuglog(`*** replaced zero cadence with previous cadence ${fixed.cadence}`);
            }
-           debuglog('Found Keiser M3: ', data.advertisement.localName, ' Address: ', data.address, ' Data: ', data.advertisement.manufacturerData, 'Power: ', fixed.power, 'Cadence: ', fixed.cadence);
-           this.emit(type, fixed);
+           
+           // Add CSC measurement formatting
+           const cscData = formatCSCMeasurement(fixed.cadence);
+           
+           // Emit both power and CSC data
+           this.emit(type, {
+             ...fixed,
+             cscMeasurement: cscData
+           });
+           
            this.statsTimeout.reset();
            this.bikeTimeout.reset();
          }
@@ -133,6 +141,20 @@ export class KeiserBikeClient extends EventEmitter {
    * Set power & cadence to 0 when the bike dissapears
    */
   async onStatsTimeout() {
+
+// Add this helper function
+function formatCSCMeasurement(cadence) {
+  const flags = 0x02; // Bit 1 set = crank revolution data present
+  const crankRevs = Math.floor(cadence); // Current crank revolutions
+  const lastCrankTime = Math.floor(Date.now() * 1.024) % 65536; // 1/1024th second units
+  
+  const data = Buffer.alloc(7);
+  data.writeUInt8(flags, 0);
+  data.writeUInt16LE(crankRevs, 3);
+  data.writeUInt16LE(lastCrankTime, 5);
+  
+  return data;
+}
     const reset = { power:0, cadence:0 };
     debuglog('Stats timeout exceeded');
     console.log("Stats timeout: Restarting BLE Scan");

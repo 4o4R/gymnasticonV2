@@ -84,9 +84,35 @@ export class PelotonBikeClient extends EventEmitter {
    */
   onStatsUpdate() {
     const {power, cadence} = this;
-    this.emit('stats', {power, cadence});
+    
+    // Emit both power and CSC data
+    this.emit('stats', {
+        power, 
+        cadence,
+        cscMeasurement: this.formatCSCMeasurement(cadence)
+    });
   }
 
+  formatCSCMeasurement(cadence) {
+    // CSC measurement flags: 
+    // Bit 0 = wheel rev present (0 = no)
+    // Bit 1 = crank rev present (1 = yes)
+    const flags = 0x02;
+    
+    // Get cumulative crank revolutions
+    this.crankRevs = (this.crankRevs || 0) + (cadence > 0 ? 1 : 0);
+    
+    // Get current time in 1/1024th of a second
+    const timestamp = Math.floor((Date.now() % 64000) * 1.024);
+    
+    // Create Buffer for CSC measurement
+    const cscData = Buffer.alloc(7);
+    cscData.writeUInt8(flags, 0);
+    cscData.writeUInt16LE(this.crankRevs, 3);
+    cscData.writeUInt16LE(timestamp, 5);
+    
+    return cscData;
+  }
   onSerialMessage(data) {
     tracelog("RECV: ", data);
     switch(data[1]) {
