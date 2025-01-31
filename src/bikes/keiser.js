@@ -24,27 +24,30 @@ const debuglog = require('debug')('gym:bikes:keiser');
  */
 
 export class KeiserBikeClient extends EventEmitter {
-  /**
-   * Create a KeiserBikeClient instance.
-   * @param {Noble} noble - a Noble instance.
-   */
   constructor(noble) {
     super();
     this.noble = noble;
     this.state = 'disconnected';
     this.onReceive = this.onReceive.bind(this);
-    // Add modern BLE scanning options
+    
+    // Define service UUIDs
+    this.CYCLING_POWER_SERVICE_UUID = '1818';
+    this.CSC_SERVICE_UUID = '1816';
+    
+    // Modern BLE scanning options
     this.scanOptions = {
       allowDuplicates: true,
       active: true,
-      powerSave: false
+      powerSave: false,
+      services: [this.CYCLING_POWER_SERVICE_UUID, this.CSC_SERVICE_UUID]
     };
   }
+}
   /**
    * Bike behaves like a BLE beacon. Simulate connect by looking up MAC address
    * scanning and filtering subsequent announcements from this address.
      */
-    async connect() {
+        async connect() {
       if (this.state === 'connected') {
         throw new Error('Already connected');
       }
@@ -57,8 +60,11 @@ export class KeiserBikeClient extends EventEmitter {
       // Scan for bike with modern Noble options
       const filter = createNameFilter(KEISER_LOCALNAME);
       this.peripheral = await scan(this.noble, null, filter, scanOptions);
-    
+
       this.state = 'connected';
+
+      // Add service setup
+      await this.setupServices();
 
       // Determine bike firmware version and set stats timeout
       let bikestatstimeout = KEISER_STATS_TIMEOUT_OLD; // Fallback for unknown firmware version
@@ -87,7 +93,27 @@ export class KeiserBikeClient extends EventEmitter {
       // Workaround for noble stopping to scan after connect to bleno
       // See https://github.com/noble/noble/issues/223
       this.noble.on('scanStop', this.restartScan);
-    }
+}
+
+async setupServices() {
+      // Setup Power service
+      this.powerService = new BluetoothService(CYCLING_POWER_SERVICE_UUID);
+      this.powerCharacteristic = new BluetoothCharacteristic({
+        uuid: CYCLING_POWER_MEASUREMENT_UUID,
+        properties: ['notify']
+      });
+  
+      // Setup CSC service
+      this.cscService = new BluetoothService(CSC_SERVICE_UUID);
+      this.cscCharacteristic = new BluetoothCharacteristic({
+        uuid: CSC_MEASUREMENT_UUID,
+        properties: ['notify']
+      });
+  
+      // Add characteristics to services
+      this.powerService.addCharacteristic(this.powerCharacteristic);
+      this.cscService.addCharacteristic(this.cscCharacteristic);
+}
   /**
    * Get the bike's MAC address.
    * @returns {string} mac address
@@ -103,40 +129,38 @@ export class KeiserBikeClient extends EventEmitter {
    * @emits BikeClient#stats
    * @private
    */
-   onReceive(data) {
-     try {
-       if (data.address == this.peripheral.address) {
-         this.emit('data', data);
-         const {type, payload} = parse(data.advertisement.manufacturerData);
-         if (type === 'stats') {
-           const fixed = this.fixDropout(payload);
-           if (fixed.power !== payload.power) {
-             debuglog(`*** replaced zero power with previous power ${fixed.power}`);
-           }
-           if (fixed.cadence !== payload.cadence) {
-             debuglog(`*** replaced zero cadence with previous cadence ${fixed.cadence}`);
-           }
-           
-           // Add CSC measurement formatting
-           const cscData = formatCSCMeasurement(fixed.cadence);
-           
-           // Emit both power and CSC data
-           this.emit(type, {
-             ...fixed,
-             cscMeasurement: cscData
-           });
-           
-           this.statsTimeout.reset();
-           this.bikeTimeout.reset();
-         }
-       }
-     } catch (e) {
-       if (!/unable to parse message/.test(e)) {
-         throw e;
-       }
-     }
-   }
-
+onReceive(data) {
+  try {
+    if (data.address == this.peripheral.address) {
+      const {type, payload} = parse(data.advertisement.manufacturerData);
+      if (type === 'stats') {
+        const fixed = this.fixDropout(payload);
+        
+        // Format both power and CSC data
+        const powerData = formatPowerMeasurement(fixed.power);
+        const cscData = formatCSCMeasurement(fixed.cadence);
+        
+        // Update both characteristics
+        this.powerCharacteristic.updateValue(powerData);
+        this.cscCharacteristic.updateValue(cscData);
+        
+        // Emit combined stats
+        this.emit(type, {
+          ...fixed,
+          powerMeasurement: powerData,
+          cscMeasurement: cscData
+        });
+        
+        this.statsTimeout.reset();
+        this.bikeTimeout.reset();
+      }
+    }
+  } catch (e) {
+    if (!/unable to parse message/.test(e)) {
+      throw e;
+    }
+  }
+}
   /**
    * Set power & cadence to 0 when the bike dissapears
    */

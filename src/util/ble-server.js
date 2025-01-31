@@ -5,35 +5,54 @@ import util from 'util';
  * Bluetooth LE GATT Server.
  */
 export class BleServer extends EventEmitter {
-  /**
-   * Create a BleServer instance.
-   * @param {Bleno} bleno - a Bleno instance.
-   * @param {string} name - the name used in advertisement.
-   * @param {PrimaryService[]} - the GATT service instances.
-   */
   constructor(bleno, name, services) {
     super();
     this.bleno = bleno;
-    // Update BLE connection parameters for modern Bluetooth 5.0+
-    this.connectionParams = {
-      minInterval: 15, // Increased for better stability
-      maxInterval: 30,
-      latency: 0,
-      supervisionTimeout: 6000 // Extended supervision timeout
-    };
-    this.state = 'stopped'; // stopped | starting | started | connected
     this.name = name;
     this.services = services;
-    this.uuids = services.map(s => s.uuid);
+    
+    // Define connection parameters optimized for both Power and CSC
+    this.connectionParams = {
+      minInterval: 16, // 20ms - optimal for power data
+      maxInterval: 32, // 40ms - good for CSC updates
+      latency: 0,     // No latency for real-time data
+      supervisionTimeout: 6000 // 6s timeout for connection supervision
+    };
+
+    // Explicitly define both service UUIDs
+    this.uuids = [
+      '1818', // Cycling Power Service
+      '1816'  // Cycling Speed and Cadence Service
+    ];
+
+    // Set up event handlers
     this.bleno.on('accept', this.onAccept.bind(this));
     this.bleno.on('disconnect', this.onDisconnect.bind(this));
+    
+    // Promisify bleno methods
     this.bleno.startAdvertisingAsync = util.promisify(this.bleno.startAdvertising);
     this.bleno.stopAdvertisingAsync = util.promisify(this.bleno.stopAdvertising);
     this.bleno.setServicesAsync = util.promisify(this.bleno.setServices);
-    this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
   }
-
+  export class BleServer extends EventEmitter {
+    constructor(bleno, name, services) {
+      super();
+      this.bleno = bleno;
+      this.connectionParams = {
+        minInterval: 15,
+        maxInterval: 30,
+        latency: 0,
+        supervisionTimeout: 6000
+      };
+      
+      // Update services array to include both Power and CSC
+      this.services = services;
+      this.uuids = ['1818', '1816']; // Power and CSC service UUIDs
+      
+      // Rest of existing constructor code...
+    }
+  }
+  
   async connect() {
     while (this.reconnectAttempts < this.maxReconnectAttempts) {
       try {
