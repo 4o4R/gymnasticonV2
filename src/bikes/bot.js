@@ -1,6 +1,6 @@
 import dgram from 'dgram';
 import {once, EventEmitter} from 'events';
-import {Timer} from '../util/timer';
+import {Timer} from '../util/timer.js';
 
 /**
  * Pretends to be a real bike riding at a given fixed cadence and power.

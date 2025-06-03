@@ -1,4 +1,4 @@
-import {defaults, getBikeTypes} from './app';
+import {defaults, getBikeTypes} from './app.js';
 
 export const options = {
   'config': {

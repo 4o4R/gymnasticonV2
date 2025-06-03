@@ -2,9 +2,9 @@ import util from 'util';
 import {EventEmitter} from 'events';
 import {execFile} from 'child_process';
 const execFileAsync = util.promisify(execFile);
-import {scan} from '../util/ble-scan';
-import {macAddress} from '../util/mac-address';
-import {createDropoutFilter} from '../util/dropout-filter';
+import {scan} from '../util/ble-scan.js';
+import {macAddress} from '../util/mac-address.js';
+import {createDropoutFilter} from '../util/dropout-filter.js';
 
 export const FLYWHEEL_LOCALNAME = 'Flywheel 1';
 
@@ -24,11 +24,14 @@ const LE_MAX_INTERVAL = 60*1.25;
 const LE_LATENCY = 0;
 const LE_SUPERVISION_TIMEOUT = 4000;
 
-const debuglog = require('debug')('gym:bikes:flywheel');
+import debug from '#debug';
+
+const debuglog = debug('gym:bikes:flywheel');
 
 /**
  * Handles communication with Flywheel indoor training bike using the bike's
  * proprietary protocol atop a standard Bluetooth LE GATT Nordic UART Service.
+ */
 export class FlywheelBikeClient extends EventEmitter {
   /**
     * Create a FlywheelBikeClient instance.

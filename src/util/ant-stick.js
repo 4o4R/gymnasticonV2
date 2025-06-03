@@ -1,4 +1,4 @@
-import Ant from 'gd-ant-plus';
+import Ant from '#ant';
 
 /**
  * Create ANT+ stick.
