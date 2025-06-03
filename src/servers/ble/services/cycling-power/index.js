@@ -1,7 +1,7 @@
-import {PrimaryService} from '@abandonware/bleno';
-import {CyclingPowerMeasurementCharacteristic} from './characteristics/cycling-power-measurement';
-import {CyclingPowerFeatureCharacteristic} from './characteristics/cycling-power-feature';
-import {SensorLocationCharacteristic} from './characteristics/sensor-location';
+import {PrimaryService} from '#bleno';
+import {CyclingPowerMeasurementCharacteristic} from './characteristics/cycling-power-measurement.js';
+import {CyclingPowerFeatureCharacteristic} from './characteristics/cycling-power-feature.js';
+import {SensorLocationCharacteristic} from './characteristics/sensor-location.js';
 
 /**
  * Bluetooth LE GATT Cycling Power Service implementation.

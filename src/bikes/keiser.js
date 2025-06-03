@@ -1,8 +1,8 @@
 import {EventEmitter} from 'events';
-import {Timer} from '../util/timer';
-import {scan, createNameFilter} from '../util/ble-scan';
-import {macAddress} from '../util/mac-address';
-import {createDropoutFilter} from '../util/dropout-filter';
+import {Timer} from '../util/timer.js';
+import {scan, createNameFilter} from '../util/ble-scan.js';
+import {macAddress} from '../util/mac-address.js';
+import {createDropoutFilter} from '../util/dropout-filter.js';
 
 export const KEISER_LOCALNAME = "M3";
 const KEISER_VALUE_MAGIC = Buffer.from([0x02, 0x01]); // identifies Keiser data message
@@ -18,7 +18,29 @@ const KEISER_BIKE_TIMEOUT = 60.0; // Consider bike disconnected if no stats have
 const CYCLING_POWER_MEASUREMENT_UUID = '2A63';
 const CSC_MEASUREMENT_UUID = '2A5B';
 
-const debuglog = require('debug')('gym:bikes:keiser');
+import debug from '#debug';
+
+const debuglog = debug('gym:bikes:keiser');
+
+function formatPowerMeasurement(power) {
+  const flags = 0;
+  const data = Buffer.alloc(4);
+  data.writeUInt16LE(flags, 0);
+  data.writeInt16LE(power, 2);
+  return data;
+}
+
+function formatCSCMeasurement(cadence) {
+  const flags = 0x02; // crank revolution data present
+  const crankRevs = Math.floor(cadence);
+  const lastCrankTime = Math.floor(Date.now() * 1.024) % 65536; // in 1/1024s
+
+  const data = Buffer.alloc(7);
+  data.writeUInt8(flags, 0);
+  data.writeUInt16LE(crankRevs, 3);
+  data.writeUInt16LE(lastCrankTime, 5);
+  return data;
+}
 
 /**
  * Handles communication with Keiser bikes
@@ -31,6 +53,7 @@ export class KeiserBikeClient extends EventEmitter {
     this.noble = noble;
     this.state = 'disconnected';
     this.onReceive = this.onReceive.bind(this);
+    this.restartScan = this.restartScan.bind(this);
     
     // Define service UUIDs
     this.CYCLING_POWER_SERVICE_UUID = '1818';
@@ -44,7 +67,6 @@ export class KeiserBikeClient extends EventEmitter {
       services: [this.CYCLING_POWER_SERVICE_UUID, this.CSC_SERVICE_UUID]
     };
   }
-}
   /**
    * Bike behaves like a BLE beacon. Simulate connect by looking up MAC address
    * scanning and filtering subsequent announcements from this address.
@@ -177,19 +199,6 @@ onReceive(data) {
    */
   async onStatsTimeout() {
 
-// Add this helper function
-function formatCSCMeasurement(cadence) {
-  const flags = 0x02; // Bit 1 set = crank revolution data present
-  const crankRevs = Math.floor(cadence); // Current crank revolutions
-  const lastCrankTime = Math.floor(Date.now() * 1.024) % 65536; // 1/1024th second units
-  
-  const data = Buffer.alloc(7);
-  data.writeUInt8(flags, 0);
-  data.writeUInt16LE(crankRevs, 3);
-  data.writeUInt16LE(lastCrankTime, 5);
-  
-  return data;
-}
     const reset = { power:0, cadence:0 };
     debuglog('Stats timeout exceeded');
     console.log("Stats timeout: Restarting BLE Scan");
@@ -226,7 +235,7 @@ function formatCSCMeasurement(cadence) {
   async restartScan() {
     console.log("Restarting BLE Scan");
     try {
-      await this.startScanningAsync(null, true);
+      await this.noble.startScanningAsync(null, true);
     } catch (err) {
       console.log("Unable to restart BLE Scan: " + err);
     }

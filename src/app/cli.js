@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
-import { GymnastriconApp } from './index.js';
+import { App } from './app.js';
 import { initializeBluetooth } from '../util/noble-wrapper.js';
 import { BikeAutoDetector } from '../bikes/auto-detect.js';
 
 const main = async () => {
   const { noble } = await initializeBluetooth();
   const detector = new BikeAutoDetector(noble);
-  const app = new GymnastriconApp({
+  const app = new App({
     noble,
     detector,
     powerSmoothing: 0.8

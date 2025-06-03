@@ -1,7 +1,8 @@
-import Ant from 'gd-ant-plus';
-import {Timer} from '../../util/timer';
+import Ant from '#ant';
+import {Timer} from '../../util/timer.js';
+import debug from '#debug';
 
-const debuglog = require('debug')('gym:servers:ant');
+const debuglog = debug('gym:servers:ant');
 
 const DEVICE_TYPE = 0x0b; // power meter
 const DEVICE_NUMBER = 1;
@@ -17,6 +18,7 @@ const defaults = {
 /**
  * Handles communication with apps (e.g. Zwift) using the ANT+ Bicycle Power
  * profile (instantaneous cadence and power).
+ */
 export class AntServer {
   /**
     * Create an AntServer instance.

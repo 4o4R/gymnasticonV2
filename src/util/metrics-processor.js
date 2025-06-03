@@ -1,3 +1,5 @@
+import { PowerSmoother } from './power-smoother.js';
+
 export class MetricsProcessor {
   constructor() {
     this.powerSmoother = new PowerSmoother();

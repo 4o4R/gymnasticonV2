@@ -1,110 +1,69 @@
-import {FlywheelBikeClient, FLYWHEEL_LOCALNAME} from './flywheel';
-import {PelotonBikeClient} from './peloton';
-import {Ic4BikeClient, IC4_LOCALNAME} from './ic4';
-import {KeiserBikeClient, KEISER_LOCALNAME} from './keiser';
-import {BotBikeClient} from './bot';
-import {macAddress} from '../util/mac-address';
-import {scan, createFilter, createNameFilter} from '../util/ble-scan';
+import {FlywheelBikeClient, FLYWHEEL_LOCALNAME} from './flywheel.js';
+import {PelotonBikeClient} from './peloton.js';
+import {Ic4BikeClient, IC4_LOCALNAME} from './ic4.js';
+import {KeiserBikeClient, KEISER_LOCALNAME} from './keiser.js';
+import {BotBikeClient} from './bot.js';
+import {macAddress} from '../util/mac-address.js';
+import {scan, createNameFilter, createAddressFilter} from '../util/ble-scan.js';
 import fs from 'fs';
 
-// Autodetection on advertisement.localName seems to be enough and
-// keeps it simple. Any peripheral property can be tested though,
-// e.g. serviceUuids, manufacturerData, rssi, etc.
 const autodetectFilters = {
-  'flywheel': createNameFilter(FLYWHEEL_LOCALNAME),
-  'ic4': createNameFilter(IC4_LOCALNAME),
-  'keiser': createNameFilter(KEISER_LOCALNAME),
+  flywheel: createNameFilter(FLYWHEEL_LOCALNAME),
+  ic4: createNameFilter(IC4_LOCALNAME),
+  keiser: createNameFilter(KEISER_LOCALNAME),
 };
+
+function createFlywheelBikeClient(options, noble) {
+  const filter = options.flywheelAddress
+    ? createAddressFilter(macAddress(options.flywheelAddress))
+    : createNameFilter(options.flywheelName);
+  return new FlywheelBikeClient(noble, filter);
+}
+
+function createPelotonBikeClient(options) {
+  return new PelotonBikeClient(options.pelotonPath);
+}
+
+function createIc4BikeClient(options, noble) {
+  const filter = createNameFilter(IC4_LOCALNAME);
+  return new Ic4BikeClient(noble, filter);
+}
+
+function createKeiserBikeClient(options, noble) {
+  return new KeiserBikeClient(noble);
+}
+
+function createBotBikeClient(options) {
+  return new BotBikeClient(options.botPower, options.botCadence, options.botHost, options.botPort);
+}
 
 const factories = {
-  'flywheel': createFlywheelBikeClient,
-  'peloton': createPelotonBikeClient,
-  'ic4': createIc4BikeClient,
-  'keiser': createKeiserBikeClient,
-  'bot': createBotBikeClient,
-  'autodetect': autodetectBikeClient,
+  flywheel: createFlywheelBikeClient,
+  peloton: createPelotonBikeClient,
+  ic4: createIc4BikeClient,
+  keiser: createKeiserBikeClient,
+  bot: createBotBikeClient,
+  autodetect: autodetectBikeClient,
 };
 
-/**
- * Supported bike types.
- * @returns {string[]} - supported bike types
- */
 export function getBikeTypes() {
   return Object.keys(factories);
 }
 
+export function createBikeClient(options, noble) {
+  const factory = factories[options.bike];
+  if (!factory) throw new Error(`Unknown bike type: ${options.bike}`);
+  return factory(options, noble);
+}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  export const createBikeClient = (type, options) => {
-    switch (type) {
-      case 'flywheel':
-        return new FlywheelBikeClient(options);
-      case 'ic4':
-        return new Ic4BikeClient(options);
-      case 'keiser':
-        return new KeiserBikeClient(options);
-      case 'peloton':
-        return new PelotonBikeClient(options);
-      default:
-        throw new Error(`Unknown bike type: ${type}`);
-    }
-  };
-/**
- * Create a BikeClient instance for the first matching autodetected bike.
- * @param {object} options - yargs CLI/config options
- * @param {Noble} noble - a Noble instance.
- * @returns {BikeClient} - a BikeClient instance.
- */
 async function autodetectBikeClient(options, noble) {
   if (fs.existsSync(options.pelotonPath)) {
     return createPelotonBikeClient(options, noble);
   }
   const types = Object.keys(autodetectFilters);
-  const funcs = Object.values(autodetectFilters);
-  const filter = peripheral => funcs.some(f => f(peripheral));
+  const filters = Object.values(autodetectFilters);
+  const filter = peripheral => filters.some(f => f(peripheral));
   const peripheral = await scan(noble, null, filter);
-  const bike = types.find(f => autodetectFilters[f](peripheral));
-  const factory = factories[bike];
-  return await factory(options, noble, peripheral);
+  const type = types.find(t => autodetectFilters[t](peripheral));
+  return factories[type](options, noble, peripheral);
 }

@@ -1,15 +1,27 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# System prep
+# Cleanup previous installation
+if systemctl list-unit-files | grep -q '^gymnasticon.service'; then
+    sudo systemctl stop gymnasticon || true
+    sudo systemctl disable gymnasticon || true
+    sudo rm -f /etc/systemd/system/gymnasticon.service
+fi
+sudo npm uninstall -g gymnasticon >/dev/null 2>&1 || true
+sudo rm -rf /opt/gymnasticon
+
+# Install Node.js 12 (compatible with Raspberry Pi Zero)
+curl -fsSL https://deb.nodesource.com/setup_12.x | sudo -E bash -
 sudo apt-get update
-sudo apt-get install -y nodejs npm bluetooth bluez libudev-dev
+sudo apt-get install -y nodejs npm bluetooth bluez libbluetooth-dev libudev-dev git
 
-# Install Gymnasticon
-sudo npm install -g gymnasticon
+# Clone Gymnasticon repository
+sudo git clone https://github.com/yourusername/gymnasticon.git /opt/gymnasticon
+cd /opt/gymnasticon
+sudo npm install --production
 
-# Configure systemd
-cat > /etc/systemd/system/gymnasticon.service << EOL
+# Configure systemd service
+sudo tee /etc/systemd/system/gymnasticon.service > /dev/null <<'SERVICE'
 [Unit]
 Description=Gymnasticon Bike Bridge
 After=bluetooth.service
@@ -17,14 +29,18 @@ Requires=bluetooth.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/gymnasticon
+WorkingDirectory=/opt/gymnasticon
+ExecStart=/usr/bin/node /opt/gymnasticon/src/app/cli.js
 Restart=always
 RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-EOL
+SERVICE
 
-# Enable and start service
+sudo systemctl daemon-reload
 sudo systemctl enable gymnasticon
 sudo systemctl start gymnasticon
+
+echo "Gymnasticon installation complete"
+

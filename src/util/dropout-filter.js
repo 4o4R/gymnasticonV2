@@ -7,17 +7,33 @@
  *
  * This filter can be used for both bikes.
  */
-export function createDropoutFilter(options = {}) {
-  const opts = {
-    threshold: 5,
-    timeout: 2000,
-    ...options
-  };
-  
-  return function filter(value) {
-    // Enhanced dropout detection logic
-    const now = Date.now();
-    const isValid = value > 0 && value < 2000;
-    return isValid ? value : null;
+export function createDropoutFilter() {
+  const last = { power: 0, cadence: 0 };
+  const dropped = { power: false, cadence: false };
+
+  return function filter({ power, cadence }) {
+    const result = { power, cadence };
+
+    if (power === 0) {
+      if (!dropped.power) {
+        result.power = last.power;
+        dropped.power = true;
+      }
+    } else {
+      last.power = power;
+      dropped.power = false;
+    }
+
+    if (cadence === 0) {
+      if (!dropped.cadence) {
+        result.cadence = last.cadence;
+        dropped.cadence = true;
+      }
+    } else {
+      last.cadence = cadence;
+      dropped.cadence = false;
+    }
+
+    return result;
   };
 }

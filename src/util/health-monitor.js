@@ -1,5 +1,8 @@
-export class HealthMonitor {
+import { EventEmitter } from 'events';
+
+export class HealthMonitor extends EventEmitter {
   constructor(checkInterval = 5000) {
+    super();
     this.metrics = new Map();
     this.checkInterval = checkInterval;
     this.startMonitoring();

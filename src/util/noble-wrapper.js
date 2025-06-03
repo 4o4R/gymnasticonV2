@@ -1,5 +1,19 @@
+import {EventEmitter} from 'events';
+import {createRequire} from 'module';
+
 export const initializeBluetooth = async (adapter = 'hci0') => {
-  const noble = require('@abandonware/noble');
+  const require = createRequire(import.meta.url);
+  let noble;
+  try {
+    noble = require('@abandonware/noble');
+  } catch (err) {
+    console.warn('Using stub noble module - BLE not available');
+    noble = new EventEmitter();
+    noble.state = 'poweredOff';
+    noble.startScanning = () => {};
+    noble.startScanningAsync = async () => {};
+    noble.stopScanning = () => {};
+  }
   
   // Modern bluetooth initialization
   noble.on('stateChange', (state) => {

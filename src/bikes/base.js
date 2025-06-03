@@ -1,3 +1,6 @@
+import { EventEmitter } from 'events';
+import { MetricsCollector } from '../util/metrics.js';
+
 export class BaseBikeClient extends EventEmitter {
   constructor(options = {}) {
     super();

@@ -7,9 +7,13 @@
 Gymnasticon enables obsolete and/or proprietary exercise bikes to work with Zwift and other training apps. Support for new bikes can be added easily. The diagram below shows an example of how it works with the Flywheel Home Bike.
 
 ## Install
-# New installation command for modern RPi OS
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+# New installation command for Raspberry Pi Zero or other devices running Node.js 12
+curl -fsSL https://deb.nodesource.com/setup_12.x | sudo -E bash -
 sudo apt-get install -y nodejs bluetooth bluez libbluetooth-dev libudev-dev
+
+To automate the setup, run:
+
+curl -sSL https://raw.githubusercontent.com/yourusername/gymnasticon/master/deploy/install.sh | bash
 
 
 <p align="center">
@@ -69,16 +73,13 @@ Single Command Installation
 
 SSH into your Raspberry Pi and run the following command:
 
-sudo rm -rf /opt/gymnasticon && nohup bash -c "curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticon/master/deploy/install.sh | bash -s true" > install.log 2>&1 &
+sudo rm -rf /opt/gymnasticon && nohup bash -c "curl -sSL https://raw.githubusercontent.com/yourusername/gymnasticon/master/deploy/install.sh | bash" > install.log 2>&1 &
 
 This command will:
-
-Download and execute the installation script.
-
-Force reinstall Node.js (if necessary).
-
-Install Gymnasticon and configure it to run as a service.
-
+- Remove any old Gymnasticon installation
+- Download and execute the installation script
+- Force reinstall Node.js (if necessary)
+- Install Gymnasticon and configure it to run as a service
 You can monitor the installation progress by checking the logs:
 
 tail -f install.log
@@ -108,7 +109,7 @@ sudo systemctl restart gymnasticon
 
 ssh Into your RPi
 
-Then run sudo rm -rf /opt/gymnasticon && curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticon/master/deploy/install.sh | bash
+Then run sudo rm -rf /opt/gymnasticon && curl -sSL https://raw.githubusercontent.com/yourusername/gymnasticon/master/deploy/install.sh | bash
 
 
 OR
@@ -265,6 +266,14 @@ Options:
   --power-offset          <value> add this value to watts  [number] [default: 0]
   --version               Show version number                          [boolean]
   -h, --help              Show help                                    [boolean]
+```
+
+## Testing
+
+Run the unit tests with:
+
+```
+npm test
 ```
 
 ## Contributing

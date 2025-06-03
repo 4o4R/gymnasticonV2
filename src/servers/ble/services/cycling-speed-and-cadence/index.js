@@ -1,6 +1,6 @@
-import {PrimaryService} from '@abandonware/bleno';
-import {CscMeasurementCharacteristic} from './characteristics/csc-measurement';
-import {CscFeatureCharacteristic} from './characteristics/csc-feature';
+import {PrimaryService} from '#bleno';
+import {CscMeasurementCharacteristic} from './characteristics/csc-measurement.js';
+import {CscFeatureCharacteristic} from './characteristics/csc-feature.js';
 
 /**
  * Bluetooth LE GATT Cycling Speed and Cadence Service implementation.
