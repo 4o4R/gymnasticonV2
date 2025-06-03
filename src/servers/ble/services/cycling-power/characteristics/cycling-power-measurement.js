@@ -1,4 +1,4 @@
-import {Characteristic, Descriptor} from '@abandonware/bleno';
+import {Characteristic, Descriptor} from '#bleno';
 
 const FLAG_HASCRANKDATA = (1<<5);
 const CRANK_TIMESTAMP_SCALE = 1024 / 1000; // timestamp resolution is 1/1024 sec

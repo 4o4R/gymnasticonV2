@@ -1,17 +1,19 @@
-import noble from '@abandonware/noble';
-import bleno from '@abandonware/bleno';
+import nobleDefault from '#noble';
+import bleno from '#bleno';
 
 import {once} from 'events';
 
-import {GymnasticonServer} from '../servers/ble';
-import {AntServer} from '../servers/ant';
-import {createBikeClient, getBikeTypes} from '../bikes';
-import {Simulation} from './simulation';
-import {Timer} from '../util/timer';
-import {Logger} from '../util/logger';
-import {createAntStick} from '../util/ant-stick';
+import {GymnasticonServer} from '../servers/ble/index.js';
+import {AntServer} from '../servers/ant/index.js';
+import {createBikeClient, getBikeTypes} from '../bikes/index.js';
+import {HeartRateClient} from '../hr/heart-rate-client.js';
+import {Simulation} from './simulation.js';
+import {Timer} from '../util/timer.js';
+import {Logger} from '../util/logger.js';
+import {createAntStick} from '../util/ant-stick.js';
+import debug from '#debug';
 
-const debuglog = require('debug')('gym:app:app');
+const debuglog = debug('gym:app:app');
 
 export {getBikeTypes};
 
@@ -57,11 +59,42 @@ export const defaults = {
  */
 export class App {
   constructor(options = {}) {
-    const opts = {...defaults, ...options};
+    const opts = { ...defaults, ...options };
+    this.opts = opts;
+
+    this.logger = new Logger();
+    this.noble = opts.noble || nobleDefault;
+    this.bleno = bleno;
+
+    this.powerScale = opts.powerScale;
+    this.powerOffset = opts.powerOffset;
+    this.power = 0;
+    this.crank = { timestamp: 0, revolutions: 0 };
+
+    this.server = new GymnasticonServer(this.bleno, opts.serverName);
+    this.antStick = createAntStick();
+    this.antServer = new AntServer(this.antStick, { deviceId: opts.antDeviceId });
+
+    this.statsTimeout = new Timer(opts.bikeReceiveTimeout, { repeats: false });
+    this.statsTimeout.on('timeout', this.onBikeStatsTimeout.bind(this));
+    this.connectTimeout = new Timer(opts.bikeConnectTimeout, { repeats: false });
+    this.connectTimeout.on('timeout', this.onBikeConnectTimeout.bind(this));
+    this.pingInterval = new Timer(opts.serverPingInterval);
+    this.pingInterval.on('timeout', this.onPingInterval.bind(this));
+
+    this.simulation = new Simulation();
+    this.simulation.on('pedal', this.onPedalStroke.bind(this));
+
+    this.hrClient = new HeartRateClient(this.noble);
+    this.hrClient.on('heartRate', this.onHeartRate.bind(this));
+
+    this.onSigInt = this.onSigInt.bind(this);
+    this.onExit = this.onExit.bind(this);
     
     // Modern Bluetooth configuration
     process.env['NOBLE_HCI_DEVICE_ID'] = opts.bikeAdapter;
     process.env['BLENO_HCI_DEVICE_ID'] = opts.serverAdapter;
+    process.env['BLENO_MAX_CONNECTIONS'] = '3';
     process.env['NOBLE_EXTENDED_SCAN'] = '1';
     process.env['NOBLE_MULTI_ROLE'] = '1';
     
@@ -80,19 +113,46 @@ export class App {
     this.cleanup();
     process.exit(1);
   }
-}
+
+  async start() {
+    await this.run();
+  }
+
+  async stop() {
+    this.pingInterval.cancel();
+    this.statsTimeout.cancel();
+    this.connectTimeout.cancel();
+    if (this.bike && this.bike.disconnect) {
+      await this.bike.disconnect();
+    }
+    await this.server.stop();
+    if (this.antServer.isRunning) {
+      this.stopAnt();
+    }
+    if (this.hrClient) {
+      await this.hrClient.disconnect();
+    }
+  }
+
+  async cleanup() {
+    try {
+      await this.stop();
+    } catch (e) {
+      this.logger.error(e);
+    }
+  }
 
   async run() {
     try {
       process.on('SIGINT', this.onSigInt);
       process.on('exit', this.onExit);
 
-      const [state] = await once(noble, 'stateChange');
+      const [state] = await once(this.noble, 'stateChange');
       if (state !== 'poweredOn')
         throw new Error(`Bluetooth adapter state: ${state}`);
 
       this.logger.log('connecting to bike...');
-      this.bike = await createBikeClient(this.opts, noble);
+      this.bike = await createBikeClient(this.opts, this.noble);
       this.bike.on('disconnect', this.onBikeDisconnect.bind(this));
       this.bike.on('stats', this.onBikeStats.bind(this));
       this.connectTimeout.reset();
@@ -101,6 +161,7 @@ export class App {
       this.logger.log(`bike connected ${this.bike.address}`);
       this.server.start();
       this.startAnt();
+      await this.hrClient.connect();
       this.pingInterval.reset();
       this.statsTimeout.reset();
     } catch (e) {
@@ -122,6 +183,10 @@ export class App {
     debuglog(`pinging app since no stats or pedal strokes for ${this.pingInterval.interval}s`);
     let {power, crank} = this;
     this.server.updateMeasurement({ power, crank });
+  }
+
+  onHeartRate(hr) {
+    this.server.updateHeartRate(hr);
   }
 
   onBikeStats({ power, cadence }) {

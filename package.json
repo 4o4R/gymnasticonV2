@@ -3,19 +3,30 @@
   "version": "2.0.0",
   "description": "Enables the Flywheel Home Bike to work with Zwift and other training apps.",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=12.0.0"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js"
   },
   "bin": {
-    "gymnasticon": "./lib/app/cli.js"
+    "gymnasticon": "./src/app/cli.js"
   },
   "scripts": {
-    "install": "node deploy/auto-install.sh",
-    "start": "node lib/app/cli.js",
-    "build": "babel src -d lib",
-    "postinstall": "systemctl restart gymnasticon"
+    "start": "node src/app/cli.js",
+    "build": "echo skipping build",
+    "test": "node node_modules/tape/bin/tape.js 'src/test/**/*.js'"
+  },
+  "imports": {
+    "#noble": "./stubs/noble.js",
+    "#bleno": "./stubs/bleno.js",
+    "#ant": "./stubs/gd-ant-plus.js",
+    "#serialport": "./stubs/serialport.js",
+    "#parser-delimiter": "./stubs/parser-delimiter.js",
+    "#debug": "./stubs/debug.js"
   },
   "files": [
-    "/lib"
+    "src"
   ],
   "author": "<ptx2@ptx2.net>",
   "license": "MIT",
@@ -29,22 +40,8 @@
     "usb": "^2.14.0"
   },
   "devDependencies": {
-    "@babel/cli": "^7.25.9",
-    "@babel/core": "^7.25.9",
-    "@babel/plugin-transform-parameters": "^7.25.9",
-    "@babel/preset-env": "^7.25.9",
     "eslint": "^9.18.0",
     "sinon": "^19.0.2",
     "tape": "^5.9.0"
-  }
-}
-
-{
-  "type": "module",
-  "exports": {
-    ".": {
-      "import": "./lib/index.js",
-      "require": "./lib/index.cjs"
-    }
   }
 }

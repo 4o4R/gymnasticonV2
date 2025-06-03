@@ -1,4 +1,4 @@
-import {Characteristic, Descriptor} from '@abandonware/bleno';
+import {Characteristic, Descriptor} from '#bleno';
 
 /**
  * Bluetooth LE GATT Cycling Power Feature Characteristic implementation.

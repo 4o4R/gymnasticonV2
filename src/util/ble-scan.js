@@ -1,5 +1,5 @@
 import {on} from 'events';
-import {macAddress} from './mac-address';
+import {macAddress} from './mac-address.js';
 
 /**
  * Returns true if the given peripheral matches.
