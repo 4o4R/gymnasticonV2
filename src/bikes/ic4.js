@@ -2,8 +2,8 @@ import util from 'util';
 import {EventEmitter} from 'events';
 import {execFile} from 'child_process';
 const execFileAsync = util.promisify(execFile);
-import {scan} from '../util/ble-scan';
-import {macAddress} from '../util/mac-address';
+import {scan} from '../util/ble-scan.js';
+import {macAddress} from '../util/mac-address.js';
 
 export const IC4_LOCALNAME = 'IC Bike';
 
@@ -16,7 +16,9 @@ const IBD_VALUE_MAGIC = Buffer.from([0x44]); // identifies indoor bike data mess
 const IBD_VALUE_IDX_POWER = 6; // 16-bit power (watts) data offset within packet
 const IBD_VALUE_IDX_CADENCE = 4; // 16-bit cadence (1/2 rpm) data offset within packet
 
-const debuglog = require('debug')('gym:bikes:ic4');
+import debug from '#debug';
+
+const debuglog = debug('gym:bikes:ic4');
 
 /**
  * Handles communication with Schwinn IC4 indoor training bike using the standard
