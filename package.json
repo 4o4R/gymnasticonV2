@@ -2,7 +2,7 @@
   "name": "gymnasticonV2",
   "version": "2.0.0",
   "description": "Enables the Flywheel Home Bike to work with Zwift and other training apps.",
-  "engines": { "node": ">=12.0.0" },
+  "engines": { "node": ">=14.0.0" },
   "type": "module",
   "exports": { ".": "./src/index.js" },
   "bin": {
