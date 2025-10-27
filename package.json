@@ -15,7 +15,7 @@
     "#noble": "./stubs/noble.js",
     "#bleno": "./stubs/bleno.js",
     "#ant": "./stubs/gd-ant-plus.js",
-    "#serialport": "./stubs/serialport-loader.js",
+    "#serialport": "./stubs/serialport.js",
     "#parser-delimiter": "./stubs/parser-delimiter.js",
     "#debug": "./stubs/debug.js"
   },
