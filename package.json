@@ -24,7 +24,7 @@
   "files": [
     "src"
   ],
-  "author": "<ptx2@ptx2.net>",
+  "author": "<ptx2@ptx2.net> and then 4o4R",
   "license": "MIT",
   "dependencies": {
     "@abandonware/bleno": "0.5.1-3",
