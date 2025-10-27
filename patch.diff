@@ -1,0 +1,284 @@
+*** Begin Patch
+*** Update File: package.json
+@@
+ {
+   "name": "gymnasticonV2",
+   "version": "2.0.0",
+   "description": "Enables the Flywheel Home Bike to work with Zwift and other training apps.",
+-  "engines": {
+-    "node": ">=12.0.0"
+-  },
++  "engines": { "node": ">=16.0.0" },
+   "type": "module",
+-  "exports": {
+-    ".": "./src/index.js"
+-  },
++  "exports": { ".": "./src/index.js" },
+   "bin": {
+     "gymnasticon": "./src/app/cli.js"
+   },
+   "scripts": {
+     "start": "node src/app/cli.js",
+     "build": "echo skipping build",
+-    "test": "node node_modules/tape/bin/tape.js 'src/test/**/*.js'"
++    "test": "node node_modules/tape/bin/tape.js 'src/test/**/*.js'"
+   },
+-  "imports": {
+-    "#noble": "./stubs/noble.js",
+-    "#bleno": "./stubs/bleno.js",
+-    "#ant": "./stubs/gd-ant-plus.js",
+-    "#serialport": "./stubs/serialport.js",
+-    "#parser-delimiter": "./stubs/parser-delimiter.js",
+-    "#debug": "./stubs/debug.js"
+-  },
++  "imports": {
++    "#noble": "./src/shims/noble-loader.js",
++    "#bleno": "./src/shims/bleno-loader.js",
++    "#ant": "./src/shims/ant-loader.js",
++    "#serialport": "./src/shims/serialport-loader.js",
++    "#parser-delimiter": "./src/shims/parser-delimiter-loader.js",
++    "#debug": "./src/shims/debug-loader.js"
++  },
+   "files": [
+     "src"
+   ],
+   "author": "<ptx2@ptx2.net>",
+   "license": "MIT",
+   "dependencies": {
+-    "@abandonware/bleno": "^0.6.5",
+-    "@abandonware/noble": "^1.9.2-15",
++    "@abandonware/bleno": "^0.6.5",
++    "@abandonware/noble": "^1.9.2-15",
+     "dgram": "^1.0.1",
++    "debug": "^4.3.7",
++    "gd-ant-plus": "^0.0.14",
+     "yargs": "^17.7.2",
+-    "usb": "^2.14.0"
++    "usb": "^2.14.0",
++    "serialport": "^12.0.0",
++    "@serialport/parser-delimiter": "^12.0.0"
+   },
+   "devDependencies": {
+     "eslint": "^9.18.0",
+     "sinon": "^19.0.2",
+     "tape": "^5.9.0"
+   }
+ }
+*** Add File: LICENSE
++MIT License
++
++Copyright (c) 2020 ptx2
++Copyright (c) 2025 4o4R
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in
++all copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
++THE SOFTWARE.
+*** Update File: README.md
+@@
+-curl -fsSL https://deb.nodesource.com/setup_12.x | sudo -E bash -
+-sudo apt-get install -y nodejs bluetooth bluez libbluetooth-dev libudev-dev
++sudo apt-get update
++sudo apt-get install -y bluetooth bluez libbluetooth-dev libudev-dev git curl
++curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
++sudo apt-get install -y nodejs
+@@
+-curl -sSL https://raw.githubusercontent.com/yourusername/gymnasticon/master/deploy/install.sh | bash
++curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/install.sh | bash
+@@
+-sudo rm -rf /opt/gymnasticon && nohup bash -c "curl -sSL https://raw.githubusercontent.com/yourusername/gymnasticon/master/deploy/install.sh | bash" > install.log 2>&1 &
++sudo rm -rf /opt/gymnasticon && nohup bash -c "curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/install.sh | bash" > install.log 2>&1 &
+@@
+-Then run sudo rm -rf /opt/gymnasticon && curl -sSL https://raw.githubusercontent.com/yourusername/gymnasticon/master/deploy/install.sh | bash
++Then run sudo rm -rf /opt/gymnasticon && curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/install.sh | bash
+*** Update File: deploy/install.sh
+@@
+-# Install Node.js 12 (compatible with Raspberry Pi Zero)
+-curl -fsSL https://deb.nodesource.com/setup_12.x | sudo -E bash -
+-sudo apt-get update
+-sudo apt-get install -y nodejs npm bluetooth bluez libbluetooth-dev libudev-dev git
++# Packages and Node.js 20
++sudo apt-get update
++sudo apt-get install -y bluetooth bluez libbluetooth-dev libudev-dev git curl
++if ! command -v node >/dev/null 2>&1; then
++  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
++  sudo apt-get install -y nodejs
++fi
+@@
+-sudo git clone https://github.com/yourusername/gymnasticon.git /opt/gymnasticon
++sudo git clone https://github.com/4o4R/gymnasticonV2.git /opt/gymnasticon
+@@
+ [Service]
+ Type=simple
+-WorkingDirectory=/opt/gymnasticon
+-ExecStart=/usr/bin/node /opt/gymnasticon/src/app/cli.js
+-Restart=always
+-RestartSec=10
++User=gymnasticon
++Group=gymnasticon
++WorkingDirectory=/opt/gymnasticon
++Environment=NOBLE_HCI_DEVICE_ID=0
++Environment=BLENO_HCI_DEVICE_ID=0
++ExecStart=/usr/bin/node /opt/gymnasticon/src/app/cli.js
++Restart=always
++RestartSec=5
++NoNewPrivileges=yes
++ProtectSystem=full
++ProtectHome=true
++PrivateTmp=true
++ProtectKernelTunables=yes
++ProtectKernelModules=yes
++ProtectControlGroups=yes
++LockPersonality=yes
++MemoryDenyWriteExecute=yes
+*** Update File: src/util/ble-server.js
+@@
+-    const [state] = await once(this.bleno, 'stateChange');
+-    if (state !== 'poweredOn') {
+-      throw new Error(`Bluetooth adapter failed to power on: ${state}`);
+-    }
++    if (this.bleno.state !== 'poweredOn') {
++      const [state] = await once(this.bleno, 'stateChange');
++      if (state !== 'poweredOn') {
++        throw new Error(`Bluetooth adapter failed to power on: ${state}`);
++      }
++    }
+*** Update File: src/app/app.js
+@@
+-      const [state] = await once(this.noble, 'stateChange');
+-      if (state !== 'poweredOn')
+-        throw new Error(`Bluetooth adapter state: ${state}`);
++      if (this.noble.state !== 'poweredOn') {
++        const [state] = await once(this.noble, 'stateChange');
++        if (state !== 'poweredOn') {
++          throw new Error(`Bluetooth adapter state: ${state}`);
++        }
++      }
+*** Update File: src/hr/heart-rate-client.js
+@@
+-  constructor(noble, deviceName = 'GARMIN') {
++  constructor(noble, deviceNamePattern = null) {
+     super();
+     this.noble = noble;
+-    this.filter = createNameFilter(deviceName);
++    this.deviceNamePattern = deviceNamePattern ? new RegExp(deviceNamePattern, 'i') : null;
+*** Update File: src/util/dropout-filter.js
+@@
+-export function createDropoutFilter() {
+-  const last = { power: 0, cadence: 0 };
+-  const dropped = { power: false, cadence: false };
+-
+-  return function filter({ power, cadence }) {
+-    const result = { power, cadence };
+-
+-    if (power === 0) {
+-      if (!dropped.power) {
+-        result.power = last.power;
+-        dropped.power = true;
+-      }
+-    } else {
+-      last.power = power;
+-      dropped.power = false;
+-    }
+-
+-    if (cadence === 0) {
+-      if (!dropped.cadence) {
+-        result.cadence = last.cadence;
+-        dropped.cadence = true;
+-      }
+-    } else {
+-      last.cadence = cadence;
+-      dropped.cadence = false;
+-    }
+-
+-    return result;
+-  };
+-}
++export function createDropoutFilter({ holdMs = 750 } = {}) {
++  const last = { power: 0, cadence: 0, tPower: 0, tCad: 0 };
++  return function filter({ power, cadence }) {
++    const now = Date.now();
++    const result = { power, cadence };
++    if (power === 0) {
++      if (now - last.tPower < holdMs) result.power = last.power;
++    } else {
++      last.power = power;
++      last.tPower = now;
++    }
++    if (cadence === 0) {
++      if (now - last.tCad < holdMs) result.cadence = last.cadence;
++    } else {
++      last.cadence = cadence;
++      last.tCad = now;
++    }
++    return result;
++  };
++}
+*** Add File: src/shims/bleno-loader.js
++import { createRequire } from 'module';
++const require = createRequire(import.meta.url);
++let mod;
++try {
++  mod = require('@abandonware/bleno');
++} catch {
++  mod = await import('../../stubs/bleno.js');
++  mod = mod.default ?? mod;
++}
++export default mod.default ?? mod;
++export const { Characteristic, Descriptor, PrimaryService } = mod;
+*** Add File: src/shims/noble-loader.js
++import { createRequire } from 'module';
++const require = createRequire(import.meta.url);
++let noble;
++try {
++  noble = require('@abandonware/noble');
++} catch {
++  noble = (await import('../../stubs/noble.js')).default;
++}
++export default noble;
+*** Add File: src/shims/ant-loader.js
++let mod;
++try {
++  mod = (await import('gd-ant-plus')).default ?? (await import('gd-ant-plus'));
++} catch {
++  mod = (await import('../../stubs/gd-ant-plus.js')).default;
++}
++export default mod;
+*** Add File: src/shims/serialport-loader.js
++let SerialPort;
++try {
++  SerialPort = (await import('serialport')).default;
++} catch {
++  SerialPort = (await import('../../stubs/serialport.js')).default;
++}
++export default SerialPort;
+*** Add File: src/shims/parser-delimiter-loader.js
++let Delimiter;
++try {
++  Delimiter = (await import('@serialport/parser-delimiter')).default;
++} catch {
++  Delimiter = (await import('../../stubs/parser-delimiter.js')).default;
++}
++export default Delimiter;
+*** Add File: src/shims/debug-loader.js
++let createDebug;
++try {
++  createDebug = (await import('debug')).default;
++} catch {
++  createDebug = (await import('../../stubs/debug.js')).default;
++}
++export default createDebug;
+*** End Patch
