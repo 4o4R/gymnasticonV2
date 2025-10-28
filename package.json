@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node src/app/cli.js",
     "build": "echo skipping build",
-    "test": "node node_modules/tape/bin/tape.js 'src/test/**/*.js'"
+    "test": "tape 'src/test/**/*.js'"
   },
   "imports": {
     "#noble": "./stubs/noble.js",
