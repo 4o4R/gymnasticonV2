@@ -4,7 +4,7 @@
 <img src="docs/gymnasticon.jpg">
 </p>
 
-Gymnasticon enables obsolete and/or proprietary exercise bikes to work with Zwift and other training apps. Support for new bikes can be added easily. The diagram below shows an example of how it works with the Flywheel Home Bike.
+Gymnasticon enables obsolete and/or proprietary exercise bikes to work with Zwift and other training apps. Support for new bikes can be added easily. The diagram below shows an example of how it works with the Flywheel Home Bike. :)
 
 ## Install
 # New installation command for Raspberry Pi Zero or other devices running Node.js 12
