@@ -1,5 +1,5 @@
 import test from 'tape';
-import {parse} from '../../bikes/flywheel';
+import {parse} from '../../bikes/flywheel.js';
 
 test('parse() parses Flywheel stats messages', t => {
   const buf = Buffer.from('ff1f0c0122000000000000005a00000000000000000000000000000a000000016155', 'hex');
