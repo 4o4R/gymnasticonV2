@@ -15,13 +15,6 @@ export const initializeBluetooth = async (adapter = 'hci0') => {
     noble.stopScanning = () => {};
   }
   
-  // Modern bluetooth initialization
-  noble.on('stateChange', (state) => {
-    if (state === 'poweredOn') {
-      noble.startScanning([], true);
-    }
-  });
-
   // Add retry logic for robust connections
   const connect = async (peripheral, retries = 3) => {
     for (let i = 0; i < retries; i++) {

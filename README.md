@@ -1,24 +1,26 @@
 # Gymnasticon
 
-<p align="center">
-<img src="docs/gymnasticon.jpg">
-</p>
+![Gymnasticon Logo](docs/gymnasticon.jpg)go](docs/gymnasticon.jpg)
 
 Gymnasticon enables obsolete and/or proprietary exercise bikes to work with Zwift and other training apps. Support for new bikes can be added easily. The diagram below shows an example of how it works with the Flywheel Home Bike. :)
 
-## Install
-# New installation command for Raspberry Pi Zero or other devices running Node.js 12
-curl -fsSL https://deb.nodesource.com/setup_12.x | sudo -E bash -
+## Installation
+
+# Installation Requirements
+
+1. Node.js 14.x (required for this fork)
+2. System dependencies:
+```bash
 sudo apt-get install -y nodejs bluetooth bluez libbluetooth-dev libudev-dev
+```
 
 To automate the setup, run:
+```bash
+curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/install.sh | bash
+```
 
-curl -sSL https://raw.githubusercontent.com/yourusername/gymnasticon/master/deploy/install.sh | bash
 
-
-<p align="center">
-<img src="docs/diagram.png">
-</p>
+![Gymnasticon System Diagram](docs/diagram.png)
 
 ## Bikes tested
 
@@ -55,11 +57,11 @@ Raspberry Pi Zero W is recommended for best user experience. Any recent Linux or
 
 > Note: If using a Bluetooth LE bike (e.g. Flywheel) a Bluetooth LE 4.1+ adapter with multi-role capability is required. All Raspberry Pi devices listed above have this capability but not every BT 4.1+ adapter is guaranteed to have it. Alternatively, two BT 4.0+ adapters can also work: one for the client (to connect to the bike) and one for the server (to receive connections from Zwift or another app).
 
-## Quick Start: Quick Start: Install Gymnasticon on Raspberry Pi
+## Quick Start: Install Gymnasticon on Raspberry Pi
 
-Preparation
+### Preparation
 
-Prepare the OS:
+#### Prepare the OS:
 
 Use the Raspberry Pi Imager on another computer to flash your SD card with Raspbian Buster Lite (2021 version). This version is required for compatibility with Node.js ARMv6 builds.
 
@@ -73,7 +75,7 @@ Single Command Installation
 
 SSH into your Raspberry Pi and run the following command:
 
-sudo rm -rf /opt/gymnasticon && nohup bash -c "curl -sSL https://raw.githubusercontent.com/yourusername/gymnasticon/master/deploy/install.sh | bash" > install.log 2>&1 &
+sudo rm -rf /opt/gymnasticon && nohup bash -c "curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/install.sh | bash" > install.log 2>&1 &
 
 This command will:
 - Remove any old Gymnasticon installation
@@ -109,16 +111,14 @@ sudo systemctl restart gymnasticon
 
 ssh Into your RPi
 
-Then run sudo rm -rf /opt/gymnasticon && curl -sSL https://raw.githubusercontent.com/yourusername/gymnasticon/master/deploy/install.sh | bash
+Then run sudo rm -rf /opt/gymnasticon && curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/install.sh | bash
 
 
 OR
 
 Install Gymnasticon SD card image
 
-<p align="center">
-<img src="https://user-images.githubusercontent.com/68594395/90970770-e6879180-e4d6-11ea-91d6-26ff06267c86.gif">
-</p>
+![Gymnasticon Boot Animation](https://user-images.githubusercontent.com/68594395/90970770-e6879180-e4d6-11ea-91d6-26ff06267c86.gif)
 
 This is the easiest way to get up and running on a Raspberry Pi.
 
@@ -201,23 +201,31 @@ Dependencies:
 
 Install:
 
-    npm install -g gymnasticon
-    gymnasticon
+```bash
+npm install -g gymnasticon
+gymnasticon
+```
 
 To run as an unprivileged user:
 
-    # this gives cap_net_raw+eip to all node programs not just gymnasticon
-    sudo setcap cap_net_raw+eip $(eval readlink -f $(which node))
+```bash
+# this gives cap_net_raw+eip to all node programs not just gymnasticon
+sudo setcap cap_net_raw+eip $(eval readlink -f $(which node))
+```
 
 To run at boot time, restart on exit and to avoid giving `cap_net_raw+eip` to the node binary it is recommended to run under systemd. See the `deploy/gymnasticon.service` from this repository for an example systemd unit file.
 
-    sudo cp gymnasticon.service /etc/systemd/system
-    sudo systemctl enable gymnasticon
-    sudo systemctl start gymnasticon
+```bash
+sudo cp gymnasticon.service /etc/systemd/system
+sudo systemctl enable gymnasticon
+sudo systemctl start gymnasticon
+```
 
 To view the output of Gymnasticon running under systemd:
 
-    journalctl -u gymnasticon -f
+```bash
+journalctl -u gymnasticon -f
+```
 
 ## CLI options
 
@@ -278,11 +286,13 @@ npm test
 
 ## Contributing
 
-    git clone https://github.com/ptx2/gymnasticon.git
-    cd gymnasticon
-    npm run build
-    npm link
-    gymnasticon --help
+```bash
+git clone https://github.com/4o4R/gymnasticonV2.git
+cd gymnasticonV2
+npm run build
+npm link
+gymnasticon --help
+```
 
 ## HOWTO: Add support for a bike
 
@@ -299,4 +309,4 @@ MIT
 
 ## More info
 
-Read the development notes [here](https://ptx2.net/posts/unbricking-a-bike-with-a-raspberry-pi).
+For detailed development notes and technical background, see the [original project documentation about unbricking a bike with a Raspberry Pi](https://ptx2.net/posts/unbricking-a-bike-with-a-raspberry-pi).
