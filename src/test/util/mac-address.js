@@ -2,6 +2,7 @@ import {test} from 'tape';
 import {macAddress} from '../../util/mac-address.js';
 
 test('macAddress() accepts valid inputs', t => {
+  t.plan(4);
   const expected = 'aa:bb:cc:01:02:03'
   const cases = [
     ['aA:bB:cC:01:02:03', 'colon delimited string'],
@@ -12,10 +13,10 @@ test('macAddress() accepts valid inputs', t => {
   for (let [input, message] of cases) {
     t.equal(macAddress(input), expected, message);
   }
-  t.end();
 });
 
 test('macAddress() rejects invalid inputs', t => {
+  t.plan(6);
   const expected = /is not a valid MAC address/;
   const cases = [
     ['aZ:bB:cC:01:02:03', 'non-hex digits'],
@@ -28,5 +29,4 @@ test('macAddress() rejects invalid inputs', t => {
   for (let [input, message] of cases) {
     t.throws(() => macAddress(input), expected, message);
   }
-  t.end();
 });
