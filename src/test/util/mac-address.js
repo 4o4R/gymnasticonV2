@@ -1,5 +1,5 @@
 import {test} from 'tape';
-import {macAddress} from '../../util/mac-address';
+import {macAddress} from '../../util/mac-address.js';
 
 test('macAddress() accepts valid inputs', t => {
   const expected = 'aa:bb:cc:01:02:03'

@@ -1,5 +1,5 @@
 import test from 'tape';
-import {decodePeloton} from '../../bikes/peloton';
+import {decodePeloton} from '../../bikes/peloton.js';
 
 test('decodePeloton() parses Peloton stats messages', t => {
   const bufPower = Buffer.from('f14405363333323038', 'hex');
