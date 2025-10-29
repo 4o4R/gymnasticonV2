@@ -1,6 +1,6 @@
 import {test} from 'tape';
 import sinon from 'sinon';
-import {Simulation} from '../../app/simulation';
+import {Simulation} from '../../app/simulation.js';
 
 test('constant cadence', t => {
   const timeline = [
