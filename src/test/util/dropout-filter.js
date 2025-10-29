@@ -1,5 +1,5 @@
 import test from 'tape';
-import {createDropoutFilter} from '../../util/dropout-filter';
+import {createDropoutFilter} from '../../util/dropout-filter.js';
 
 test('fill spurious zero power measurements with previous value', t => {
   const filter = createDropoutFilter();

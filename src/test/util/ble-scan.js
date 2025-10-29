@@ -1,5 +1,5 @@
 import test from 'tape';
-import {createFilter, createNameFilter, createAddressFilter} from '../../util/ble-scan';
+import {createFilter, createNameFilter, createAddressFilter} from '../../util/ble-scan.js';
 
 // peripherals
 const match = {address: '11-11-11-11-11-11', advertisement: { localName: 'Match'}};

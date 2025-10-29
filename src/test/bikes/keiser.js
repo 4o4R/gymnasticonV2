@@ -1,6 +1,6 @@
 import test from 'tape';
-import {parse} from '../../bikes/keiser';
-import {bikeVersion} from '../../bikes/keiser';
+import {parse} from '../../bikes/keiser.js';
+import {bikeVersion} from '../../bikes/keiser.js';
 
 /**
  * See https://dev.keiser.com/mseries/direct/#data-parse-example for a
