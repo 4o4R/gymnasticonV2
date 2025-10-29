@@ -159,7 +159,7 @@ export class App {
       await this.bike.connect();
       this.connectTimeout.cancel();
       this.logger.log(`bike connected ${this.bike.address}`);
-      this.server.start();
+      await this.server.start();
       this.startAnt();
       await this.hrClient.connect();
       this.pingInterval.reset();

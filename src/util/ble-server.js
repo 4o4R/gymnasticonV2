@@ -29,9 +29,13 @@ export class BleServer extends EventEmitter {
     }
 
     this.state = 'starting';
-    const [state] = await once(this.bleno, 'stateChange');
-    if (state !== 'poweredOn') {
-      throw new Error(`Bluetooth adapter failed to power on: ${state}`);
+
+    if (this.bleno.state !== 'poweredOn') {
+      const [state] = await once(this.bleno, 'stateChange');
+      if (state !== 'poweredOn') {
+        this.state = 'stopped';
+        throw new Error(`Bluetooth adapter failed to power on: ${state}`);
+      }
     }
 
     await this.bleno.startAdvertisingAsync(this.name, this.uuids);

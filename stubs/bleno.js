@@ -6,6 +6,9 @@ class BlenoStub extends EventEmitter {
     this.state = 'poweredOff';
   }
   startAdvertising(name, uuids) {}
+  startAdvertisingWithEIRData(advertisementData, scanData, callback) {
+    if (callback) callback();
+  }
   stopAdvertising() {}
   setServices(services) {}
   disconnect() {}
