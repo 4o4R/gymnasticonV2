@@ -2,6 +2,9 @@ import {readdir} from 'fs/promises';
 import {join} from 'path';
 import {fileURLToPath, pathToFileURL} from 'url';
 
+const tapeModule = await import('tape');
+const tape = tapeModule.default ?? tapeModule;
+
 const rootDir = fileURLToPath(new URL('../src/test', import.meta.url));
 
 async function loadTests(dir) {
@@ -19,7 +22,9 @@ async function loadTests(dir) {
 }
 
 try {
+  const finished = new Promise(resolve => tape.onFinish(resolve));
   await loadTests(rootDir);
+  await finished;
 } catch (error) {
   console.error(error);
   process.exitCode = 1;
