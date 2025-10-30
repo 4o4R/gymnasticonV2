@@ -284,6 +284,7 @@ Options:
 Run the unit tests with:
 
 ```
+npm install --include=dev
 npm test
 ```
 
