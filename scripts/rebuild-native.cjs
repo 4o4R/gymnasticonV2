@@ -10,7 +10,7 @@ const modulesToRebuild = [
   'usb'
 ];
 
-console.log('Rebuilding native modules for Node 16+...');
+console.log('Rebuilding native modules for the Node 16 runtime...');
 
 // Ensure node-gyp is available globally (best-effort)
 try {
@@ -27,12 +27,17 @@ modulesToRebuild.forEach(moduleName => {
   }
 
   console.log(`\nRebuilding ${moduleName}...`);
+  const env = {
+    ...process.env,
+    npm_config_build_from_source: 'true'
+  };
+  if (!env.CXXFLAGS) {
+    env.CXXFLAGS = '-std=gnu++14';
+  }
+
   const result = spawnSync('npm', ['rebuild', moduleName, '--build-from-source'], {
     stdio: 'inherit',
-    env: {
-      ...process.env,
-      npm_config_build_from_source: 'true'
-    }
+    env
   });
 
   if (result.status !== 0) {
