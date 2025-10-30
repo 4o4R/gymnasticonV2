@@ -1,6 +1,3 @@
-import nobleDefault from '#noble';
-import bleno from '#bleno';
-
 import {once} from 'events';
 
 import {GymnasticonServer} from '../servers/ble/index.js';
@@ -11,7 +8,14 @@ import {Simulation} from './simulation.js';
 import {Timer} from '../util/timer.js';
 import {Logger} from '../util/logger.js';
 import {createAntStick} from '../util/ant-stick.js';
-import debug from '#debug';
+import {loadDependency, toDefaultExport} from '../util/optional-deps.js';
+
+const nobleModule = loadDependency('@abandonware/noble', '../../stubs/noble.cjs', import.meta);
+const nobleDefault = toDefaultExport(nobleModule);
+const blenoModule = loadDependency('@abandonware/bleno', '../../stubs/bleno.cjs', import.meta);
+const bleno = toDefaultExport(blenoModule);
+const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta);
+const debug = toDefaultExport(debugModule);
 
 const debuglog = debug('gym:app:app');
 

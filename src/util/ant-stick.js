@@ -1,4 +1,7 @@
-import Ant from '#ant';
+import {loadDependency, toDefaultExport} from './optional-deps.js';
+
+const antModule = loadDependency('gd-ant-plus', '../stubs/gd-ant-plus.cjs', import.meta);
+const Ant = toDefaultExport(antModule);
 
 /**
  * Create ANT+ stick.

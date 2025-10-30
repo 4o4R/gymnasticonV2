@@ -11,7 +11,7 @@ const modulesToRebuild = [
   'bluetooth-hci-socket'
 ];
 
-console.log('Rebuilding native modules for Node 14...');
+console.log('Rebuilding native modules for Node 16+...');
 
 // Ensure node-gyp is available
 try {

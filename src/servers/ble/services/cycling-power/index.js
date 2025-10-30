@@ -1,4 +1,7 @@
-import {PrimaryService} from '#bleno';
+import {loadDependency} from '../../../../util/optional-deps.js';
+
+const blenoModule = loadDependency('@abandonware/bleno', '../../../../../stubs/bleno.cjs', import.meta);
+const {PrimaryService} = blenoModule;
 import {CyclingPowerMeasurementCharacteristic} from './characteristics/cycling-power-measurement.js';
 import {CyclingPowerFeatureCharacteristic} from './characteristics/cycling-power-feature.js';
 import {SensorLocationCharacteristic} from './characteristics/sensor-location.js';

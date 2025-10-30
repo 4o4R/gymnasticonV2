@@ -1,18 +1,26 @@
 import {EventEmitter} from 'events';
-import {createRequire} from 'module';
+import {loadDependency, toDefaultExport} from './optional-deps.js';
 
 export const initializeBluetooth = async (adapter = 'hci0') => {
-  const require = createRequire(import.meta.url);
-  let noble;
-  try {
-    noble = require('@abandonware/noble');
-  } catch (err) {
+  const nobleModule = loadDependency('@abandonware/noble', '../stubs/noble.cjs', import.meta);
+  const usingStub = Boolean(nobleModule && nobleModule.__isStub);
+  let noble = toDefaultExport(nobleModule);
+
+  if (usingStub) {
     console.warn('Using stub noble module - BLE not available');
-    noble = new EventEmitter();
-    noble.state = 'poweredOff';
-    noble.startScanning = () => {};
-    noble.startScanningAsync = async () => {};
-    noble.stopScanning = () => {};
+    if (!(noble instanceof EventEmitter)) {
+      const emitter = new EventEmitter();
+      emitter.state = 'poweredOff';
+      emitter.startScanningAsync = async () => {};
+      emitter.stopScanningAsync = async () => {};
+      emitter.disconnect = () => {};
+      noble = emitter;
+    } else {
+      noble.state = noble.state || 'poweredOff';
+      noble.startScanningAsync = noble.startScanningAsync || (async () => {});
+      noble.stopScanningAsync = noble.stopScanningAsync || (async () => {});
+      noble.disconnect = noble.disconnect || (() => {});
+    }
   }
   
   // Add retry logic for robust connections

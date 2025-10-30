@@ -2,7 +2,7 @@
 
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import yargs from 'yargs/yargs';
+import yargs from 'yargs/yargs.js';
 import { hideBin } from 'yargs/helpers';
 
 import { App } from './app.js';

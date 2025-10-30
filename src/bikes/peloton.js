@@ -1,8 +1,7 @@
 import {once, EventEmitter} from 'events';
 import {Timer} from '../util/timer.js';
 import util from 'util';
-import SerialPort from '#serialport';
-import Delimiter from '#parser-delimiter';
+import {loadDependency, toDefaultExport} from '../util/optional-deps.js';
 
 /**
  * Cadence and Power are both direct values returned by the bike.
@@ -20,10 +19,14 @@ const PACKET_DELIMITER = Buffer.from('f6', 'hex');
 const POLL_RATE = 100;
 const STATS_TIMEOUT = 1.0;
 
-import debug from '#debug';
-
-const debuglog = debug('gym:bikes:peloton');
-const tracelog = debug('gym:bikes:peloton:trace');
+const serialPortModule = loadDependency('serialport', '../../stubs/serialport.cjs', import.meta);
+const SerialPort = toDefaultExport(serialPortModule);
+const delimiterModule = loadDependency('@serialport/parser-delimiter', '../../stubs/parser-delimiter.cjs', import.meta);
+const Delimiter = toDefaultExport(delimiterModule);
+const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta);
+const debugFactory = toDefaultExport(debugModule);
+const debuglog = debugFactory('gym:bikes:peloton');
+const tracelog = debugFactory('gym:bikes:peloton:trace');
 
 export class PelotonBikeClient extends EventEmitter {
   /**
