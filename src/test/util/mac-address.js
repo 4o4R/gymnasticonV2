@@ -1,4 +1,4 @@
-import {test} from 'tape';
+import test from '../support/tape.js';
 import {macAddress} from '../../util/mac-address.js';
 
 test('macAddress() accepts valid inputs', t => {

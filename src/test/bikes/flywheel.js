@@ -1,4 +1,4 @@
-import test from 'tape';
+import test from '../support/tape.js';
 import {parse} from '../../bikes/flywheel.js';
 
 test('parse() parses Flywheel stats messages', t => {

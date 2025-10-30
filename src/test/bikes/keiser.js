@@ -1,4 +1,4 @@
-import test from 'tape';
+import test from '../support/tape.js';
 import {parse} from '../../bikes/keiser.js';
 import {bikeVersion} from '../../bikes/keiser.js';
 

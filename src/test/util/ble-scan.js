@@ -1,4 +1,4 @@
-import test from 'tape';
+import test from '../support/tape.js';
 import {createFilter, createNameFilter, createAddressFilter} from '../../util/ble-scan.js';
 
 // peripherals

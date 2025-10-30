@@ -1,4 +1,4 @@
-import test from 'tape';
+import test from '../support/tape.js';
 import {createDropoutFilter} from '../../util/dropout-filter.js';
 
 test('fill spurious zero power measurements with previous value', t => {
