@@ -1,8 +1,10 @@
-import Ant from '#ant';
 import {Timer} from '../../util/timer.js';
-import debug from '#debug';
+import {loadDependency, toDefaultExport} from '../../util/optional-deps.js';
 
-const debuglog = debug('gym:servers:ant');
+const antModule = loadDependency('gd-ant-plus', '../../../stubs/gd-ant-plus.cjs', import.meta);
+const Ant = toDefaultExport(antModule);
+const debugModule = loadDependency('debug', '../../../stubs/debug.cjs', import.meta);
+const debuglog = toDefaultExport(debugModule)('gym:servers:ant');
 
 const DEVICE_TYPE = 0x0b; // power meter
 const DEVICE_NUMBER = 1;

@@ -15,9 +15,10 @@ const KEISER_STATS_NEWVER_MINOR = 30; // Version Minor when broadcast interval w
 const KEISER_STATS_TIMEOUT_OLD = 30.0; // Old Bike: If no stats received within 30 sec, reset power and cadence to 0
 const KEISER_STATS_TIMEOUT_NEW = 20.0; // New Bike: If no stats received within 20 sec, reset power and cadence to 0
 const KEISER_BIKE_TIMEOUT = 60.0; // Consider bike disconnected if no stats have been received for 60 sec / 1 minutes
-import debug from '#debug';
+import {loadDependency, toDefaultExport} from '../util/optional-deps.js';
 
-const debuglog = debug('gym:bikes:keiser');
+const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta);
+const debuglog = toDefaultExport(debugModule)('gym:bikes:keiser');
 
 
 /**

@@ -1,4 +1,7 @@
-import {PrimaryService} from '#bleno';
+import {loadDependency} from '../../../../util/optional-deps.js';
+
+const blenoModule = loadDependency('@abandonware/bleno', '../../../../../stubs/bleno.cjs', import.meta);
+const {PrimaryService} = blenoModule;
 import {HeartRateMeasurementCharacteristic} from './characteristics/heart-rate-measurement.js';
 
 /**

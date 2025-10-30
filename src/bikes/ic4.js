@@ -16,9 +16,10 @@ const IBD_VALUE_MAGIC = Buffer.from([0x44]); // identifies indoor bike data mess
 const IBD_VALUE_IDX_POWER = 6; // 16-bit power (watts) data offset within packet
 const IBD_VALUE_IDX_CADENCE = 4; // 16-bit cadence (1/2 rpm) data offset within packet
 
-import debug from '#debug';
+import {loadDependency, toDefaultExport} from '../util/optional-deps.js';
 
-const debuglog = debug('gym:bikes:ic4');
+const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta);
+const debuglog = toDefaultExport(debugModule)('gym:bikes:ic4');
 
 /**
  * Handles communication with Schwinn IC4 indoor training bike using the standard

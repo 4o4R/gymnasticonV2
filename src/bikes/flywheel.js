@@ -24,9 +24,10 @@ const LE_MAX_INTERVAL = 60*1.25;
 const LE_LATENCY = 0;
 const LE_SUPERVISION_TIMEOUT = 4000;
 
-import debug from '#debug';
+import {loadDependency, toDefaultExport} from '../util/optional-deps.js';
 
-const debuglog = debug('gym:bikes:flywheel');
+const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta);
+const debuglog = toDefaultExport(debugModule)('gym:bikes:flywheel');
 
 /**
  * Handles communication with Flywheel indoor training bike using the bike's

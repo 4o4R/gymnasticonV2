@@ -10,7 +10,7 @@ const modulesToRebuild = [
   'usb'
 ];
 
-console.log('Rebuilding native modules for Node 14...');
+console.log('Rebuilding native modules for Node 16+...');
 
 // Ensure node-gyp is available globally (best-effort)
 try {

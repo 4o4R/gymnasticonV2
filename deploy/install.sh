@@ -10,8 +10,8 @@ fi
 sudo npm uninstall -g gymnasticon >/dev/null 2>&1 || true
 sudo rm -rf /opt/gymnasticon
 
-# Install Node.js 14 (matches repository runtime requirements)
-curl -fsSL https://deb.nodesource.com/setup_14.x | sudo -E bash -
+# Install Node.js 16 (matches repository runtime requirements)
+curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
 sudo apt-get update
 sudo apt-get install -y nodejs npm bluetooth bluez libbluetooth-dev libudev-dev git
 
