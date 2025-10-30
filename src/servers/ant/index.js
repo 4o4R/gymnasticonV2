@@ -58,6 +58,9 @@ export class AntServer {
    * Start the ANT+ server (setup channel and start broadcasting).
    */
   start() {
+    if (this._isRunning) {
+      return;
+    }
     const {stick, channel, deviceId} = this;
     const messages = [
       Ant.Messages.assignChannel(channel, 'transmit'),
@@ -82,6 +85,9 @@ export class AntServer {
    * Stop the ANT+ server (stop broadcasting and unassign channel).
    */
   stop() {
+    if (!this._isRunning) {
+      return;
+    }
     const {stick, channel} = this;
     this.broadcastInterval.cancel();
     const messages = [
@@ -91,6 +97,7 @@ export class AntServer {
     for (let m of messages) {
       stick.write(m);
     }
+    this._isRunning = false;
   }
 
   /**

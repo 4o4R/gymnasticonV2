@@ -73,7 +73,16 @@ export class App {
 
     this.server = new GymnasticonServer(this.bleno, opts.serverName);
     this.antStick = createAntStick();
+    this.antStickClosed = false;
     this.antServer = new AntServer(this.antStick, { deviceId: opts.antDeviceId });
+
+    this.onAntStickStartup = this.onAntStickStartup.bind(this);
+    this.stopAnt = this.stopAnt.bind(this);
+
+    if (typeof this.antStick.on === 'function') {
+      this.antStick.on('startup', this.onAntStickStartup);
+      this.antStick.on('shutdown', this.stopAnt);
+    }
 
     this.statsTimeout = new Timer(opts.bikeReceiveTimeout, { repeats: false });
     this.statsTimeout.on('timeout', this.onBikeStatsTimeout.bind(this));
@@ -126,9 +135,7 @@ export class App {
       await this.bike.disconnect();
     }
     await this.server.stop();
-    if (this.antServer.isRunning) {
-      this.stopAnt();
-    }
+    this.stopAnt();
     if (this.hrClient) {
       await this.hrClient.disconnect();
     }
@@ -139,6 +146,18 @@ export class App {
       await this.stop();
     } catch (e) {
       this.logger.error(e);
+    }
+    if (typeof this.antStick?.removeListener === 'function') {
+      this.antStick.removeListener('startup', this.onAntStickStartup);
+      this.antStick.removeListener('shutdown', this.stopAnt);
+    }
+    if (typeof this.antStick?.close === 'function' && !this.antStickClosed) {
+      try {
+        this.antStick.close();
+        this.antStickClosed = true;
+      } catch (e) {
+        this.logger.error('Error closing ANT+ stick', e);
+      }
     }
   }
 
@@ -220,19 +239,45 @@ export class App {
       this.logger.log('no ANT+ stick found');
       return;
     }
-    if (!this.antStick.open()) {
-      this.logger.error('failed to open ANT+ stick');
+    try {
+      const opened = this.antStick.open();
+      if (opened === false) {
+        this.logger.error('failed to open ANT+ stick');
+        return;
+      }
+      this.antStickClosed = false;
+      const hasEventEmitter = typeof this.antStick.on === 'function';
+      if (!hasEventEmitter || opened === true) {
+        this.onAntStickStartup();
+      }
+    } catch (err) {
+      this.logger.error('failed to open ANT+ stick', err);
     }
   }
 
   onAntStickStartup() {
+    if (this.antServer.isRunning) {
+      return;
+    }
     this.logger.log('ANT+ stick opened');
+    this.antStickClosed = false;
     this.antServer.start();
   }
 
   stopAnt() {
+    if (!this.antServer.isRunning) {
+      return;
+    }
     this.logger.log('stopping ANT+ server');
     this.antServer.stop();
+    if (typeof this.antStick?.close === 'function' && !this.antStickClosed) {
+      try {
+        this.antStick.close();
+        this.antStickClosed = true;
+      } catch (err) {
+        this.logger.error('failed to close ANT+ stick', err);
+      }
+    }
   }
 
   onSigInt() {

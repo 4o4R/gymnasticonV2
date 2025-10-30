@@ -8,4 +8,5 @@ Type=simple
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/node /opt/gymnasticon/index.js
+WorkingDirectory=/opt/gymnasticon
+ExecStart=/usr/bin/env node /opt/gymnasticon/src/app/cli.js

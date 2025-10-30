@@ -39,66 +39,72 @@ export class Ic4BikeClient extends EventEmitter {
     this.state = 'disconnected';
     this.onReceive = this.onReceive.bind(this);
     this.onDisconnect = this.onDisconnect.bind(this);
+  }
+
+  /**
+   * Establish a connection to the bike's Bluetooth LE GATT Fitness Machine Service.
+   */
+  async connect() {
+    if (this.state === 'connected') {
+      throw new Error('Already connected');
     }
 
-    /**
-     * Establish a connection to the bike's Bluetooth LE GATT Fitness Machine Service.
-     */
-    async connect() {
-      if (this.state === 'connected') {
-        throw new Error('Already connected');
-      }
+    const scanOptions = {
+      allowDuplicates: false,
+      active: true
+    };
 
-      const scanOptions = {
-        allowDuplicates: false,
-        active: true
-      };
-
-      this.peripheral = await scan(this.noble, [FTMS_SERVICE_UUID], this.filter, scanOptions);
-      await this.peripheral.connectAsync({timeout: 10000});
-
-      // discover services/characteristics
-      const {characteristics} = await this.peripheral.discoverSomeServicesAndCharacteristicsAsync(
-        [FTMS_SERVICE_UUID], [INDOOR_BIKE_DATA_UUID]);
-      const [indoorBikeData] = characteristics;
-      this.indoorBikeData = indoorBikeData;
-
-      // subscribe to receive data
-      this.indoorBikeData.on('read', this.onReceive);
-
-      // Workaround for enabling notifications on the IC4 bike.
-      //
-      // Characteristic notifications are enabled by setting bit 0 of the Client
-      // Characteristic Configuration Descriptor (CCCD) to 1.
-      //
-      // Using the hci-socket bindings, noble's subscribeAsync() translates to:
-      //
-      // => ATT Read By Type Request    # get cccd handle and value
-      // <= ATT Read By Type Response
-      // => ATT Write Request           # set new value with bit 0 set to 1
-      //
-      // However the IC4 bike never sends the Read By Type Response.
-      //
-      // So the workaround below does this instead:
-      //
-      // => ATT Find Info Request       # get all descriptor handles
-      // <= ATT Find Info Response
-      // => ATT Write Request           # set value to 1 (0100 uint16le)
-      //
-      //await this.indoorBikeData.subscribeAsync(); // doesn't work
-      await this.indoorBikeData.discoverDescriptorsAsync();
-      const cccd = this.indoorBikeData.descriptors.find(d => d.uuid == '2902');
-      await cccd.writeValueAsync(Buffer.from([1,0])); // 0100 <- enable notifications
-
-      this.state = 'connected';
+    this.state = 'connecting';
+    this.peripheral = await scan(this.noble, [FTMS_SERVICE_UUID], this.filter, scanOptions);
+    if (!this.peripheral) {
+      this.state = 'disconnected';
+      throw new Error('Unable to find IC4 bike');
     }
+    await this.peripheral.connectAsync({timeout: 10000});
+    this.peripheral.on('disconnect', this.onDisconnect);
+
+    // discover services/characteristics
+    const {characteristics} = await this.peripheral.discoverSomeServicesAndCharacteristicsAsync(
+      [FTMS_SERVICE_UUID], [INDOOR_BIKE_DATA_UUID]);
+    const [indoorBikeData] = characteristics;
+    this.indoorBikeData = indoorBikeData;
+
+    // subscribe to receive data
+    this.indoorBikeData.on('read', this.onReceive);
+
+    // Workaround for enabling notifications on the IC4 bike.
+    //
+    // Characteristic notifications are enabled by setting bit 0 of the Client
+    // Characteristic Configuration Descriptor (CCCD) to 1.
+    //
+    // Using the hci-socket bindings, noble's subscribeAsync() translates to:
+    //
+    // => ATT Read By Type Request    # get cccd handle and value
+    // <= ATT Read By Type Response
+    // => ATT Write Request           # set new value with bit 0 set to 1
+    //
+    // However the IC4 bike never sends the Read By Type Response.
+    //
+    // So the workaround below does this instead:
+    //
+    // => ATT Find Info Request       # get all descriptor handles
+    // <= ATT Find Info Response
+    // => ATT Write Request           # set value to 1 (0100 uint16le)
+    //
+    //await this.indoorBikeData.subscribeAsync(); // doesn't work
+    await this.indoorBikeData.discoverDescriptorsAsync();
+    const cccd = this.indoorBikeData.descriptors.find(d => d.uuid == '2902');
+    await cccd.writeValueAsync(Buffer.from([1,0])); // 0100 <- enable notifications
+
+    this.state = 'connected';
+  }
 
   /**
    * Get the bike's MAC address.
    * @returns {string} mac address
    */
   get address() {
-    return macAddress(this.peripheral.address);
+    return this.peripheral ? macAddress(this.peripheral.address) : undefined;
   }
 
   /**
@@ -131,8 +137,19 @@ export class Ic4BikeClient extends EventEmitter {
    * Disconnect from the bike.
    */
   async disconnect() {
-    if (this.state !== 'disconnected') return;
-    await this.peripheral.disconnectAsync();
+    if (this.state === 'disconnected' || !this.peripheral) {
+      return;
+    }
+    this.state = 'disconnecting';
+    try {
+      await this.peripheral.disconnectAsync();
+    } catch (err) {
+      debuglog('error disconnecting from IC4 bike', err);
+    } finally {
+      if (this.state !== 'disconnected') {
+        this.onDisconnect();
+      }
+    }
   }
 
   /**
@@ -141,8 +158,16 @@ export class Ic4BikeClient extends EventEmitter {
    * @private
    */
   onDisconnect() {
+    if (this.state === 'disconnected') {
+      return;
+    }
     this.state = 'disconnected';
-    this.peripheral.off('disconnect', this.onDisconnect);
+    let address;
+    if (this.peripheral) {
+      this.peripheral.off('disconnect', this.onDisconnect);
+      address = this.peripheral.address;
+      this.peripheral = null;
+    }
 
     /**
      * Disconnect event.
@@ -150,7 +175,7 @@ export class Ic4BikeClient extends EventEmitter {
      * @type {object}
      * @property {string} address - mac address
      */
-    this.emit('disconnect', {address: this.peripheral.address});
+    this.emit('disconnect', {address});
   }
 }
 

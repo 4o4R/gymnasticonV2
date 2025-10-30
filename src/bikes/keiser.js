@@ -15,32 +15,10 @@ const KEISER_STATS_NEWVER_MINOR = 30; // Version Minor when broadcast interval w
 const KEISER_STATS_TIMEOUT_OLD = 30.0; // Old Bike: If no stats received within 30 sec, reset power and cadence to 0
 const KEISER_STATS_TIMEOUT_NEW = 20.0; // New Bike: If no stats received within 20 sec, reset power and cadence to 0
 const KEISER_BIKE_TIMEOUT = 60.0; // Consider bike disconnected if no stats have been received for 60 sec / 1 minutes
-const CYCLING_POWER_MEASUREMENT_UUID = '2A63';
-const CSC_MEASUREMENT_UUID = '2A5B';
-
 import debug from '#debug';
 
 const debuglog = debug('gym:bikes:keiser');
 
-function formatPowerMeasurement(power) {
-  const flags = 0;
-  const data = Buffer.alloc(4);
-  data.writeUInt16LE(flags, 0);
-  data.writeInt16LE(power, 2);
-  return data;
-}
-
-function formatCSCMeasurement(cadence) {
-  const flags = 0x02; // crank revolution data present
-  const crankRevs = Math.floor(cadence);
-  const lastCrankTime = Math.floor(Date.now() * 1.024) % 65536; // in 1/1024s
-
-  const data = Buffer.alloc(7);
-  data.writeUInt8(flags, 0);
-  data.writeUInt16LE(crankRevs, 3);
-  data.writeUInt16LE(lastCrankTime, 5);
-  return data;
-}
 
 /**
  * Handles communication with Keiser bikes
@@ -54,105 +32,87 @@ export class KeiserBikeClient extends EventEmitter {
     this.state = 'disconnected';
     this.onReceive = this.onReceive.bind(this);
     this.restartScan = this.restartScan.bind(this);
-    
-    // Define service UUIDs
-    this.CYCLING_POWER_SERVICE_UUID = '1818';
-    this.CSC_SERVICE_UUID = '1816';
-    
-    // Modern BLE scanning options
-    this.scanOptions = {
-      allowDuplicates: true,
-      active: true,
-      powerSave: false,
-      services: [this.CYCLING_POWER_SERVICE_UUID, this.CSC_SERVICE_UUID]
-    };
+    this.onStatsTimeout = this.onStatsTimeout.bind(this);
+    this.onBikeTimeout = this.onBikeTimeout.bind(this);
+
+    this.statsTimeout = null;
+    this.bikeTimeout = null;
+    this.peripheral = null;
+    this.fixDropout = null;
   }
   /**
    * Bike behaves like a BLE beacon. Simulate connect by looking up MAC address
    * scanning and filtering subsequent announcements from this address.
-     */
-        async connect() {
-      if (this.state === 'connected') {
-        throw new Error('Already connected');
-      }
+   */
+  async connect() {
+    if (this.state === 'connected' || this.state === 'connecting') {
+      throw new Error('Already connected');
+    }
 
-      const scanOptions = {
-        allowDuplicates: true,
-        active: true
-      };
+    this.state = 'connecting';
 
-      // Scan for bike with modern Noble options
-      const filter = createNameFilter(KEISER_LOCALNAME);
-      this.peripheral = await scan(this.noble, null, filter, scanOptions);
+    const filter = createNameFilter(KEISER_LOCALNAME);
+    const peripheral = await scan(this.noble, null, filter, {
+      allowDuplicates: true,
+      active: true
+    });
 
-      this.state = 'connected';
+    if (!peripheral) {
+      this.state = 'disconnected';
+      throw new Error('Unable to find Keiser bike');
+    }
 
-      // Add service setup
-      await this.setupServices();
+    this.peripheral = peripheral;
 
-      // Determine bike firmware version and set stats timeout
-      let bikestatstimeout = KEISER_STATS_TIMEOUT_OLD; // Fallback for unknown firmware version
-      try {
-        bikestatstimeout = bikeVersion(this.peripheral.advertisement.manufacturerData).timeout;
-      } catch (e) {
-        console.log("Keiser M3 bike: Unknown version detected");
-        this.onBikeTimeout(); // Disconnect as this data cannot be handled
-      }
-
-      // Reset stats to 0 when bike suddenly dissapears
-      this.statsTimeout = new Timer(bikestatstimeout, {repeats: false});
-      this.statsTimeout.on('timeout', this.onStatsTimeout.bind(this));
-
-      // Consider bike disconnected if no stats have been received for certain time
-      this.bikeTimeout = new Timer(KEISER_BIKE_TIMEOUT, {repeats: false});
-      this.bikeTimeout.on('timeout', this.onBikeTimeout.bind(this));
-
-      // Create filter to fix power and cadence dropouts
-      this.fixDropout = createDropoutFilter();
-
-      // Waiting for data
-      await this.noble.startScanningAsync(null, true);
-      this.noble.on('discover', this.onReceive);
-
-      // Workaround for noble stopping to scan after connect to bleno
-      // See https://github.com/noble/noble/issues/223
-      this.noble.on('scanStop', this.restartScan);
-}
-
-
-async setupServices() {
+    let statsTimeoutSeconds = KEISER_STATS_TIMEOUT_OLD;
     try {
-      // Get existing services from peripheral
-      const services = await this.peripheral.discoverServicesAsync([
-        this.CYCLING_POWER_SERVICE_UUID,
-        this.CSC_SERVICE_UUID
-      ]);
-
-      // Set up power service
-      const powerService = services.find(s => s.uuid === this.CYCLING_POWER_SERVICE_UUID);
-      if (powerService) {
-        const characteristics = await powerService.discoverCharacteristicsAsync([CYCLING_POWER_MEASUREMENT_UUID]);
-        this.powerCharacteristic = characteristics[0];
-        await this.powerCharacteristic.subscribeAsync();
-      }
-
-      // Set up CSC service  
-      const cscService = services.find(s => s.uuid === this.CSC_SERVICE_UUID);
-      if (cscService) {
-        const characteristics = await cscService.discoverCharacteristicsAsync([CSC_MEASUREMENT_UUID]);
-        this.cscCharacteristic = characteristics[0];
-        await this.cscCharacteristic.subscribeAsync();
+      const manufacturerData = peripheral.advertisement?.manufacturerData;
+      if (manufacturerData) {
+        const {timeout} = bikeVersion(manufacturerData);
+        statsTimeoutSeconds = timeout;
+      } else {
+        debuglog('Keiser bike manufacturer data unavailable; using default stats timeout');
       }
     } catch (error) {
-      console.error('Error setting up Keiser bike services:', error);
-      throw error;
+      debuglog('Unable to determine Keiser bike firmware version', error);
     }
-}  /**
+
+    this.statsTimeout = new Timer(statsTimeoutSeconds, {repeats: false});
+    this.statsTimeout.on('timeout', this.onStatsTimeout);
+
+    this.bikeTimeout = new Timer(KEISER_BIKE_TIMEOUT, {repeats: false});
+    this.bikeTimeout.on('timeout', this.onBikeTimeout);
+
+    this.fixDropout = createDropoutFilter();
+
+    try {
+      await this.noble.startScanningAsync(null, true);
+    } catch (err) {
+      this.state = 'disconnected';
+      if (this.statsTimeout) {
+        this.statsTimeout.cancel();
+        this.statsTimeout = null;
+      }
+      if (this.bikeTimeout) {
+        this.bikeTimeout.cancel();
+        this.bikeTimeout = null;
+      }
+      this.fixDropout = null;
+      throw err;
+    }
+    this.noble.on('discover', this.onReceive);
+    this.noble.on('scanStop', this.restartScan);
+
+    this.statsTimeout.reset();
+    this.bikeTimeout.reset();
+    this.state = 'connected';
+  }
+  /**
    * Get the bike's MAC address.
-   * @returns {string} mac address
+   * @returns {string|undefined} mac address
    */
   get address() {
-    return macAddress(this.peripheral.address);
+    return this.peripheral ? macAddress(this.peripheral.address) : undefined;
   }
 
   /**
@@ -162,69 +122,104 @@ async setupServices() {
    * @emits BikeClient#stats
    * @private
    */
-onReceive(data) {
-  try {
-    if (data.address == this.peripheral.address) {
-      const {type, payload} = parse(data.advertisement.manufacturerData);
-      if (type === 'stats') {
-        const fixed = this.fixDropout(payload);
-        
-        // Format both power and CSC data
-        const powerData = formatPowerMeasurement(fixed.power);
-        const cscData = formatCSCMeasurement(fixed.cadence);
-        
-        // Update both characteristics
-        this.powerCharacteristic.updateValue(powerData);
-        this.cscCharacteristic.updateValue(cscData);
-        
-        // Emit combined stats
-        this.emit(type, {
-          ...fixed,
-          powerMeasurement: powerData,
-          cscMeasurement: cscData
-        });
-        
-        this.statsTimeout.reset();
-        this.bikeTimeout.reset();
+  onReceive(peripheral) {
+    if (!this.peripheral || peripheral.address !== this.peripheral.address) {
+      return;
+    }
+
+    if (!this.fixDropout) {
+      return;
+    }
+
+    try {
+      const manufacturerData = peripheral.advertisement?.manufacturerData;
+      if (!manufacturerData) {
+        return;
+      }
+
+      const {type, payload} = parse(manufacturerData);
+      if (type !== 'stats') {
+        return;
+      }
+
+      const fixed = this.fixDropout(payload);
+      this.emit(type, fixed);
+      if (this.statsTimeout) this.statsTimeout.reset();
+      if (this.bikeTimeout) this.bikeTimeout.reset();
+    } catch (e) {
+      if (!/unable to parse message/.test(String(e))) {
+        throw e;
       }
     }
-  } catch (e) {
-    if (!/unable to parse message/.test(e)) {
-      throw e;
-    }
   }
-}
   /**
    * Set power & cadence to 0 when the bike dissapears
    */
   async onStatsTimeout() {
-
-    const reset = { power:0, cadence:0 };
+    const reset = {power: 0, cadence: 0};
     debuglog('Stats timeout exceeded');
-    console.log("Stats timeout: Restarting BLE Scan");
-    if (this.state === 'connected') {
-      if (this.noble.state === 'poweredOn') {
-        try {
-          await this.noble.startScanningAsync(null, true);
-        } catch (err) {
-          console.log("Stats timeout: Unable to restart BLE Scan: " + err);
-        }
-      } else {
-        console.log("Stats timeout: Bluetooth no longer powered on");
-        this.onBikeTimeout();
+    this.emit('stats', reset);
+
+    if (this.state !== 'connected') {
+      return;
+    }
+
+    if (this.noble.state !== 'poweredOn') {
+      debuglog('Stats timeout: Bluetooth adapter no longer powered on');
+      this.onBikeTimeout();
+      return;
+    }
+
+    try {
+      await this.noble.startScanningAsync(null, true);
+    } catch (err) {
+      debuglog('Stats timeout: Unable to restart BLE scan', err);
+    } finally {
+      if (this.statsTimeout) {
+        this.statsTimeout.reset();
       }
     }
-    this.emit('stats', reset);
+  }
+
+  async disconnect() {
+    if (this.state === 'disconnected' || this.state === 'disconnecting') {
+      return;
+    }
+
+    this.state = 'disconnecting';
+
+    if (this.statsTimeout) {
+      this.statsTimeout.cancel();
+      this.statsTimeout = null;
+    }
+    if (this.bikeTimeout) {
+      this.bikeTimeout.cancel();
+      this.bikeTimeout = null;
+    }
+
+    this.noble.off('discover', this.onReceive);
+    this.noble.off('scanStop', this.restartScan);
+
+    try {
+      await this.noble.stopScanningAsync();
+    } catch (err) {
+      debuglog('Unable to stop BLE scan', err);
+    }
+
+    const address = this.address;
+    this.peripheral = null;
+    this.fixDropout = null;
+
+    this.state = 'disconnected';
+    this.emit('disconnect', {address});
   }
 
   /**
-  * Consider Bike disconnected after certain time
-  */
+   * Consider Bike disconnected after certain time
+   */
   onBikeTimeout() {
     debuglog('M3 Bike disconnected');
-    this.state = 'disconnected';
-    this.noble.off('scanStop', this.restartScan);
-    this.emit('disconnect', {address: this.peripheral.address});
+    this.disconnect().catch((err) => debuglog('error disconnecting after timeout', err));
   }
 
   /**
@@ -233,11 +228,13 @@ onReceive(data) {
    * See https://github.com/noble/noble/issues/223
    */
   async restartScan() {
-    console.log("Restarting BLE Scan");
+    if (this.state !== 'connected') {
+      return;
+    }
     try {
       await this.noble.startScanningAsync(null, true);
     } catch (err) {
-      console.log("Unable to restart BLE Scan: " + err);
+      debuglog('Unable to restart BLE scan', err);
     }
   }
 }
