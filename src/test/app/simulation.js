@@ -1,5 +1,5 @@
 import test from '../support/tape.js';
-import sinon from 'sinon';
+import sinon from '../support/sinon.js';
 import {Simulation} from '../../app/simulation.js';
 
 test('constant cadence', t => {
