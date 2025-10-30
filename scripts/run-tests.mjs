@@ -2,8 +2,7 @@ import {readdir} from 'fs/promises';
 import {join} from 'path';
 import {fileURLToPath, pathToFileURL} from 'url';
 
-const tapeModule = await import('tape');
-const tape = tapeModule.default ?? tapeModule;
+const {default: tape} = await import('../src/test/support/tape.js');
 
 const rootDir = fileURLToPath(new URL('../src/test', import.meta.url));
 

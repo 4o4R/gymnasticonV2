@@ -1,4 +1,4 @@
-import {test} from 'tape';
+import test from '../support/tape.js';
 import sinon from 'sinon';
 import {Simulation} from '../../app/simulation.js';
 

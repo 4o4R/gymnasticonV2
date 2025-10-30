@@ -1,4 +1,4 @@
-import test from 'tape';
+import test from '../support/tape.js';
 import {parse} from '../../bikes/ic4.js';
 
 test('parse() parses Schwinn IC4 indoor bike data values', t => {

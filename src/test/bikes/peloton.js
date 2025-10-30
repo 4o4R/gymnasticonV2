@@ -1,4 +1,4 @@
-import test from 'tape';
+import test from '../support/tape.js';
 import {decodePeloton} from '../../bikes/peloton.js';
 
 test('decodePeloton() parses Peloton stats messages', t => {
