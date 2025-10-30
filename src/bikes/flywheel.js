@@ -62,8 +62,14 @@ export class FlywheelBikeClient extends EventEmitter {
       active: true
     };
 
+    this.state = 'connecting';
     this.peripheral = await scan(this.noble, [UART_SERVICE_UUID], this.filter, scanOptions);
-    
+
+    if (!this.peripheral) {
+      this.state = 'disconnected';
+      throw new Error('Unable to find Flywheel bike');
+    }
+
     // Modern connection parameters
     const connectionParams = {
       minInterval: LE_MIN_INTERVAL,
@@ -72,8 +78,9 @@ export class FlywheelBikeClient extends EventEmitter {
       supervisionTimeout: LE_SUPERVISION_TIMEOUT,
       timeout: 10000
     };
-    
+
     await this.peripheral.connectAsync(connectionParams);
+    this.peripheral.on('disconnect', this.onDisconnect);
 
     // discover services/characteristics
     const {characteristics} = await this.peripheral.discoverSomeServicesAndCharacteristicsAsync(
@@ -93,7 +100,7 @@ export class FlywheelBikeClient extends EventEmitter {
    * @returns {string} mac address
    */
   get address() {
-    return macAddress(this.peripheral.address);
+    return this.peripheral ? macAddress(this.peripheral.address) : undefined;
   }
 
   /**
@@ -143,8 +150,20 @@ export class FlywheelBikeClient extends EventEmitter {
    * Disconnect from the bike.
    */
   async disconnect() {
-    if (this.state !== 'disconnected') return;
-    await this.peripheral.disconnectAsync();
+    if (this.state === 'disconnected' || !this.peripheral) {
+      return;
+    }
+    const disconnectingPeripheral = this.peripheral;
+    this.state = 'disconnecting';
+    try {
+      await disconnectingPeripheral.disconnectAsync();
+    } catch (err) {
+      debuglog('error disconnecting from Flywheel bike', err);
+    } finally {
+      if (this.state !== 'disconnected') {
+        this.onDisconnect();
+      }
+    }
   }
 
   /**
@@ -153,8 +172,16 @@ export class FlywheelBikeClient extends EventEmitter {
    * @private
    */
   onDisconnect() {
+    if (this.state === 'disconnected') {
+      return;
+    }
     this.state = 'disconnected';
-    this.peripheral.off('disconnect', this.onDisconnect);
+    let address;
+    if (this.peripheral) {
+      this.peripheral.off('disconnect', this.onDisconnect);
+      address = this.peripheral.address;
+      this.peripheral = null;
+    }
 
     /**
      * Disconnect event.
@@ -162,7 +189,7 @@ export class FlywheelBikeClient extends EventEmitter {
      * @type {object}
      * @property {string} address - mac address
      */
-    this.emit('disconnect', {address: this.peripheral.address});
+    this.emit('disconnect', {address});
   }
 }
 

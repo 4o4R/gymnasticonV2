@@ -8,6 +8,7 @@ NC='\033[0m'
 echo -e "${GREEN}Starting Gymnasticon Installation...${NC}"
 
 # System dependencies
+curl -fsSL https://deb.nodesource.com/setup_14.x | sudo -E bash -
 sudo apt-get update
 sudo apt-get install -y nodejs npm bluetooth bluez libudev-dev git
 
@@ -16,8 +17,8 @@ sudo mkdir -p /opt/gymnasticon
 cd /opt/gymnasticon
 
 # Clone and build
-git clone https://github.com/yourusername/gymnasticon.git .
-npm install
+git clone https://github.com/4o4R/gymnasticonV2.git .
+npm install --omit=dev
 npm run build
 
 # Setup systemd service for auto-start
