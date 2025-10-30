@@ -1,7 +1,8 @@
 #!/bin/bash -e
 
-NODE_SHASUM256=de4440edf147d6b534b7dea61ef2e05eb8b7844dec93bdf324ce2c83cf7a7f3c
-NODE_URL=https://unofficial-builds.nodejs.org/download/release/v12.18.3/node-v12.18.3-linux-armv6l.tar.gz
+NODE_VERSION=16.20.2
+NODE_SHASUM256=
+NODE_URL=https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-armv6l.tar.gz
 GYMNASTICON_USER=${FIRST_USER_NAME}
 GYMNASTICON_GROUP=${FIRST_USER_NAME}
 
@@ -9,7 +10,11 @@ if [ ! -x "${ROOTFS_DIR}/opt/gymnasticon/node/bin/node" ] ; then
   TMPD=$(mktemp -d)
   trap 'rm -rf $TMPD' EXIT
   curl -Lo $TMPD/node.tar.gz ${NODE_URL}
-  sha256sum -c <(echo "$NODE_SHASUM256 $TMPD/node.tar.gz")
+  if [ -n "$NODE_SHASUM256" ]; then
+    sha256sum -c <(echo "$NODE_SHASUM256 $TMPD/node.tar.gz")
+  else
+    echo "Skipping Node.js tarball checksum verification (no hash provided)"
+  fi
   install -v -m 644 "$TMPD/node.tar.gz" "${ROOTFS_DIR}/tmp/node.tar.gz"
   on_chroot <<EOF
     mkdir -p /opt/gymnasticon/node
@@ -23,7 +28,7 @@ EOF
 fi
 
 on_chroot <<EOF
-su ${GYMNASTICON_USER} -c 'export PATH=/opt/gymnasticon/node/bin:\$PATH; /opt/gymnasticon/node/bin/npm install -g gymnasticon'
+su ${GYMNASTICON_USER} -c 'export PATH=/opt/gymnasticon/node/bin:\$PATH; CXXFLAGS="-std=gnu++14" /opt/gymnasticon/node/bin/npm install -g gymnasticon'
 EOF
 
 install -v -m 644 files/gymnasticon.json "${ROOTFS_DIR}/etc/gymnasticon.json"

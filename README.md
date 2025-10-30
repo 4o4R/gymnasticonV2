@@ -1,6 +1,6 @@
 # Gymnasticon
 
-![Gymnasticon Logo](docs/gymnasticon.jpg)go](docs/gymnasticon.jpg)
+![Gymnasticon Logo](docs/gymnasticon.jpg)
 
 Gymnasticon enables obsolete and/or proprietary exercise bikes to work with Zwift and other training apps. Support for new bikes can be added easily. The diagram below shows an example of how it works with the Flywheel Home Bike. :)
 
@@ -8,11 +8,13 @@ Gymnasticon enables obsolete and/or proprietary exercise bikes to work with Zwif
 
 # Installation Requirements
 
-1. Node.js 14.x (required for this fork)
+1. Node.js 16.x (ARMv6 builds are available from the [unofficial Node.js archive](https://unofficial-builds.nodejs.org/))
 2. System dependencies:
 ```bash
 sudo apt-get install -y nodejs bluetooth bluez libbluetooth-dev libudev-dev
 ```
+
+When building native dependencies on Raspberry Pi Zero or other ARMv6 devices, export `CXXFLAGS=-std=gnu++14` before running `npm install` so that the `usb` bindings compile with the required C++ standard.
 
 To automate the setup, run:
 ```bash
@@ -190,9 +192,9 @@ Try the Quick Start first. Otherwise read on for how to install Gymnasticon and 
 
 Dependencies:
 
-* Node.JS 12.16.1+
-  * [armv6l](https://unofficial-builds.nodejs.org/download/release/v12.18.3/) binaries (Raspberry Pi)
-  * [x64](https://nodejs.org/dist/latest-v12.x/) binaries
+* Node.js 16.x
+  * [armv6l](https://unofficial-builds.nodejs.org/download/release/v16.20.2/) binaries (Raspberry Pi Zero W)
+  * [x64](https://nodejs.org/dist/latest-v16.x/) binaries
 
 * On Linux (including Raspberry Pi)
   * `sudo apt-get install libudev-dev` (required by node-bluetooth-hci-socket)
@@ -202,6 +204,7 @@ Dependencies:
 Install:
 
 ```bash
+export CXXFLAGS=-std=gnu++14
 npm install -g gymnasticon
 gymnasticon
 ```
@@ -289,6 +292,7 @@ npm test
 ```bash
 git clone https://github.com/4o4R/gymnasticonV2.git
 cd gymnasticonV2
+CXXFLAGS="-std=gnu++14" npm install
 npm run build
 npm link
 gymnasticon --help

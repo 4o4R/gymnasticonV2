@@ -18,7 +18,7 @@ sudo apt-get install -y nodejs npm bluetooth bluez libbluetooth-dev libudev-dev 
 # Clone Gymnasticon repository
 sudo git clone https://github.com/4o4R/gymnasticonV2.git /opt/gymnasticon
 cd /opt/gymnasticon
-sudo npm install --omit=dev
+sudo env CXXFLAGS="-std=gnu++14" npm install --omit=dev
 
 # Configure systemd service
 sudo tee /etc/systemd/system/gymnasticon.service > /dev/null <<'SERVICE'

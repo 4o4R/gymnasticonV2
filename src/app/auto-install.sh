@@ -18,8 +18,8 @@ cd /opt/gymnasticon
 
 # Clone and build
 git clone https://github.com/4o4R/gymnasticonV2.git .
-npm install --omit=dev
-npm run build
+CXXFLAGS="-std=gnu++14" npm install --omit=dev
+CXXFLAGS="-std=gnu++14" npm run build
 
 # Setup systemd service for auto-start
 sudo cp deploy/gymnasticon.service /etc/systemd/system/

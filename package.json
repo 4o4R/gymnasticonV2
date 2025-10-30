@@ -2,7 +2,7 @@
   "name": "gymnasticon",
   "version": "2.0.0",
   "description": "Enables the Flywheel Home Bike to work with Zwift and other training apps.",
-  "engines": { "node": "^16.20.0 || >=18.0.0" },
+  "engines": { "node": ">=16 <17" },
   "type": "module",
   "exports": { ".": "./src/index.js" },
   "bin": { "gymnasticon": "./src/app/cli.js" },
@@ -19,13 +19,13 @@
   "license": "MIT",
   "dependencies": {
     "@abandonware/bleno": "0.5.1-3",
-    "@abandonware/bluetooth-hci-socket": "0.5.3-12",
+    "@abandonware/bluetooth-hci-socket": "0.5.3-7",
     "@abandonware/noble": "1.9.2-10",
-    "@serialport/parser-delimiter": "9.2.4",
-    "bindings": "^1.5.0",
+    "@serialport/parser-delimiter": "9.0.1",
+    "bindings": "1.5.0",
     "debug": "4.3.1",
-    "nan": "^2.17.0",
-    "prebuild-install": "^7.1.1",
+    "nan": "2.17.0",
+    "prebuild-install": "7.1.1",
     "yargs": "15.3.1",
     "gd-ant-plus": "0.0.29",
     "serialport": "9.0.1",
@@ -35,9 +35,9 @@
   "devDependencies": {
     "eslint": "6.8.0",
     "sinon": "9.2.0",
-    "node-addon-api": "^3.2.1"
+    "node-addon-api": "3.2.1"
   },
   "overrides": {
-    "bluetooth-hci-socket": "@abandonware/bluetooth-hci-socket"
+    "@abandonware/bluetooth-hci-socket": "0.5.3-7"
   }
 }
