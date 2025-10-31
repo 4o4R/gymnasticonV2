@@ -27,6 +27,18 @@ const main = async () => {
     .strict()
     .parse();
 
+  if (argv.bikeAdapter) {
+    process.env.NOBLE_HCI_DEVICE_ID = argv.bikeAdapter;
+    process.env.NOBLE_MULTI_ROLE = '1';
+    process.env.NOBLE_EXTENDED_SCAN = '1';
+  }
+  if (argv.serverAdapter) {
+    process.env.BLENO_HCI_DEVICE_ID = argv.serverAdapter;
+    if (!process.env.BLENO_MAX_CONNECTIONS) {
+      process.env.BLENO_MAX_CONNECTIONS = '3';
+    }
+  }
+
   const { noble } = await initializeBluetooth(argv.bikeAdapter);
   const app = new App({
     ...buildAppOptions(argv),

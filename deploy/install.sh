@@ -10,10 +10,35 @@ fi
 sudo npm uninstall -g gymnasticon >/dev/null 2>&1 || true
 sudo rm -rf /opt/gymnasticon
 
-# Install Node.js 16 (matches repository runtime requirements)
-curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
+# Install prerequisites
 sudo apt-get update
-sudo apt-get install -y nodejs npm bluetooth bluez libbluetooth-dev libudev-dev git
+sudo apt-get install -y bluetooth bluez libbluetooth-dev libudev-dev libusb-1.0-0-dev build-essential python3 python-is-python3 pkg-config git curl ca-certificates
+
+NODE_VERSION="${NODE_VERSION:-16.20.2}"
+ARCH="$(uname -m)"
+
+install_node_armv6() {
+    local archive="node-v${NODE_VERSION}-linux-armv6l.tar.xz"
+    local url="https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/${archive}"
+    local tmpdir
+    tmpdir="$(mktemp -d)"
+    echo "Downloading Node.js ${NODE_VERSION} for armv6l..."
+    curl -fsSL "${url}" -o "${tmpdir}/${archive}"
+    echo "Installing Node.js into /usr/local..."
+    sudo tar --strip-components=1 -xJf "${tmpdir}/${archive}" -C /usr/local
+    rm -rf "${tmpdir}"
+}
+
+install_node_default() {
+    curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
+    sudo apt-get install -y nodejs npm
+}
+
+if [ "${ARCH}" = "armv6l" ]; then
+    install_node_armv6
+else
+    install_node_default
+fi
 
 # Clone Gymnasticon repository
 sudo git clone https://github.com/4o4R/gymnasticonV2.git /opt/gymnasticon
