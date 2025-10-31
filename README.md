@@ -8,13 +8,19 @@ Gymnasticon enables obsolete and/or proprietary exercise bikes to work with Zwif
 
 # Installation Requirements
 
-1. Node.js 16.x (ARMv6 builds are available from the [unofficial Node.js archive](https://unofficial-builds.nodejs.org/))
+1. Node.js 16.x  
+   * Raspberry Pi Zero / Zero W (armv6): download `node-v16.20.2-linux-armv6l.tar.xz` from the [unofficial Node.js archive](https://unofficial-builds.nodejs.org/download/release/v16.20.2/) and unpack it into `/usr/local`.  
+   * Raspberry Pi 3/4 and other 64/32-bit hosts: install Node.js 16.x via your preferred package manager (e.g. NodeSource `setup_16.x` for armv7/arm64 or x86\_64).
 2. System dependencies:
 ```bash
-sudo apt-get install -y nodejs bluetooth bluez libbluetooth-dev libudev-dev
+sudo apt-get install -y bluetooth bluez libbluetooth-dev libudev-dev libusb-1.0-0-dev build-essential python3 python-is-python3 pkg-config git
 ```
 
-When building native dependencies on Raspberry Pi Zero or other ARMv6 devices, export `CXXFLAGS=-std=gnu++14` before running `npm install` so that the `usb` bindings compile with the required C++ standard.
+When building native dependencies on Raspberry Pi Zero or other ARMv6 devices, export `CXXFLAGS=-std=gnu++14` before running `npm install` so that the `usb` bindings compile with the required C++ standard. For development and testing, install dependencies with:
+```bash
+npm install --include=dev
+```
+The production image and installer use `npm install --omit=dev`.
 
 To automate the setup, run:
 ```bash
@@ -111,9 +117,11 @@ After making changes, restart the service:
 sudo systemctl restart gymnasticon
 
 
-ssh Into your RPi
-
-Then run sudo rm -rf /opt/gymnasticon && curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/install.sh | bash
+For development (including running the automated test suite), install the project dependencies locally with:
+```bash
+npm install --include=dev
+```
+This ensures tooling such as `sinon` is available.
 
 
 OR
