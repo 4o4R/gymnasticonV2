@@ -45,13 +45,17 @@ const sinonShim = {
    * overrides.
    */
   useFakeTimers(options = {}) {
-    // Merge caller-provided settings while ensuring our defaults stay in place.
-    const clock = fakeTimersLib.install({
-      toFake: options.toFake ?? SINON_COMPAT_METHODS,
-      ...options,
-      // The “target” property was removed in v11, so we avoid passing it even if
-      // callers accidentally provide one.
-    });
+    // Copy the options so we can safely delete unsupported properties.
+    const sanitizedOptions = {...options};
+    delete sanitizedOptions.target; // removed in fake-timers v11
+
+    // If the caller did not request a custom set of APIs, fall back to the
+    // list of globals Sinon historically faked.
+    if (!Object.prototype.hasOwnProperty.call(sanitizedOptions, 'toFake')) {
+      sanitizedOptions.toFake = SINON_COMPAT_METHODS;
+    }
+
+    const clock = fakeTimersLib.install(sanitizedOptions);
 
     /**
      * Older Sinon versions returned a clock with `restore()`. The modern library
