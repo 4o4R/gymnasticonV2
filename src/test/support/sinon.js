@@ -66,6 +66,18 @@ const sinonShim = {
       clock.restore = clock.uninstall.bind(clock);
     }
 
+    /**
+     * Newer fake-timer APIs expose async helpers (`tickAsync`, `runAllAsync`).
+     * When running on older releases we polyfill these methods so the rest of
+     * the test suite can `await` them without worrying about version details.
+     */
+    if (typeof clock.tickAsync !== 'function') {
+      clock.tickAsync = async (ms = 0) => clock.tick(ms);
+    }
+    if (typeof clock.runAllAsync !== 'function') {
+      clock.runAllAsync = async () => clock.runAll();
+    }
+
     return clock;
   }
 };
