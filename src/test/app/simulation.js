@@ -2,7 +2,7 @@ import test from '../support/tape.js';
 import sinon from '../support/sinon.js';
 import {Simulation} from '../../app/simulation.js';
 
-test('constant cadence', async t => {
+test('constant cadence', t => {
   const timeline = [
     cadenceChange(0, 60),
     pedalEvent(0),
@@ -10,11 +10,11 @@ test('constant cadence', async t => {
     pedalEvent(2000),
     pedalEvent(3000),
   ];
-  
-  await testTimeline(timeline, t);
+
+  return testTimeline(timeline, t);
 });
 
-test('start/stop/start', async t => {
+test('start/stop/start', t => {
   const timeline = [
     cadenceChange(0, 60),
     pedalEvent(0),
@@ -29,10 +29,10 @@ test('start/stop/start', async t => {
     pedalEvent(100060),
   ]
 
-  await testTimeline(timeline, t);
+  return testTimeline(timeline, t);
 });
 
-test('inconsequential cadence changes', async t => {
+test('inconsequential cadence changes', t => {
   const timeline = [
     cadenceChange(0, 10),
     pedalEvent(0),
@@ -48,10 +48,10 @@ test('inconsequential cadence changes', async t => {
     pedalEvent(14000),
   ]
 
-  await testTimeline(timeline, t);
+  return testTimeline(timeline, t);
 });
 
-test('increase/decrease cadence', async t => {
+test('increase/decrease cadence', t => {
   const timeline = [
     cadenceChange(0, 10),
     pedalEvent(0),
@@ -67,10 +67,10 @@ test('increase/decrease cadence', async t => {
     pedalEvent(8180),
   ]
 
-  await testTimeline(timeline, t);
+  return testTimeline(timeline, t);
 });
 
-test('varying cadence', async t => {
+test('varying cadence', t => {
   const timeline = [
     cadenceChange(0, 60),
     pedalEvent(0),
@@ -98,7 +98,7 @@ test('varying cadence', async t => {
     pedalEvent(26119),
   ]
 
-  await testTimeline(timeline, t);
+  return testTimeline(timeline, t);
 });
 
 
@@ -118,7 +118,7 @@ const isCadenceChange = (evt) => evt.type === C
  * @param {Test} t - tape test object
  * @returns {Promise<void>} resolves once all simulated pedal events have fired
  */
-async function testTimeline(timeline, t) {
+function testTimeline(timeline, t) {
   const timestamps = timeline.filter(isPedalEvent).map(e => e.timestamp);
   const cadenceChanges = timeline.filter(isCadenceChange);
   const duration = Math.max(...timestamps);
@@ -133,7 +133,7 @@ async function testTimeline(timeline, t) {
 
   t.plan(timestamps.length);
 
-  await new Promise(async (resolve) => {
+  return new Promise((resolve) => {
     let i = 0;
     sim.on('pedal', (timestamp) => {
       t.equal(timestamp, timestamps[i], `pedal event ${timestamp}`);
@@ -145,18 +145,14 @@ async function testTimeline(timeline, t) {
 
     // Tick slightly beyond the last expected timestamp so that any timers
     // scheduled exactly at `duration` have a chance to fire before we resolve.
-    await clock.tickAsync(duration + 1);
-    // Newer versions of @sinonjs/fake-timers queue callbacks that are added while
-    // tick() is running. runAllAsync() flushes any stragglers so every planned
-    // assertion fires before we resolve the promise.
-    await clock.runAllAsync();
+    clock.tick(duration + 1);
 
     // In case the test expects zero pedal events, resolve immediately after the
     // timers have finished running.
     if (timestamps.length === 0) {
       resolve();
     }
+  }).finally(() => {
+    clock.restore();
   });
-
-  clock.restore();
 }
