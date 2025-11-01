@@ -133,18 +133,30 @@ async function testTimeline(timeline, t) {
 
   t.plan(timestamps.length);
 
-  let i = 0;
-  sim.on('pedal', (timestamp) => {
-    t.equal(timestamp, timestamps[i], `pedal event ${timestamp}`);
-    i++;
+  await new Promise(async (resolve) => {
+    let i = 0;
+    sim.on('pedal', (timestamp) => {
+      t.equal(timestamp, timestamps[i], `pedal event ${timestamp}`);
+      i++;
+      if (i === timestamps.length) {
+        resolve();
+      }
+    });
+
+    // Tick slightly beyond the last expected timestamp so that any timers
+    // scheduled exactly at `duration` have a chance to fire before we resolve.
+    await clock.tickAsync(duration + 1);
+    // Newer versions of @sinonjs/fake-timers queue callbacks that are added while
+    // tick() is running. runAllAsync() flushes any stragglers so every planned
+    // assertion fires before we resolve the promise.
+    await clock.runAllAsync();
+
+    // In case the test expects zero pedal events, resolve immediately after the
+    // timers have finished running.
+    if (timestamps.length === 0) {
+      resolve();
+    }
   });
 
-  // Tick slightly beyond the last expected timestamp so that any timers
-  // scheduled exactly at `duration` have a chance to fire before we restore.
-  await clock.tickAsync(duration + 1);
-  // Newer versions of @sinonjs/fake-timers queue callbacks that are added while
-  // tick() is running. runAllAsync() flushes any stragglers so every planned
-  // assertion fires before we restore the originals.
-  await clock.runAllAsync();
   clock.restore();
 }
