@@ -141,5 +141,9 @@ function testTimeline(timeline, t) {
   // Tick slightly beyond the last expected timestamp so that any timers
   // scheduled exactly at `duration` have a chance to fire before we restore.
   clock.tick(duration + 1);
+  // Newer versions of @sinonjs/fake-timers queue callbacks that are added while
+  // tick() is running. runAll() flushes any stragglers so every planned
+  // assertion fires before we restore the originals.
+  clock.runAll();
   clock.restore();
 }
