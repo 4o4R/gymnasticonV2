@@ -1,30 +1,12 @@
-import {readdir} from 'fs/promises';
-import {join} from 'path';
-import {fileURLToPath, pathToFileURL} from 'url';
+import '../src/test/app/simulation.js';
+import '../src/test/bikes/flywheel.js';
+import '../src/test/bikes/ic4.js';
+import '../src/test/bikes/keiser.js';
+import '../src/test/bikes/peloton.js';
+import '../src/test/util/ble-scan.js';
+import '../src/test/util/dropout-filter.js';
+import '../src/test/util/mac-address.js';
 
-const {default: tape} = await import('../src/test/support/tape.js');
+import tape from '../src/test/support/tape.js';
 
-const rootDir = fileURLToPath(new URL('../src/test', import.meta.url));
-
-async function loadTests(dir) {
-  const entries = await readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      await loadTests(fullPath);
-      continue;
-    }
-    if (entry.isFile() && entry.name.endsWith('.js')) {
-      await import(pathToFileURL(fullPath));
-    }
-  }
-}
-
-try {
-  const finished = new Promise(resolve => tape.onFinish(resolve));
-  await loadTests(rootDir);
-  await finished;
-} catch (error) {
-  console.error(error);
-  process.exitCode = 1;
-}
+await new Promise(resolve => tape.onFinish(resolve));

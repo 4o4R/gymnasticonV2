@@ -259,7 +259,7 @@ export function bikeVersion(data) {
     if ((major === 6) && (minor >= parseInt(KEISER_STATS_NEWVER_MINOR, 16))) {
       timeout = KEISER_STATS_TIMEOUT_NEW;
     }
-    console.log("Keiser M3 bike version: ", version, " (Stats timeout: ", timeout, " sec.)");
+    debuglog(`Keiser M3 bike version: ${version} (Stats timeout: ${timeout} sec.)`);
     return { version, timeout };
   }
   throw new Error('unable to parse bike version data');
