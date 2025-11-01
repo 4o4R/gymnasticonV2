@@ -34,7 +34,7 @@
   },
   "devDependencies": {
     "eslint": "6.8.0",
-    "@sinonjs/fake-timers": "11.2.6",
+    "@sinonjs/fake-timers": "11.2.2",
     "node-addon-api": "3.2.1"
   },
   "overrides": {

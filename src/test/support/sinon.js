@@ -14,11 +14,21 @@ try {
   );
 }
 
+const SINON_COMPAT_METHODS = {
+  setTimeout: true,
+  clearTimeout: true,
+  setInterval: true,
+  clearInterval: true,
+  setImmediate: true,
+  clearImmediate: true,
+  Date: true
+};
+
 const sinonShim = {
   useFakeTimers(options = {}) {
     const clock = fakeTimers.install({
       target: globalThis,
-      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
+      toFake: Object.keys(SINON_COMPAT_METHODS),
       ...options
     });
     if (typeof clock.restore !== 'function') {
