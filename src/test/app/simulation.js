@@ -138,6 +138,8 @@ function testTimeline(timeline, t) {
     i++;
   });
 
-  clock.tick(duration);
+  // Tick slightly beyond the last expected timestamp so that any timers
+  // scheduled exactly at `duration` have a chance to fire before we restore.
+  clock.tick(duration + 1);
   clock.restore();
 }
