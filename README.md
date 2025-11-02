@@ -8,9 +8,9 @@ Gymnasticon enables obsolete and/or proprietary exercise bikes to work with Zwif
 
 # Installation Requirements
 
-1. Node.js 16.x  
-   * Raspberry Pi Zero / Zero W (armv6): download `node-v16.20.2-linux-armv6l.tar.xz` from the [unofficial Node.js archive](https://unofficial-builds.nodejs.org/download/release/v16.20.2/) and unpack it into `/usr/local`.  
-   * Raspberry Pi 3/4 and other 64/32-bit hosts: install Node.js 16.x via your preferred package manager (e.g. NodeSource `setup_16.x` for armv7/arm64 or x86\_64).
+1. Node.js 14.x (14.21.3 recommended for Pi Zero / Zero W)  
+   * Raspberry Pi Zero / Zero W (armv6): download `node-v14.21.3-linux-armv6l.tar.xz` from the [unofficial Node.js archive](https://unofficial-builds.nodejs.org/download/release/v14.21.3/) and unpack it into `/usr/local`.  
+   * Raspberry Pi 3/4 and other 64/32-bit hosts: install Node.js 14.x via your preferred package manager (e.g. NodeSource `setup_14.x` for armv7/arm64 or x86\_64).
 2. System dependencies:
 ```bash
 sudo apt-get install -y bluetooth bluez libbluetooth-dev libudev-dev libusb-1.0-0-dev build-essential python3 python-is-python3 pkg-config git
@@ -146,6 +146,25 @@ Steps:
 3. Optionally add a config file to the SD card (not necessary for Flywheel or Peloton, see below)
 4. Insert the SD card in the Raspberry Pi, power it up and wait 2-3 minutes
 5. Start pedaling and Gymnasticon should appear in the Zwift device list
+
+### Build the SD card image yourself
+
+If you want to customize the Raspberry Pi image locally, use the `deploy/pi-sdcard` helper. Requirements:
+
+1. Docker (Docker Desktop with the WSL2 backend or the Linux docker engine)
+2. At least 15 GB of free disk space
+3. The Gymnasticon repo cloned on a Linux system (WSL2 is fine)
+
+Steps:
+
+```bash
+cd gymnasticonV2/deploy/pi-sdcard
+./build.sh
+```
+
+The script clones Raspberry Pi’s `pi-gen`, applies Gymnasticon’s custom stages, and uses Docker to produce `gymnasticon-raspberrypi.img.xz` under `deploy/pi-sdcard/pi-gen/deploy`. Flash that image to your SD card with Raspberry Pi Imager or `dd`.
+
+> Tip: if you are on Windows/WSL, install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and enable the WSL2 integration for your distribution before running `build.sh`. The script now checks that Docker is installed and running before it starts.
 
 Config file:
 
