@@ -2,5 +2,5 @@
     "githubPullRequests.ignoredPullRequestBranches": [
         "master"
     ],
-    "chatgpt.openOnStartup": false
+    "chatgpt.openOnStartup": true
 }
