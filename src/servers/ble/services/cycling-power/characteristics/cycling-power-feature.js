@@ -1,7 +1,4 @@
-import {loadDependency} from '../../../../../util/optional-deps.js';
-
-const blenoModule = loadDependency('@abandonware/bleno', '../../../../../stubs/bleno.cjs', import.meta);
-const {Characteristic, Descriptor} = blenoModule;
+import {Characteristic, Descriptor} from '../../../bleno-deps.js'; // reuse the shared bleno exports so the stub resolution logic stays in one place
 
 /**
  * Bluetooth LE GATT Cycling Power Feature Characteristic implementation.

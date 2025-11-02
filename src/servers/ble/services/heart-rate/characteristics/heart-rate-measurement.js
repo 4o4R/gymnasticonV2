@@ -1,7 +1,4 @@
-import {loadDependency} from '../../../../../util/optional-deps.js';
-
-const blenoModule = loadDependency('@abandonware/bleno', '../../../../../stubs/bleno.cjs', import.meta);
-const {Characteristic, Descriptor} = blenoModule;
+import {Characteristic, Descriptor} from '../../../bleno-deps.js'; // reuse the centralized bleno exports so stub resolution stays consistent
 
 /**
  * Bluetooth LE Heart Rate Measurement characteristic.

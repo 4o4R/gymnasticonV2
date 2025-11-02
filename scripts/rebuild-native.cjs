@@ -1,16 +1,19 @@
 // Helper script to rebuild native modules (CommonJS) - use .cjs when package.json "type": "module"
-const { spawnSync } = require('child_process');
-const path = require('path');
-const fs = require('fs');
+const { spawnSync } = require('child_process'); // import the synchronous process spawner so we can run npm rebuild commands inline
+const path = require('path'); // bring in path helpers for cross-platform safe file resolution
+const fs = require('fs'); // load the filesystem module to check if dependencies exist before rebuilding
+
+const nodeVersion = process.versions.node; // capture the current Node runtime version string (e.g. "14.21.3")
+const nodeMajor = Number(nodeVersion.split('.')[0]); // extract the major version number to allow conditional logic per runtime
 
 const modulesToRebuild = [
-  '@abandonware/noble',
-  '@abandonware/bleno',
-  'serialport',
-  'usb'
-];
+  '@abandonware/noble', // BLE scanning library used for ANT+/Bluetooth communication
+  '@abandonware/bleno', // BLE peripheral library that advertises the virtual device
+  'serialport', // Serial interface used for trainer and bike hardware communication
+  ...(nodeMajor >= 16 ? ['usb'] : []) // only include the usb module when the runtime meets the node-gyp >=16 requirement
+]; // collect the native modules that should be rebuilt for the active Node version
 
-console.log('Rebuilding native modules for the Node 16 runtime...');
+console.log(`Rebuilding native modules for the Node ${nodeMajor} runtime...`); // inform the user which Node major version triggered this rebuild pass
 
 // Ensure node-gyp is available globally (best-effort)
 try {

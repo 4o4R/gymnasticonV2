@@ -1,7 +1,4 @@
-import {loadDependency} from '../../../../../util/optional-deps.js';
-
-const blenoModule = loadDependency('@abandonware/bleno', '../../../../../stubs/bleno.cjs', import.meta);
-const {Characteristic, Descriptor} = blenoModule;
+import {Characteristic, Descriptor} from '../../../bleno-deps.js'; // consume the shared bleno exports so stub fallback logic stays centralized
 
 /**
  * Bluetooth LE GATT CSC Feature Characteristic implementation.
