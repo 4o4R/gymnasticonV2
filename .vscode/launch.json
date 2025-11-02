@@ -5,13 +5,17 @@
             "type": "node",
             "request": "launch",
             "name": "Debug Gymnasticon (Bot Mode)",
+            "runtimeVersion": "14",  // Force Node.js 14
             "skipFiles": [
                 "<node_internals>/**"
             ],
             "program": "${workspaceFolder}/src/app/cli.js",
             "args": ["--bike", "bot", "--bot-power", "150", "--bot-cadence", "80"],
             "console": "integratedTerminal",
-            "internalConsoleOptions": "neverOpen"
+            "internalConsoleOptions": "neverOpen",
+            "env": {
+                "NODE_NO_WARNINGS": "1"  // Suppress experimental warnings
+            }
         },
         {
             "type": "node",
