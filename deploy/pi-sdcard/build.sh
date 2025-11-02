@@ -1,5 +1,15 @@
 #!/bin/bash -e
 
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker is required to build the Raspberry Pi image. Please install Docker Desktop (with WSL2 integration) or the Linux docker engine before rerunning build.sh."
+  exit 1
+fi
+
+if ! docker info >/dev/null 2>&1; then
+  echo "Docker daemon is not running. Start Docker (e.g. launch Docker Desktop or run 'sudo service docker start') and try again."
+  exit 1
+fi
+
 git clone https://github.com/RPi-Distro/pi-gen
 cd pi-gen
 git fetch
