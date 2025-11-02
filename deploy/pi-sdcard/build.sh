@@ -10,6 +10,11 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
+if [ -d "pi-gen" ]; then
+  echo "Removing previous pi-gen workspace..." # ensure stale clones don't break new builds
+  rm -rf pi-gen # wipe the old pi-gen tree so the clone below starts clean
+fi
+
 git clone https://github.com/RPi-Distro/pi-gen
 cd pi-gen
 git fetch
