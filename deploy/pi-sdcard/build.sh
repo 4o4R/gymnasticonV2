@@ -20,10 +20,24 @@ cd pi-gen
 git fetch
 git fetch --tags
 git checkout 2020-02-13-raspbian-buster
-sed -i 's|deb.debian.org/debian|archive.debian.org/debian|g' Dockerfile # point base image sources to the Debian archive since buster is EOL
-sed -i 's|security.debian.org/debian-security|archive.debian.org/debian-security|g' Dockerfile # do the same for the security mirror
-sed -i 's|apt-get -y update|apt-get -o Acquire::Check-Valid-Until=false -y update|g' Dockerfile # allow archived Release files without valid-until metadata
+python3 - <<'PY' # rewrite the Dockerfile so apt pulls from the Debian archive mirrors and ignores expired Release metadata
+from pathlib import Path # use pathlib for concise file IO
+
+dockerfile = Path('Dockerfile') # reference the pi-gen Dockerfile we just checked out
+original = dockerfile.read_text() # capture the current file contents
+needle = "RUN apt-get -y update && \\\n" # locate the original apt-get command that needs augmentation
+replacement = ( # build the new RUN command that rewrites sources.list and disables validity checks before updating
+    "RUN sed -i 's|deb.debian.org|archive.debian.org|g' /etc/apt/sources.list && \\\n"
+    "    sed -i 's|security.debian.org|archive.debian.org|g' /etc/apt/sources.list && \\\n"
+    "    echo 'Acquire::Check-Valid-Until \"false\";' > /etc/apt/apt.conf.d/99no-check-valid-until && \\\n"
+    "    apt-get -o Acquire::Check-Valid-Until=false -y update && \\\n"
+)
+if needle not in original: # bail out early if the Dockerfile structure changes unexpectedly
+    raise SystemExit('Expected apt-get stanza not found in Dockerfile')
+dockerfile.write_text(original.replace(needle, replacement, 1)) # write the patched Dockerfile back to disk
+PY
 cp ../config config
 cp -a ../stage-gymnasticon stage-gymnasticon
+sed -i 's/\r$//' config # strip potential CRLF endings introduced by Windows checkouts so pi-gen parses the config
 touch stage2/SKIP_IMAGES
 ./build-docker.sh
