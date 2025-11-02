@@ -1,7 +1,4 @@
-import {loadDependency} from '../../../../../util/optional-deps.js';
-
-const blenoModule = loadDependency('@abandonware/bleno', '../../../../../stubs/bleno.cjs', import.meta);
-const {Characteristic, Descriptor} = blenoModule;
+import {Characteristic, Descriptor} from '../../../bleno-deps.js'; // pull Characteristic/Descriptor from the centralized bleno helper
 
 /**
  * Bluetooth LE GATT Sensor Location Characteristic implementation.

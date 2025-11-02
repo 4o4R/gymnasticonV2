@@ -1,7 +1,4 @@
-import {loadDependency} from '../../../../../util/optional-deps.js';
-
-const blenoModule = loadDependency('@abandonware/bleno', '../../../../../stubs/bleno.cjs', import.meta);
-const {Characteristic, Descriptor} = blenoModule;
+import {Characteristic, Descriptor} from '../../../bleno-deps.js'; // tap into the shared bleno exports managed by the helper
 
 const FLAG_HASCRANKDATA = (1<<1);
 const CRANK_TIMESTAMP_SCALE = 1024 / 1000; // timestamp resolution is 1/1024 sec

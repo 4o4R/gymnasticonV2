@@ -1,7 +1,4 @@
-import {loadDependency} from '../../../../util/optional-deps.js';
-
-const blenoModule = loadDependency('@abandonware/bleno', '../../../../../stubs/bleno.cjs', import.meta);
-const {PrimaryService} = blenoModule;
+import {PrimaryService} from '../../bleno-deps.js'; // import the shared bleno PrimaryService so the fallback logic lives in one helper
 import {HeartRateMeasurementCharacteristic} from './characteristics/heart-rate-measurement.js';
 
 /**

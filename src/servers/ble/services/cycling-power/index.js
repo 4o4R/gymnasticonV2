@@ -1,7 +1,4 @@
-import {loadDependency} from '../../../../util/optional-deps.js';
-
-const blenoModule = loadDependency('@abandonware/bleno', '../../../../../stubs/bleno.cjs', import.meta);
-const {PrimaryService} = blenoModule;
+import {PrimaryService} from '../../bleno-deps.js'; // consume the shared bleno PrimaryService wrapper so stub resolution stays centralized
 import {CyclingPowerMeasurementCharacteristic} from './characteristics/cycling-power-measurement.js';
 import {CyclingPowerFeatureCharacteristic} from './characteristics/cycling-power-feature.js';
 import {SensorLocationCharacteristic} from './characteristics/sensor-location.js';
