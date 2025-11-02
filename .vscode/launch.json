@@ -5,7 +5,10 @@
             "type": "node",
             "request": "launch",
             "name": "Debug Gymnasticon (Bot Mode)",
-            "runtimeVersion": "14",  // Force Node.js 14
+            // Use the nvm-managed Node 14 executable so VSCode debug runs the same Node
+            // as the one installed by the setup script. Update the path if you installed
+            // a different patch version of Node 14 via nvm-windows.
+            "runtimeExecutable": "C:/Users/James/AppData/Roaming/nvm/v14.21.3/node.exe",
             "skipFiles": [
                 "<node_internals>/**"
             ],
@@ -14,7 +17,11 @@
             "console": "integratedTerminal",
             "internalConsoleOptions": "neverOpen",
             "env": {
-                "NODE_NO_WARNINGS": "1"  // Suppress experimental warnings
+                // Suppress noisy Node warnings during debugging
+                "NODE_NO_WARNINGS": "1",
+                // Ensure npm/node-gyp will find the Python 2.7 install if you set it
+                // via the setup script or manually. Update the path if different.
+                "npm_config_python": "C:/Python27/python.exe"
             }
         },
         {
