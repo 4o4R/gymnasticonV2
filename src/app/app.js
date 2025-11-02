@@ -1,9 +1,25 @@
+/**
+ * Main Application Entry Point
+ * 
+ * This file coordinates all the major components of the Gymnasticon system:
+ * - Bluetooth (BLE) server for connecting to fitness apps
+ * - ANT+ server for older fitness devices
+ * - Bike connections (Flywheel, Peloton, etc)
+ * - Heart rate monitoring
+ * - Simulation capabilities for testing
+ */
+
 import {once} from 'events';
 
+// Core server components
 import {GymnasticonServer} from '../servers/ble/index.js';
 import {AntServer} from '../servers/ant/index.js';
+
+// Bike and sensor integrations
 import {createBikeClient, getBikeTypes} from '../bikes/index.js';
 import {HeartRateClient} from '../hr/heart-rate-client.js';
+
+// Utility modules
 import {Simulation} from './simulation.js';
 import {Timer} from '../util/timer.js';
 import {Logger} from '../util/logger.js';

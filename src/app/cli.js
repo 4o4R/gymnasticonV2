@@ -1,9 +1,16 @@
 #!/usr/bin/env node
 
+/**
+ * CLI Entry Point for Gymnasticon
+ * This file handles command line argument parsing and app initialization
+ */
+
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
+// Import yargs with explicit .js extension for ESM compatibility
 import yargs from 'yargs/yargs.js';
-import { hideBin } from 'yargs/helpers';
+// Import helpers from the new path structure in yargs
+import { hideBin } from 'yargs/helpers/helpers.js';
 
 import { App } from './app.js';
 import { options as cliOptions } from './cli-options.js';
