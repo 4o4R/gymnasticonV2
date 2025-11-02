@@ -158,8 +158,8 @@ If you want to customize the Raspberry Pi image locally, use the `deploy/pi-sdca
 Steps:
 
 ```bash
-cd gymnasticonV2/deploy/pi-sdcard
-./build.sh
+cd gymnasticonV2
+bash scripts/build-pi-image.sh
 ```
 
 The script clones Raspberry Pi’s `pi-gen`, applies Gymnasticon’s custom stages, and uses Docker to produce `gymnasticon-raspberrypi.img.xz` under `deploy/pi-sdcard/pi-gen/deploy`. Flash that image to your SD card with Raspberry Pi Imager or `dd`.
