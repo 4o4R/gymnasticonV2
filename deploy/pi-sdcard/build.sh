@@ -22,7 +22,7 @@ git fetch --tags
 git checkout 2020-02-13-raspbian-buster
 sed -i 's|deb.debian.org/debian|archive.debian.org/debian|g' Dockerfile # point base image sources to the Debian archive since buster is EOL
 sed -i 's|security.debian.org/debian-security|archive.debian.org/debian-security|g' Dockerfile # do the same for the security mirror
-sed -i 's|apt-get -y update &&|echo '\''Acquire::Check-Valid-Until "false";'\'' > /etc/apt/apt.conf.d/99no-check-valid-until \&\& apt-get -y update \&\&|\' Dockerfile # disable Release file date checks so archived repos work
+sed -i 's|apt-get -y update|apt-get -o Acquire::Check-Valid-Until=false -y update|g' Dockerfile # allow archived Release files without valid-until metadata
 cp ../config config
 cp -a ../stage-gymnasticon stage-gymnasticon
 touch stage2/SKIP_IMAGES
