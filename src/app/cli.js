@@ -22,11 +22,13 @@ import { resolve } from 'path';           // For handling file paths
 // Third-party Dependencies
 // ----------------------
 // yargs: A command-line argument parser that makes it easy to build interactive commands
-import yargs from 'yargs/yargs.js';       // The .js extension is required for ESM compatibility
-// yargs helper import: use the package subpath with .js for ESM resolution
-// Older edits accidentally used 'yargs/helpers/helpers.js' which does not exist
-// — that causes the Module not found error you saw. The correct import is below.
-import { hideBin } from 'yargs/helpers.js';  // Removes Node.js binary path from argv
+// Import yargs using the package's public entrypoint. Avoid importing internal
+// subpaths (like 'yargs/yargs.js') because packages may restrict those via
+// the "exports" field in package.json which causes ERR_PACKAGE_PATH_NOT_EXPORTED.
+import yargs from 'yargs';
+// Import the helper from the public helpers subpath. Do not include a .js
+// extension here so Node can resolve the package export correctly.
+import { hideBin } from 'yargs/helpers';  // Removes Node.js binary path from argv
 
 // Local Application Imports
 // ------------------------
