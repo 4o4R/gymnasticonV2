@@ -3,16 +3,20 @@ const {EventEmitter} = require('events');
 class BlenoStub extends EventEmitter {
   constructor() {
     super();
-    this.state = 'poweredOff';
+    this.state = 'poweredOn'; // Pretend the adapter is ready immediately
+    process.nextTick(() => this.emit('stateChange', 'poweredOn')); // Notify listeners that the adapter is "powered on"
   }
 
-  startAdvertising() {}
+  startAdvertising() { /* no-op stub */ }
   startAdvertisingWithEIRData(_advertisementData, _scanData, callback) {
     if (callback) callback();
   }
-  stopAdvertising() {}
-  setServices() {}
-  disconnect() {}
+  async startAdvertisingAsync() { /* no-op stub */ }
+  stopAdvertising() { /* no-op stub */ }
+  async stopAdvertisingAsync() { /* no-op stub */ }
+  setServices() { /* no-op stub */ }
+  async setServicesAsync() { /* no-op stub */ }
+  disconnect() { /* no-op stub */ }
 }
 
 class Characteristic {
