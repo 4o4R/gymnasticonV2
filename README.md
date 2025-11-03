@@ -34,9 +34,9 @@ curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/insta
 
 * Flywheel
 * Peloton Bike (requires an [additional cable](https://github.com/ptx2/gymnasticon/pull/12#issuecomment-696345309))
-* Schwinn IC4/IC8 aka Bowflex C6
+* Schwinn IC4/IC8 aka Bowflex C6 (power estimation when necessary)
 * Keiser M Series Bikes (M3i, M3i-TBT, M3iX)
-* LifeFitness IC5 (probably works)
+* LifeFitness IC5 (power estimation)
 
 ## Apps and devices tested
 
@@ -55,13 +55,14 @@ Any software, bike computer or watch that supports standard Bluetooth LE and ANT
 
 ## Platforms tested
 
-Raspberry Pi Zero W is recommended for best user experience. Any recent Linux or macOS system should be able to run Gymnasticon.
+Raspberry Pi Zero W is recommended for best user experience. The provided SD/SSD image targets Raspberry Pi Zero/Zero W through Pi 4 (Buster-based). For Raspberry Pi 5 devices, install Raspberry Pi OS Bookworm and run the manual installer script.
 
 * Raspbian Buster on Raspberry Pi Zero W
-* Raspbian Buster on Raspberry Pi 4
 * Raspbian Buster on Raspberry Pi 3B+
+* Raspbian Buster on Raspberry Pi 4
+* Raspberry Pi OS Bookworm on Raspberry Pi 5 (manual install via deploy/install.sh)
 * macOS 10.14+
-* Debian Buster on x86-64
+* Debian Buster/Bookworm on x86-64
 
 > Note: If using a Bluetooth LE bike (e.g. Flywheel) a Bluetooth LE 4.1+ adapter with multi-role capability is required. All Raspberry Pi devices listed above have this capability but not every BT 4.1+ adapter is guaranteed to have it. Alternatively, two BT 4.0+ adapters can also work: one for the client (to connect to the bike) and one for the server (to receive connections from Zwift or another app).
 
