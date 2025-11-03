@@ -1,47 +1,47 @@
-import {Characteristic, Descriptor} from '../../../bleno-deps.js'; // tap into the shared bleno exports managed by the helper
+import {Characteristic, Descriptor} from '../../../bleno-deps.js'; // Import shared bleno helpers so stub resolution is centralized.
 
-const FLAG_HASCRANKDATA = (1<<1);
-const CRANK_TIMESTAMP_SCALE = 1024 / 1000; // timestamp resolution is 1/1024 sec
+const FLAG_WHEEL = 1 << 0; // BLE Spec 2A5B flag indicating wheel revolution data follows.
+const FLAG_CRANK = 1 << 1; // BLE Spec 2A5B flag indicating crank revolution data follows.
 
-/**
- * Bluetooth LE GATT CSC Measurement Characteristic implementation.
- */
-export class CscMeasurementCharacteristic extends Characteristic {
+const CRANK_TS_SCALE = 1024 / 1000; // Convert seconds into the 1/1024 second units required by the spec.
+const WHEEL_TS_SCALE = 1024 / 1000; // Same scale applies to wheel event timestamps.
+
+export class CscMeasurementCharacteristic extends Characteristic { // Measurement characteristic that emits instantaneous wheel/crank data.
   constructor() {
     super({
-      uuid: '2a5b',
-      properties: ['notify'],
-      descriptors: [
-        new Descriptor({
-          uuid: '2903',
-          value: Buffer.alloc(2)
-        })
+      uuid: '2a5b', // UUID for Cycling Speed and Cadence Measurement.
+      properties: ['notify'], // Measurements are notifications, not reads.
+      descriptors: [ // Provide a descriptor so tools describe the characteristic clearly.
+        new Descriptor({ uuid: '2903', value: Buffer.alloc(2) }) // CCC descriptor placeholder required by many stacks.
       ]
-    })
+    });
   }
 
-  /**
-   * Notify subscriber (e.g. Zwift) of new CSC Measurement.
-   * @param {object} measurement - new csc measurement.
-   * @param {object} measurement.crank - last crank event.
-   * @param {number} measurement.crank.revolutions - revolution count at last crank event.
-   * @param {number} measurement.crank.timestamp - timestamp at last crank event.
-   */
-  updateMeasurement({ crank }) {
-    let flags = 0;
+  updateMeasurement({ wheel, crank }) { // Push an updated wheel/crank measurement to subscribed clients.
+    const buffer = Buffer.alloc(11); // Allocate the maximum payload: flags + wheel (6 bytes) + crank (4 bytes).
+    let offset = 1; // Start after the flags byte.
+    let flags = 0; // Track which optional fields were populated.
 
-    const value = Buffer.alloc(5);
+    if (wheel) { // Include wheel revolution data when provided.
+      flags |= FLAG_WHEEL; // Mark the wheel-present bit.
+      const revolutions = wheel.revolutions >>> 0; // Ensure the cumulative wheel revolutions are treated as an unsigned 32-bit value.
+      const timestamp = Math.round(wheel.timestamp * WHEEL_TS_SCALE) & 0xffff; // Convert seconds to 1/1024s and clamp to 16 bits.
+      buffer.writeUInt32LE(revolutions, offset); offset += 4; // Write the 32-bit cumulative wheel revolution count.
+      buffer.writeUInt16LE(timestamp, offset); offset += 2; // Write the 16-bit last wheel event timestamp.
+    }
 
-    const revolutions16bit = crank.revolutions & 0xffff;
-    const timestamp16bit = Math.round(crank.timestamp * CRANK_TIMESTAMP_SCALE) & 0xffff;
-    value.writeUInt16LE(revolutions16bit, 1);
-    value.writeUInt16LE(timestamp16bit, 3);
-    flags |= FLAG_HASCRANKDATA;
+    if (crank) { // Include crank revolution data when present.
+      flags |= FLAG_CRANK; // Mark the crank-present bit.
+      const revolutions = crank.revolutions & 0xffff; // Crank revolutions are 16-bit cumulative values that wrap.
+      const timestamp = Math.round(crank.timestamp * CRANK_TS_SCALE) & 0xffff; // Convert seconds to 1/1024s with wrap handling.
+      buffer.writeUInt16LE(revolutions, offset); offset += 2; // Write cumulative crank revolutions.
+      buffer.writeUInt16LE(timestamp, offset); offset += 2; // Write last crank event timestamp.
+    }
 
-    value.writeUInt8(flags, 0);
+    buffer.writeUInt8(flags, 0); // Store the populated flag bits at the first byte.
 
-    if (this.updateValueCallback) {
-      this.updateValueCallback(value)
+    if (this.updateValueCallback) { // Only emit when a subscriber is active.
+      this.updateValueCallback(buffer.slice(0, offset)); // Send a trimmed buffer containing just the populated fields.
     }
   }
 }

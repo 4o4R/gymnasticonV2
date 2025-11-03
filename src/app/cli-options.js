@@ -12,6 +12,11 @@ export const options = {
     choices: getBikeTypes(),
     default: defaults.bike,
   },
+  'default-bike': {
+    describe: '<type> fallback bike profile when autodetect fails',
+    type: 'string',
+    default: defaults.defaultBike,
+  },
 
   'bike-connect-timeout': {
     describe: '<seconds>',
@@ -78,6 +83,15 @@ export const options = {
     type: 'number',
     default: defaults.antDeviceId,
   },
+  'ant-auto': {
+    describe: 'auto-enable ANT+ when a compatible stick is detected',
+    type: 'boolean',
+    default: defaults.antAuto,
+  },
+  'ant-plus': {
+    describe: 'force-enable ANT+ broadcasting regardless of auto detection',
+    type: 'boolean',
+  },
   'power-scale': {
     describe: '<value> scale watts by this multiplier',
     type: 'number',
@@ -87,5 +101,25 @@ export const options = {
     describe: '<value> add this value to watts',
     type: 'number',
     default: defaults.powerOffset,
+  },
+  'speed-circumference': {
+    describe: '<meters> virtual wheel circumference for speed estimation',
+    type: 'number',
+    default: defaults.speedFallback.circumferenceM,
+  },
+  'speed-gear-factor': {
+    describe: '<ratio> crank-to-wheel gear factor for speed estimation',
+    type: 'number',
+    default: defaults.speedFallback.gearFactor,
+  },
+  'speed-min': {
+    describe: '<m/s> minimum estimated speed',
+    type: 'number',
+    default: defaults.speedFallback.min,
+  },
+  'speed-max': {
+    describe: '<m/s> maximum estimated speed',
+    type: 'number',
+    default: defaults.speedFallback.max,
   }
 };

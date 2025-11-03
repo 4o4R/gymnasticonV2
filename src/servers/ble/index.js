@@ -1,8 +1,8 @@
-import {CyclingPowerService} from './services/cycling-power/index.js';
-import {CyclingSpeedAndCadenceService} from './services/cycling-speed-and-cadence/index.js';
-import {HeartRateService} from './services/heart-rate/index.js';
-import {BleServer} from '../../util/ble-server.js';
-import {once} from 'events';
+import {CyclingPowerService} from './services/cycling-power/index.js'; // Import the CPS implementation so we can notify power changes.
+import {CyclingSpeedAndCadenceService} from './services/cycling-speed-and-cadence/index.js'; // Import CSC service for wheel/crank updates.
+import {HeartRateService} from './services/heart-rate/index.js'; // Import HR service to forward heart rate metrics.
+import {BleServer} from '../../util/ble-server.js'; // Base helper that wires our bleno services together.
+import {once} from 'events'; // Used to await bleno state changes before advertising.
 
 export const DEFAULT_NAME = 'Gymnasticon';
 
@@ -91,18 +91,23 @@ function buildAdvertisingPayload(name, options, uuids) {
   return { advertisementData, scanData };
 }
 
-export function createServices(options) {
+export function createServices() { // Factory that builds the standard Gymnasticon service list.
   return [
-    new CyclingPowerService(options),
-    new CyclingSpeedAndCadenceService(options),
-    new HeartRateService(options),
+    new CyclingPowerService(), // Cycling Power Service (UUID 1818).
+    new CyclingSpeedAndCadenceService(), // Cycling Speed and Cadence Service (UUID 1816).
+    new HeartRateService(), // Heart Rate Service (UUID 180d).
   ];
 }
 
 export class GymnasticonServer extends BleServer {
   constructor(bleno, name = DEFAULT_NAME) {
-    const services = createServices();
+    const services = createServices(); // Instantiate services before handing them to the base BleServer.
     super(bleno, name, services);
+
+    this.cpsService = services.find(service => service.uuid === '1818'); // Cache the CPS instance for quick lookups.
+    this.cscService = services.find(service => service.uuid === '1816'); // Cache the CSC instance so we can update features dynamically.
+    this.hrService = services.find(service => service.uuid === '180d'); // Cache the HR service to forward sensor data efficiently.
+    this.cscCapabilities = { supportWheel: false, supportCrank: true }; // Track which optional CSC fields we currently advertise.
 
     this.advertisingOptions = {
       connectable: true,
@@ -113,11 +118,38 @@ export class GymnasticonServer extends BleServer {
     };
   }
 
-  updateHeartRate(hr) {
-    const hrService = this.services.find(s => s.uuid === '180d');
-    if (hrService) {
-      hrService.updateHeartRate(hr);
+  updateHeartRate(hr) { // Push heart rate notifications to subscribed clients.
+    if (!this.hrService) { // Bail out silently if the service has been removed or failed to initialize.
+      return;
     }
+    this.hrService.updateHeartRate(hr); // Delegate encoding to the service implementation.
+  }
+
+  updatePower(payload) { // Broadcast a Cycling Power Service measurement.
+    if (!this.cpsService) { // Skip when CPS is unavailable.
+      return;
+    }
+    this.cpsService.updateMeasurement(payload); // Let the CPS service handle characteristic encoding.
+  }
+
+  ensureCscCapabilities(capabilities) { // Update the CSC feature characteristic when wheel support toggles.
+    if (!this.cscService) { // No CSC service means nothing to update.
+      return;
+    }
+    const wheel = !!capabilities?.supportWheel; // Normalize wheel capability to a boolean.
+    const crank = !!capabilities?.supportCrank; // Normalize crank capability likewise.
+    if (wheel === this.cscCapabilities.supportWheel && crank === this.cscCapabilities.supportCrank) { // Skip when the feature bits are unchanged.
+      return;
+    }
+    this.cscCapabilities = { supportWheel: wheel, supportCrank: crank }; // Persist the new capability state.
+    this.cscService.ensureCapabilities(this.cscCapabilities); // Tell the CSC service to refresh its feature characteristic.
+  }
+
+  updateCsc(measurement) { // Forward CSC measurement payloads to the characteristic.
+    if (!this.cscService) { // Skip if CSC is disabled.
+      return;
+    }
+    this.cscService.updateMeasurement(measurement); // Delegate BLE encoding to the service.
   }
 
   async start() {
@@ -150,7 +182,7 @@ export class GymnasticonServer extends BleServer {
       await this.bleno.startAdvertisingAsync(this.name, this.uuids);
     }
 
-    await this.bleno.setServicesAsync(this.services);
+    await this.bleno.setServicesAsync(this.services); // Commit the service list to the adapter now that advertising is live.
     this.state = 'started';
   }
 }
