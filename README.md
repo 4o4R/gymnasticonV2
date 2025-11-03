@@ -289,8 +289,10 @@ usage: gymnasticon [OPTIONS]
 Options:
   --config                <filename> load options from json file        [string]
   --bike                  <type>
-               [string] [choices: "flywheel", "peloton", "ic4", "keiser", "bot",
-                                           "autodetect"] [default: "autodetect"]
+               [string] [choices: "flywheel", "peloton", "ic4", "ic5", "ic8",
+                              "keiser", "bot", "autodetect"] [default: "autodetect"]
+  --default-bike          <type> fallback profile when autodetect fails
+                                                   [string] [default: "keiser"]
   --bike-connect-timeout  <seconds>                        [number] [default: 0]
   --bike-receive-timeout  <seconds>                        [number] [default: 4]
   --bike-adapter          <name> for bike connection           [default: "hci0"]
@@ -309,9 +311,18 @@ Options:
                                                            [number] [default: 1]
   --ant-device-id         <id> ANT+ device id for bike power broadcast
                                                        [number] [default: 11234]
+  --ant-auto              auto-enable ANT+ when stick present
+                                                [boolean] [default: true]
+  --ant-plus              force-enable/disable ANT+ broadcast           [boolean]
   --power-scale           <value> scale watts by this multiplier
                                                            [number] [default: 1]
   --power-offset          <value> add this value to watts  [number] [default: 0]
+  --speed-circumference   <meters> wheel circumference for speed estimate
+                                                       [number] [default: 2.1]
+  --speed-gear-factor     <ratio> crank-to-wheel gear factor
+                                                       [number] [default: 3]
+  --speed-min             <m/s> minimum estimated speed     [number] [default: 0]
+  --speed-max             <m/s> maximum estimated speed    [number] [default: 25]
   --version               Show version number                          [boolean]
   -h, --help              Show help                                    [boolean]
 ```
