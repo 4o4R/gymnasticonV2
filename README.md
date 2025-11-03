@@ -72,7 +72,7 @@ Raspberry Pi Zero W is recommended for best user experience. The provided SD/SSD
 
 #### Prepare the OS:
 
-Use the Raspberry Pi Imager on another computer to flash your SD card with Raspbian Buster Lite (2021 version). This version is required for compatibility with Node.js ARMv6 builds.
+Use the Raspberry Pi Imager on another computer to flash your SD card with Raspbian Buster Lite (2021 version). This version is required for compatibility with Node.js ARMv6 builds and is recommended for Raspberry Pi Zero/Zero W/Zero 2 W/3/4 devices. (For Raspberry Pi 5, install Raspberry Pi OS Bookworm instead and follow the manual install steps below.)
 
 You can download the OS image from Raspberry Pi Archives.
 
@@ -123,6 +123,25 @@ For development (including running the automated test suite), install the projec
 npm install --include=dev
 ```
 This ensures tooling such as `sinon` is available.
+
+
+### Raspberry Pi 5 manual install
+
+Raspberry Pi 5 devices require Raspberry Pi OS (Bookworm). After flashing the official Bookworm image and completing initial setup:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/install.sh | bash
+```
+
+The installer will:
+
+- Install Node.js 14.21.3 via NodeSource (compatible with Pi 5)
+- Install required Bluetooth/USB dependencies
+- Deploy Gymnasticon to `/opt/gymnasticon`
+- Enable the `gymnasticon.service` systemd unit so the app auto-starts on boot
+- Bring up available Bluetooth adapters (`hci0`, `hci1`) and apply the `cap_net_raw` capability to the Node runtime
+
+After the script completes, reboot the Pi 5 or run `sudo systemctl restart gymnasticon` to begin broadcasting.
 
 
 OR
