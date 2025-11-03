@@ -55,7 +55,7 @@ Any software, bike computer or watch that supports standard Bluetooth LE and ANT
 
 ## Platforms tested
 
-Raspberry Pi Zero W is recommended for best user experience. The provided SD/SSD image targets Raspberry Pi Zero/Zero W through Pi 4 (Buster-based). For Raspberry Pi 5 devices, install Raspberry Pi OS Bookworm and run the manual installer script.
+**Raspberry Pi Zero 2 W is the recommended target for best performance.** The provided SD/SSD image targets Raspberry Pi Zero/Zero W/Zero 2 W through Pi 4 (Buster-based). For Raspberry Pi 5 devices, install Raspberry Pi OS Bookworm and run the manual installer script.
 
 * Raspbian Buster on Raspberry Pi Zero W
 * Raspbian Buster on Raspberry Pi 3B+
