@@ -35,6 +35,7 @@ import { hideBin } from 'yargs/helpers';  // Removes Node.js binary path from ar
 import { App } from './app.js';                          // Main application class
 import { options as cliOptions } from './cli-options.js'; // Command line option definitions
 import { initializeBluetooth } from '../util/noble-wrapper.js'; // Bluetooth initialization
+import { detectAdapters } from '../util/adapter-detect.js'; // Auto-detect Bluetooth and ANT+ adapters when the user does not specify them
 
 /**
  * Configuration File Loader
@@ -103,6 +104,30 @@ const main = async () => {
         .strict()
         // Parse the arguments
         .parse();
+
+    const discovery = detectAdapters(); // Gather available adapters and ANT+ presence for sensible defaults.
+    if (!argv.bikeAdapter) { // If the user did not specify a bike adapter, fall back to the detected value.
+        argv.bikeAdapter = discovery.bikeAdapter;
+    }
+    if (!argv.serverAdapter) { // Likewise for the BLE advertising adapter.
+        argv.serverAdapter = discovery.serverAdapter;
+    }
+
+    const antFlag = typeof argv.antPlus === 'boolean' ? argv.antPlus : undefined; // Interpret explicit ANT+ enable/disable requests.
+    const antAuto = argv.antAuto === undefined ? true : argv.antAuto; // Default auto mode to true when not provided.
+    argv.antEnabled = antFlag !== undefined ? antFlag : (antAuto && discovery.antPresent); // Enable ANT+ when the user forces it or auto-detect finds hardware.
+
+    argv.speedFallback = { // Collect speed estimation overrides into a single object consumed by the App.
+        circumferenceM: argv.speedCircumference,
+        gearFactor: argv.speedGearFactor,
+        min: argv.speedMin,
+        max: argv.speedMax
+    };
+    delete argv.antPlus; // Drop intermediate flags so the App receives only the consolidated antEnabled switch.
+    delete argv.speedCircumference; // Remove raw CLI fields now that they have been normalized.
+    delete argv.speedGearFactor;
+    delete argv.speedMin;
+    delete argv.speedMax;
 
     // Configure Bluetooth Adapters and Settings
     // ----------------------------------------

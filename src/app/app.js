@@ -20,11 +20,13 @@ import {createBikeClient, getBikeTypes} from '../bikes/index.js';
 import {HeartRateClient} from '../hr/heart-rate-client.js';
 
 // Utility modules
-import {Simulation} from './simulation.js';
-import {Timer} from '../util/timer.js';
-import {Logger} from '../util/logger.js';
-import {createAntStick} from '../util/ant-stick.js';
-import {loadDependency, toDefaultExport} from '../util/optional-deps.js';
+import {Simulation} from './simulation.js'; // Simulation helper for bot mode and testing.
+import {Timer} from '../util/timer.js'; // Shared timer utility that handles repeating and one-shot events.
+import {Logger} from '../util/logger.js'; // Lightweight logger abstraction.
+import {createAntStick} from '../util/ant-stick.js'; // Factory for gd-ant-plus sticks.
+import {estimateSpeedMps} from '../util/speed-estimator.js'; // Helper that estimates speed when bikes do not report it.
+import {nowSeconds} from '../util/time.js'; // Helper to get monotonic-ish timestamps in seconds.
+import {loadDependency, toDefaultExport} from '../util/optional-deps.js'; // Optional dependency loader with stub fallback support.
 
 const nobleModule = loadDependency('@abandonware/noble', '../../stubs/noble.cjs', import.meta);
 const nobleDefault = toDefaultExport(nobleModule);
@@ -39,7 +41,8 @@ export {getBikeTypes};
 
 export const defaults = {
   // bike options
-  bike: 'autodetect', // bike type
+  bike: 'autodetect', // bike type chosen via CLI or automatically determined.
+  defaultBike: 'keiser', // fallback bike profile when autodetect does not find a match.
   bikeReceiveTimeout: 4, // timeout for receiving stats from bike
   bikeConnectTimeout: 0, // timeout for establishing bike connection
   bikeAdapter: 'hci0', // bluetooth adapter to use for bike connection (BlueZ only)
@@ -64,10 +67,20 @@ export const defaults = {
 
   // ANT+ server options
   antDeviceId: 11234, // random default ANT+ device id
+  antAuto: true, // automatically enable ANT+ when a compatible stick is detected
+  antEnabled: false, // explicit override for enabling ANT+ regardless of auto-detect
 
   // power adjustment (to compensate for inaccurate power measurements on bike)
   powerScale: 1.0, // multiply power by this
   powerOffset: 0.0, // add this to power
+
+  // speed estimation fallback parameters
+  speedFallback: { // heuristics used when the bike does not broadcast native speed
+    circumferenceM: 2.1, // virtual wheel circumference in meters
+    gearFactor: 3.0, // crank-to-wheel ratio assumption
+    min: 0, // minimum allowed estimated speed in m/s
+    max: 25 // maximum allowed estimated speed in m/s (~90 km/h)
+  },
 };
 
 /**
@@ -88,18 +101,33 @@ export class App {
 
     this.powerScale = opts.powerScale;
     this.powerOffset = opts.powerOffset;
-    this.power = 0;
-    this.crank = { timestamp: 0, revolutions: 0 };
+    this.power = 0; // Track the latest scaled power value in watts.
+    this.currentCadence = 0; // Track the most recent cadence in RPM for ping updates and ANT+.
+    this.speedOptions = { ...defaults.speedFallback, ...(opts.speedFallback || {}) }; // Merge caller overrides with sensible defaults for speed estimation.
+    this.kinematics = { // Maintain cumulative wheel/crank state for CSC notifications.
+      lastTimestamp: null, // Last time we integrated cadence/speed samples.
+      crankRevolutions: 0, // Floating-point accumulator for crank revolutions so we can wrap at 16 bits cleanly.
+      wheelRevolutions: 0 // Floating-point accumulator for wheel revolutions (32-bit field in BLE spec).
+    };
+    this.crank = { timestamp: 0, revolutions: 0 }; // BLE-friendly crank snapshot (16-bit revolutions + seconds timestamp).
+    this.wheel = { timestamp: 0, revolutions: 0 }; // BLE-friendly wheel snapshot (32-bit revolutions + seconds timestamp).
 
     this.server = new GymnasticonServer(this.bleno, opts.serverName);
-    this.antStick = createAntStick();
-    this.antStickClosed = false;
-    this.antServer = new AntServer(this.antStick, { deviceId: opts.antDeviceId });
+    this.antEnabled = Boolean(opts.antEnabled); // ANT+ broadcasting is enabled when either the user or auto-detect requested it.
+    if (this.antEnabled) { // Only create ANT+ resources when needed to avoid probing hardware unnecessarily.
+      this.antStick = createAntStick(); // Create the ANT+ stick interface (falls back to stubs during development).
+      this.antStickClosed = false; // Track whether we have manually closed the stick to avoid double-close errors.
+      this.antServer = new AntServer(this.antStick, { deviceId: opts.antDeviceId }); // ANT+ Bicycle Power broadcaster using gd-ant-plus APIs.
+    } else {
+      this.antStick = null; // Mark hardware resources as absent when ANT+ broadcasting is disabled.
+      this.antStickClosed = true; // Treat the stick as already closed so stopAnt does nothing.
+      this.antServer = null; // No ANT+ broadcaster is created in this mode.
+    }
 
-    this.onAntStickStartup = this.onAntStickStartup.bind(this);
-    this.stopAnt = this.stopAnt.bind(this);
+    this.onAntStickStartup = this.onAntStickStartup.bind(this); // Bind ANT+ event handlers once so we can add/remove listeners cleanly.
+    this.stopAnt = this.stopAnt.bind(this); // Bind stop helper for reuse across shutdown paths.
 
-    if (typeof this.antStick.on === 'function') {
+    if (this.antStick && typeof this.antStick.on === 'function') { // Register stick lifecycle hooks when running against real hardware.
       this.antStick.on('startup', this.onAntStickStartup);
       this.antStick.on('shutdown', this.stopAnt);
     }
@@ -199,7 +227,9 @@ export class App {
       this.connectTimeout.cancel();
       this.logger.log(`bike connected ${this.bike.address}`);
       await this.server.start();
-      this.startAnt();
+      if (this.antEnabled) { // Only attempt ANT+ start when broadcasting is enabled.
+        this.startAnt(); // Kick off ANT+ broadcasting (no-op if the stick is missing).
+      }
       await this.hrClient.connect();
       this.pingInterval.reset();
       this.statsTimeout.reset();
@@ -209,34 +239,76 @@ export class App {
     }
   }
 
+  integrateKinematics(cadence, speed, timestamp) { // Update cumulative crank and wheel state for BLE notifications.
+    const now = timestamp ?? nowSeconds(); // Use provided timestamp or fall back to current wall-clock time.
+    const last = this.kinematics.lastTimestamp ?? now; // When this is the first sample treat dt as zero.
+    const dt = Math.max(0, now - last); // Ensure we never integrate backwards when timestamps jitter.
+    this.kinematics.lastTimestamp = now; // Persist the sample time for the next update.
+
+    const safeCadence = Number.isFinite(cadence) ? Math.max(0, cadence) : 0; // Drop NaN/negative cadences before integrating.
+    const crankIncrement = (safeCadence / 60) * dt; // Convert RPM to revolutions per second and multiply by elapsed time.
+    this.kinematics.crankRevolutions += crankIncrement; // Accumulate crank revolutions in floating-point space for precision.
+    this.kinematics.crankRevolutions %= 0x10000; // Keep the accumulator within the 16-bit wrap window to avoid floating-point blow up.
+
+    const circumference = this.speedOptions.circumferenceM || defaults.speedFallback.circumferenceM; // Pull the wheel circumference to map speed to revolutions.
+    const safeSpeed = Number.isFinite(speed) ? Math.max(0, speed) : 0; // Guard against bogus speed readings.
+    const wheelIncrement = circumference > 0 ? (safeSpeed / circumference) * dt : 0; // Convert linear speed back to wheel revolutions.
+    this.kinematics.wheelRevolutions += wheelIncrement; // Accumulate wheel revolutions for the CSC service.
+    this.kinematics.wheelRevolutions %= 0x100000000; // Apply 32-bit wrap so the counter mirrors BLE behavior.
+
+    this.crank = { // Build the BLE-friendly crank snapshot (16-bit revolutions + timestamp in seconds).
+      timestamp: now,
+      revolutions: Math.floor(this.kinematics.crankRevolutions) & 0xffff,
+    };
+
+    this.wheel = { // Build the BLE-friendly wheel snapshot (32-bit revolutions + timestamp in seconds).
+      timestamp: now,
+      revolutions: Math.floor(this.kinematics.wheelRevolutions) >>> 0,
+    };
+  }
+
+  publishTelemetry() { // Push the latest power/cadence/speed state to BLE and ANT+ consumers.
+    this.server.ensureCscCapabilities({ supportWheel: true, supportCrank: true }); // Always advertise both wheel and crank data so speed shows up in apps.
+    this.server.updatePower({ power: this.power, cadence: this.currentCadence, crank: this.crank }); // Send Cycling Power measurements including crank events.
+    this.server.updateCsc({ wheel: this.wheel, crank: this.crank }); // Send CSC measurements with cumulative wheel/crank counters.
+    if (this.antServer?.isRunning) { // Forward to ANT+ bicycle power profile when broadcasting is active.
+      this.antServer.updateMeasurement({ power: this.power, cadence: this.currentCadence });
+    }
+  }
+
   onPedalStroke(timestamp) {
     this.pingInterval.reset();
-    this.crank.timestamp = timestamp;
-    this.crank.revolutions++;
-    let {power, crank} = this;
-    this.logger.log(`pedal stroke [timestamp=${timestamp} revolutions=${crank.revolutions} power=${power}W]`);
-    this.server.updateMeasurement({ power, crank });
+    const cadence = this.simulation.cadence ?? this.currentCadence; // Use simulated cadence when bot mode drives the app.
+    const speed = estimateSpeedMps(cadence, this.speedOptions); // Estimate speed for simulation strokes so CSC stays alive.
+    this.currentCadence = cadence; // Track cadence for ANT+/BLE ping intervals.
+    this.integrateKinematics(cadence, speed, timestamp); // Update cumulative crank/wheel counters based on the simulated stroke.
+    this.logger.log(`pedal stroke [timestamp=${timestamp} revolutions=${this.crank.revolutions} power=${this.power}W]`);
+    this.publishTelemetry(); // Push the updated measurement to BLE/ANT clients.
   }
 
   onPingInterval() {
     debuglog(`pinging app since no stats or pedal strokes for ${this.pingInterval.interval}s`);
-    let {power, crank} = this;
-    this.server.updateMeasurement({ power, crank });
+    this.publishTelemetry(); // Re-send the last known measurement so connected apps stay alive.
   }
 
   onHeartRate(hr) {
     this.server.updateHeartRate(hr);
   }
 
-  onBikeStats({ power, cadence }) {
-    power = power > 0 ? Math.max(0, Math.round(power * this.powerScale + this.powerOffset)) : 0;
-    this.logger.log(`received stats from bike [power=${power}W cadence=${cadence}rpm]`);
-    this.statsTimeout.reset();
-    this.power = power;
-    this.simulation.cadence = cadence;
-    let {crank} = this;
-    this.server.updateMeasurement({ power, crank });
-    this.antServer.updateMeasurement({ power, cadence });
+  onBikeStats({ power, cadence, speed }) {
+    const scaledPower = power > 0 ? Math.max(0, Math.round(power * this.powerScale + this.powerOffset)) : 0; // Apply calibration and clamp to non-negative watts.
+    const safeCadence = Number.isFinite(cadence) ? Math.max(0, cadence) : 0; // Guard against undefined or negative cadence readings.
+    const nativeSpeed = Number.isFinite(speed) ? Math.max(0, speed) : null; // Use bike-provided speed when available.
+    const inferredSpeed = nativeSpeed ?? estimateSpeedMps(safeCadence, this.speedOptions); // Fall back to our cadence-based estimator when speed is absent.
+
+    this.logger.log(`received stats from bike [power=${scaledPower}W cadence=${safeCadence}rpm speed=${inferredSpeed.toFixed(2)}m/s]`); // Log the normalized metrics for debugging.
+    this.statsTimeout.reset(); // Clear the bike stats timeout since we just received fresh data.
+    this.power = scaledPower; // Store the scaled power for ping intervals and ANT+ updates.
+    this.currentCadence = safeCadence; // Track cadence for ANT+ and BLE keep-alives.
+    this.simulation.cadence = safeCadence; // Keep the simulation helper in sync for manual pedal triggers.
+
+    this.integrateKinematics(safeCadence, inferredSpeed, nowSeconds()); // Update cumulative wheel/crank counters for CSC.
+    this.publishTelemetry(); // Broadcast the updated metrics to BLE and ANT+ clients.
   }
 
   onBikeStatsTimeout() {
@@ -255,7 +327,10 @@ export class App {
   }
 
   startAnt() {
-    if (!this.antStick.is_present()) {
+    if (!this.antEnabled || !this.antStick || !this.antServer) { // Skip when ANT+ broadcasting is disabled or hardware unavailable.
+      return;
+    }
+    if (!this.antStick.is_present()) { // If the stick is not detected, log and fall back to BLE-only mode.
       this.logger.log('no ANT+ stick found');
       return;
     }
@@ -276,7 +351,7 @@ export class App {
   }
 
   onAntStickStartup() {
-    if (this.antServer.isRunning) {
+    if (!this.antServer || this.antServer.isRunning) { // Ignore duplicate startup events or when ANT+ is disabled.
       return;
     }
     this.logger.log('ANT+ stick opened');
@@ -285,7 +360,7 @@ export class App {
   }
 
   stopAnt() {
-    if (!this.antServer.isRunning) {
+    if (!this.antServer || !this.antServer.isRunning) { // Nothing to do when we never started broadcasting.
       return;
     }
     this.logger.log('stopping ANT+ server');
@@ -308,7 +383,7 @@ export class App {
   }
 
   onExit() {
-    if (this.antServer.isRunning) {
+    if (this.antServer?.isRunning) { // Ensure ANT+ broadcasting stops cleanly on process exit.
       this.stopAnt();
     }
   }
