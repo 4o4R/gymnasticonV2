@@ -47,6 +47,11 @@ on_chroot <<EOF
 echo 'dtparam=watchdog=on' >> /boot/config.txt # enable the hardware watchdog in firmware
 systemctl enable watchdog # start the watchdog on boot
 
+systemctl enable bluetooth # ensure BlueZ starts automatically after boot
+systemctl start bluetooth # start Bluetooth during image build so adapters are configured
+hciconfig hci0 up || true # bring the onboard Bluetooth adapter online when available
+hciconfig hci1 up || true # attempt to power on a second USB Bluetooth adapter
+
 systemctl enable gymnasticon # launch Gymnasticon automatically
 systemctl enable gymnasticon-mods # ensure overlay modifications happen at startup
 
@@ -56,6 +61,8 @@ dphys-swapfile swapoff # disable swap for better SD longevity
 dphys-swapfile uninstall # remove the swap file entirely
 systemctl disable dphys-swapfile.service # keep the swap service from coming back
 apt-get remove -y --purge logrotate fake-hwclock rsyslog # drop high-write services that cause SD wear
+
+setcap cap_net_raw+eip /opt/gymnasticon/node/bin/node || true # allow the bundled Node runtime to open raw BLE sockets
 
 EOF
 

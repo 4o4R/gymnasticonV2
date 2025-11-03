@@ -15,10 +15,11 @@ import {macAddress} from './mac-address.js';
  * @param {FilterFunction} filter - find devices matching this filter
  * @returns {Peripheral} the matching peripheral
  */
-export async function scan(noble, serviceUuids, filter = () => true) {
-  let peripheral
-  let results = on(noble, 'discover');
-  await noble.startScanningAsync(serviceUuids, true);
+export async function scan(noble, serviceUuids, filter = () => true, options = {}) { // Scan for the first peripheral that satisfies the filter.
+  const allowDuplicates = options.allowDuplicates ?? true; // Noble accepts an allowDuplicates flag when starting a scan.
+  let peripheral; // Track the matched peripheral so we can stop scanning once found.
+  const results = on(noble, 'discover'); // Convert noble discover events into an async iterator.
+  await noble.startScanningAsync(serviceUuids, allowDuplicates); // Kick off the scan using the caller's duplicate preference.
   for await (const [result] of results) {
     if (filter(result)) {
       peripheral = result;

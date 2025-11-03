@@ -166,6 +166,15 @@ The script clones Raspberry Pi’s `pi-gen`, applies Gymnasticon’s custom stag
 
 > Tip: if you are on Windows/WSL, install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and enable the WSL2 integration for your distribution before running `build.sh`. The script now checks that Docker is installed and running before it starts.
 
+### Adapter auto-detection and multi-radio setups
+
+Gymnasticon now inspects available adapters on boot and automatically chooses sensible defaults:
+
+- Built-in Bluetooth (`hci0`) is used to connect to your bike while a second USB dongle (`hci1`) is used for advertising when present.
+- ANT+ broadcasting is enabled automatically when a Garmin USB-M stick is detected; override with `--ant-plus` (force on/off) or `--ant-auto false` to disable.
+- Use `--default-bike <type>` to define the fallback profile when autodetect does not find a match (default: `keiser`).
+- Additional CLI tuning options let you calibrate estimated speed: `--speed-circumference`, `--speed-gear-factor`, `--speed-min`, and `--speed-max`.
+
 Config file:
 
 If using a bike other than Flywheel or Peloton - create and adapt a `gymnasticon.json` file within the main folder of the SD card. It should end up in the same folder as `bootcode.bin`, `cmdline.txt`, `config.txt`, etc.

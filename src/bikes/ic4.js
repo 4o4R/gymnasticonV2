@@ -13,8 +13,9 @@ const INDOOR_BIKE_DATA_UUID = '2ad2';
 
 // indoor bike data characteristic value parsing
 const IBD_VALUE_MAGIC = Buffer.from([0x44]); // identifies indoor bike data message
-const IBD_VALUE_IDX_POWER = 6; // 16-bit power (watts) data offset within packet
+const IBD_VALUE_IDX_SPEED = 2; // 16-bit instantaneous speed (0.01 km/h units) offset within packet
 const IBD_VALUE_IDX_CADENCE = 4; // 16-bit cadence (1/2 rpm) data offset within packet
+const IBD_VALUE_IDX_POWER = 6; // 16-bit power (watts) data offset within packet
 
 import {loadDependency, toDefaultExport} from '../util/optional-deps.js';
 
@@ -125,8 +126,8 @@ export class Ic4BikeClient extends EventEmitter {
     this.emit('data', data);
 
     try {
-      const {power, cadence} = parse(data);
-      this.emit('stats', {power, cadence});
+      const payload = parse(data); // Decode power/cadence and optional speed from the FTMS payload.
+      this.emit('stats', payload); // Forward the parsed stats so downstream services can consume speed when present.
     } catch (e) {
       if (!/unable to parse message/.test(e)) {
         throw e;
@@ -205,9 +206,11 @@ export function parse(data) {
   //
   // So we can simplify the decoding to:
   if (data.indexOf(IBD_VALUE_MAGIC) === 0) {
-    const power = data.readInt16LE(IBD_VALUE_IDX_POWER);
-    const cadence = Math.round(data.readUInt16LE(IBD_VALUE_IDX_CADENCE) / 2);
-    return {power, cadence};
+    const power = data.readInt16LE(IBD_VALUE_IDX_POWER); // Power is reported as a signed 16-bit integer (watts).
+    const cadence = Math.round(data.readUInt16LE(IBD_VALUE_IDX_CADENCE) / 2); // Cadence is expressed in half RPM increments.
+    const speedRaw = data.readUInt16LE(IBD_VALUE_IDX_SPEED); // Instantaneous speed in 0.01 km/h per FTMS specification.
+    const speed = speedRaw > 0 ? (speedRaw / 100) * (1000 / 3600) : undefined; // Convert to meters per second when non-zero.
+    return speed !== undefined ? {power, cadence, speed} : {power, cadence}; // Include speed only when the bike actually reports it.
   }
   throw new Error('unable to parse message');
 }
