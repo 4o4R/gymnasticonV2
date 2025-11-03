@@ -40,6 +40,15 @@ else
     install_node_default # newer Pis or other architectures use the NodeSource repository
 fi
 
+# Ensure Bluetooth services are enabled and adapters powered before starting Gymnasticon
+sudo systemctl enable bluetooth # Persistently enable the BlueZ Bluetooth service
+sudo systemctl start bluetooth # Start the Bluetooth service immediately for the current session
+sudo hciconfig hci0 up || true # Bring the onboard Bluetooth adapter up if present
+sudo hciconfig hci1 up || true # Attempt to bring a second USB Bluetooth adapter up when available
+
+# Allow the Node runtime to open raw BLE sockets without sudo (required for bleno/noble)
+sudo setcap cap_net_raw+eip "$(command -v node)" || true
+
 # Clone Gymnasticon repository
 sudo git clone https://github.com/4o4R/gymnasticonV2.git /opt/gymnasticon
 cd /opt/gymnasticon

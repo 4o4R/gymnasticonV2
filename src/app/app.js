@@ -113,7 +113,8 @@ export class App {
     this.wheel = { timestamp: 0, revolutions: 0 }; // BLE-friendly wheel snapshot (32-bit revolutions + seconds timestamp).
 
     this.server = new GymnasticonServer(this.bleno, opts.serverName);
-    this.antEnabled = Boolean(opts.antEnabled); // ANT+ broadcasting is enabled when either the user or auto-detect requested it.
+    const antRequested = typeof opts.antEnabled === 'boolean' ? opts.antEnabled : Boolean(opts.antAuto ?? defaults.antAuto); // Respect explicit antEnabled, otherwise fall back to auto preference.
+    this.antEnabled = antRequested; // Store the resolved ANT+ enable switch for later checks.
     if (this.antEnabled) { // Only create ANT+ resources when needed to avoid probing hardware unnecessarily.
       this.antStick = createAntStick(); // Create the ANT+ stick interface (falls back to stubs during development).
       this.antStickClosed = false; // Track whether we have manually closed the stick to avoid double-close errors.
