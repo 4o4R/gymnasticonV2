@@ -1,5 +1,5 @@
 IMG_NAME=Gymnasticon
-RELEASE=bullseye
+RELEASE=buster
 LOCALE_DEFAULT=en_US.UTF-8
 TARGET_HOSTNAME=gymnasticon
 KEYBOARD_KEYMAP=us
