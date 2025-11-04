@@ -66,9 +66,17 @@ if "99archive-tweaks" not in prerun.read_text():
           "APTCONF\n"
     )
 
-net_run = Path("stage2/02-net-tweaks/00-run.sh")
-net_run.write_text("#!/bin/bash -e\n\napt-get update\n")
-net_run.chmod(0o755)
+for stage in ("stage1", "stage2"):
+    update_dir = Path(stage) / "00-apt-update"
+    update_dir.mkdir(parents=True, exist_ok=True)
+    run_sh = update_dir / "00-run.sh"
+    run_sh.write_text(
+        "#!/bin/bash -e\n"
+        "on_chroot <<'EOF'\n"
+        "apt-get update\n"
+        "EOF\n"
+    )
+    run_sh.chmod(0o755)
 
 PY
 cp ../config config
