@@ -18,8 +18,14 @@ Follow the steps below to create the Gymnasticon Raspberry Pi SD/SSD card image 
    ```bash
    docker info
    ```
-   If this fails, start Docker Desktop in Windows and retry.
-3. From the repository root, launch the build helper:
+   If this fails, start Docker Desktop in Windows and retry.   Or if you have tried to build before, Docker may have an old container. Try to remove it:
+    ```bash
+   docker ps -a | grep pigen_work   # optional: confirm it exists
+   docker rm -v pigen_work          # drop the stopped container and scratch volumes
+    ```
+
+
+4. From the repository root, launch the build helper:
    ```bash
    cd ~/gymnasticonV2
    bash scripts/build-pi-image.sh
@@ -40,16 +46,4 @@ You can copy the `.img.xz` (or the raw `.img` if you prefer) onto your Windows f
 ```bash
 cp deploy/pi-sdcard/pi-gen/deploy/gymnasticon-raspberrypi.img.xz /mnt/c/Users/James/Downloads/
 ```
-
-## Publish the image on GitHub
-
-1. Verify the checksum before sharing:
-   ```bash
-   cd deploy/pi-sdcard/pi-gen/deploy
-   sha256sum -c gymnasticon-raspberrypi.img.xz.sha256
-   ```
-2. Create a new GitHub release (or edit an existing one) in the `gymnasticonV2` repository.
-3. Upload `gymnasticon-raspberrypi.img.xz` as a release asset. (Do not commit the binary into git history; it is too large for regular clones.)
-4. Optionally attach the `.sha256` file so users can verify their download.
-
-Once the release is published, copy the direct asset URL and link to it from the README.
+You can then clone this to an an SD card to use in your Rasberry Pi.
