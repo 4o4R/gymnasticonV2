@@ -19,6 +19,9 @@ cat >/etc/apt/apt.conf.d/99legacy-repos <<'CONF'
 Acquire::Check-Valid-Until "false";
 Acquire::Retries "5";
 Acquire::http::Pipeline-Depth "0";
+Acquire::AllowReleaseInfoChange::Suite "1";
+Acquire::AllowReleaseInfoChange::Codename "1";
+Acquire::AllowReleaseInfoChange::Version "1";
 CONF
 apt-get update
 EOF

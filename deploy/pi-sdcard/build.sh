@@ -36,17 +36,20 @@ if needle not in original: # bail out early if the Dockerfile structure changes 
     raise SystemExit('Expected apt-get stanza not found in Dockerfile')
 dockerfile.write_text(original.replace(needle, replacement, 1)) # write the patched Dockerfile back to disk
 
-# The legacy Buster packages now live on archive.raspbian.org; keep everything pointed there
+# The legacy Buster packages now live on archive.raspbian.org; force pi-gen to use it explicitly
 mirror = "http://archive.raspbian.org/raspbian/"
-for path in (Path("stage0/prerun.sh"), Path("stage0/00-configure-apt/files/sources.list")):
-    text = path.read_text()
-    if "http://raspbian.raspberrypi.org/raspbian/" not in text and "https://raspbian.raspberrypi.org/raspbian/" not in text:
-        continue # allow future pi-gen revisions that may already point to the legacy mirror
-    text = text.replace("http://raspbian.raspberrypi.org/raspbian/", mirror)
-    text = text.replace("https://raspbian.raspberrypi.org/raspbian/", mirror)
-    text = text.replace("http://archive.raspbian.org/raspbian/", mirror)
-    text = text.replace("https://archive.raspbian.org/raspbian/", mirror)
-    path.write_text(text)
+Path("stage0/prerun.sh").write_text(
+    '#!/bin/bash -e\n\n'
+    'if [ ! -d "${ROOTFS_DIR}" ]; then\n'
+    f'\tbootstrap buster "${{ROOTFS_DIR}}" {mirror}\n'
+    'fi\n'
+)
+
+sources_list = (
+    f"deb {mirror} buster main contrib non-free rpi\n"
+    f"#deb-src {mirror} buster main contrib non-free rpi\n"
+)
+Path("stage0/00-configure-apt/files/sources.list").write_text(sources_list)
 
 prerun = Path("stage0/prerun.sh")
 if "99archive-tweaks" not in prerun.read_text():
@@ -57,6 +60,9 @@ if "99archive-tweaks" not in prerun.read_text():
           "Acquire::Check-Valid-Until \"false\";\n"
           "Acquire::Retries \"5\";\n"
           "Acquire::http::Pipeline-Depth \"0\";\n"
+          "Acquire::AllowReleaseInfoChange::Suite \"1\";\n"
+          "Acquire::AllowReleaseInfoChange::Codename \"1\";\n"
+          "Acquire::AllowReleaseInfoChange::Version \"1\";\n"
           "APTCONF\n"
     )
 
