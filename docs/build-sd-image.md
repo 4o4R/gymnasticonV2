@@ -18,8 +18,14 @@ Follow the steps below to create the Gymnasticon Raspberry Pi SD/SSD card image 
    ```bash
    docker info
    ```
-   If this fails, start Docker Desktop in Windows and retry.
-3. From the repository root, launch the build helper:
+   If this fails, start Docker Desktop in Windows and retry.   Or if you have tried to build before, Docker may have an old container. Try to remove it:
+    ```bash
+   docker ps -a | grep pigen_work   # optional: confirm it exists
+   docker rm -v pigen_work          # drop the stopped container and scratch volumes
+    ```
+
+
+4. From the repository root, launch the build helper:
    ```bash
    cd ~/gymnasticonV2
    bash scripts/build-pi-image.sh
