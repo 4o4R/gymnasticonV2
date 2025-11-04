@@ -36,7 +36,7 @@ if needle not in original: # bail out early if the Dockerfile structure changes 
     raise SystemExit('Expected apt-get stanza not found in Dockerfile')
 dockerfile.write_text(original.replace(needle, replacement, 1)) # write the patched Dockerfile back to disk
 
-mirror = "http://archive.raspbian.org/raspbian/" # canonical archive mirror for archived Raspberry Pi OS packages
+mirror = "http://raspbian.raspberrypi.org/raspbian/" # standard Raspbian mirror hosting the full Buster repo
 for path in (Path("stage0/prerun.sh"), Path("stage0/00-configure-apt/files/sources.list")):
     text = path.read_text()
     if "http://raspbian.raspberrypi.org/raspbian/" not in text and "https://raspbian.raspberrypi.org/raspbian/" not in text:

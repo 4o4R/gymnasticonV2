@@ -7,11 +7,11 @@ mkdir -p "${ROOTFS_DIR}/proc" \
          "${ROOTFS_DIR}/sys" \
          "${ROOTFS_DIR}/dev/pts"
 
-# Keep the chroot pinned to the archive mirrors that still host Buster packages
+# Keep the chroot pinned to the primary mirrors that still host Buster packages
 # before we install Gymnasticon-specific dependencies and disable the expiry
-# checks that archive.raspbian.org no longer refreshes.
+# checks that the old Buster Release metadata no longer refreshes.
 on_chroot <<'EOF'
-sed -i -E 's|https?://(raspbian\.raspberrypi\.org|archive\.raspbian\.org|mirrordirector\.raspbian\.org)/raspbian|http://archive.raspbian.org/raspbian|g' /etc/apt/sources.list
+sed -i -E 's|https?://(raspbian\.raspberrypi\.org|archive\.raspbian\.org|mirrordirector\.raspbian\.org)/raspbian|http://raspbian.raspberrypi.org/raspbian|g' /etc/apt/sources.list
 if [ -f /etc/apt/sources.list.d/raspi.list ]; then
   sed -i -E 's|https?://archive.raspberrypi.org/debian|http://archive.raspberrypi.org/debian|g' /etc/apt/sources.list.d/raspi.list
 fi
