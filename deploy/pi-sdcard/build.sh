@@ -1,20 +1,16 @@
 #!/bin/bash -e
-
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker is required to build the Raspberry Pi image. Please install Docker Desktop (with WSL2 integration) or the Linux docker engine before rerunning build.sh."
   exit 1
 fi
-
 if ! docker info >/dev/null 2>&1; then
   echo "Docker daemon is not running. Start Docker (e.g. launch Docker Desktop or run 'sudo service docker start') and try again."
   exit 1
 fi
-
 if [ -d "pi-gen" ]; then
   echo "Removing previous pi-gen workspace..." # ensure stale clones don't break new builds
   rm -rf pi-gen # wipe the old pi-gen tree so the clone below starts clean
 fi
-
 git clone https://github.com/RPi-Distro/pi-gen
 cd pi-gen
 git fetch
@@ -44,13 +40,13 @@ Path("stage0/prerun.sh").write_text(
     f'\tbootstrap buster "${{ROOTFS_DIR}}" {mirror}\n'
     'fi\n'
 )
-
 sources_list = (
     f"deb {mirror} buster main contrib non-free rpi\n"
     f"#deb-src {mirror} buster main contrib non-free rpi\n"
 )
 Path("stage0/00-configure-apt/files/sources.list").write_text(sources_list)
 
+# Add the APT config tweaks in stage0's prerun so they're present before any package operations
 prerun = Path("stage0/prerun.sh")
 if "99archive-tweaks" not in prerun.read_text():
     prerun.write_text(
@@ -66,10 +62,12 @@ if "99archive-tweaks" not in prerun.read_text():
           "APTCONF\n"
     )
 
+# Add apt-get update helpers to stage1 and stage2 without overwriting existing prerun.sh
 for stage in ("stage1", "stage2"):
     update_dir = Path(stage) / "00-apt-update"
     update_dir.mkdir(parents=True, exist_ok=True)
     run_sh = update_dir / "00-run.sh"
+    
     lines = [
         "#!/bin/bash -e",
         "",
@@ -81,6 +79,7 @@ for stage in ("stage1", "stage2"):
         "        -o Acquire::AllowReleaseInfoChange::Version=true \\",
         "        update",
     ]
+    
     if stage == "stage2":
         lines.extend([
             "if ! apt-cache show wpasupplicant >/dev/null 2>&1; then",
@@ -96,10 +95,40 @@ for stage in ("stage1", "stage2"):
             "  exit 1",
             "fi",
         ])
+    
     lines.append("EOF")
     lines.append("")
     run_sh.write_text("\n".join(lines))
     run_sh.chmod(0o755)
+
+# Also add the apt-get update directly into stage2/02-net-tweaks to ensure it runs
+net_tweaks_update = Path("stage2/02-net-tweaks/00-apt-update")
+net_tweaks_update.mkdir(parents=True, exist_ok=True)
+net_tweaks_run = net_tweaks_update / "00-run.sh"
+net_tweaks_run.write_text(
+    "#!/bin/bash -e\n"
+    "\n"
+    "on_chroot <<'EOF'\n"
+    "set -e\n"
+    "echo '=== Updating apt package cache in 02-net-tweaks ==='\n"
+    "apt-get -o Acquire::Check-Valid-Until=false \\\n"
+    "        -o Acquire::AllowReleaseInfoChange::Suite=true \\\n"
+    "        -o Acquire::AllowReleaseInfoChange::Codename=true \\\n"
+    "        -o Acquire::AllowReleaseInfoChange::Version=true \\\n"
+    "        update\n"
+    "echo '=== Checking for wpasupplicant ==='\n"
+    "if ! apt-cache show wpasupplicant >/dev/null 2>&1; then\n"
+    "  echo 'ERROR: wpasupplicant not found after apt-get update' >&2\n"
+    "  echo '=== Contents of /etc/apt/sources.list ===' >&2\n"
+    "  cat /etc/apt/sources.list >&2\n"
+    "  echo '=== Contents of /etc/apt/sources.list.d/ ===' >&2\n"
+    "  ls -la /etc/apt/sources.list.d/ >&2 || true\n"
+    "  exit 1\n"
+    "fi\n"
+    "echo 'wpasupplicant found in package cache'\n"
+    "EOF\n"
+)
+net_tweaks_run.chmod(0o755)
 
 PY
 cp ../config config
