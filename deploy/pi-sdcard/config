@@ -11,8 +11,8 @@ ENABLE_SSH=0
 STAGE_LIST="stage0 stage1 stage2 stage-gymnasticon"
 
 # Mirror settings
-APT_MIRROR=http://archive.raspbian.org/raspbian
-MIRROR=http://archive.raspbian.org/raspbian
+APT_MIRROR=http://raspbian.raspberrypi.org/raspbian
+MIRROR=http://raspbian.raspberrypi.org/raspbian
 
 # Release version
 RELEASE_VERSION=2020-02-13
