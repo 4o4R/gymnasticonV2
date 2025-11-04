@@ -85,55 +85,36 @@ for stage in ("stage1", "stage2"):
     run_sh.write_text("\n".join(lines))
     run_sh.chmod(0o755)
 
-# Ensure raspberrypi-sys-mods doesn't leave sources pointing at raspbian.raspberrypi.org
-ensure_archive_dir = Path("stage2/01-sys-tweaks/02-ensure-archive")
-ensure_archive_dir.mkdir(parents=True, exist_ok=True)
-ensure_archive_run = ensure_archive_dir / "00-run.sh"
-ensure_archive_run.write_text(
-    "#!/bin/bash -e\n"
-    "\n"
-    "on_chroot <<'EOF'\n"
-    "set -e\n"
-    "\n"
-    "echo '=== Reverting sources.list to archive.raspbian.org ==='\n"
-    "sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|archive.raspbian.org/raspbian|g' /etc/apt/sources.list\n"
-    "sed -i 's|http://raspbian\\.raspberrypi\\.org|http://archive.raspbian.org|g' /etc/apt/sources.list\n"
-    "if [ -d /etc/apt/sources.list.d ]; then\n"
-    "  find /etc/apt/sources.list.d -type f -name '*.list' -exec \\\n"
-    "    sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|archive.raspbian.org/raspbian|g' {} \\;\n"
-    "fi\n"
-    "\n"
-    "cat >/etc/apt/apt.conf.d/99archive-tweaks <<'APTCONF'\n"
-    "Acquire::Check-Valid-Until \"false\";\n"
-    "Acquire::Retries \"5\";\n"
-    "Acquire::http::Pipeline-Depth \"0\";\n"
-    "Acquire::AllowReleaseInfoChange::Suite \"1\";\n"
-    "Acquire::AllowReleaseInfoChange::Codename \"1\";\n"
-    "Acquire::AllowReleaseInfoChange::Version \"1\";\n"
-    "APTCONF\n"
-    "\n"
-    "echo '=== Updating apt cache with archive mirror ==='\n"
-    "apt-get -o Acquire::Check-Valid-Until=false \\\n"
-    "        -o Acquire::AllowReleaseInfoChange::Suite=true \\\n"
-    "        -o Acquire::AllowReleaseInfoChange::Codename=true \\\n"
-    "        -o Acquire::AllowReleaseInfoChange::Version=true \\\n"
-    "        update\n"
-    "\n"
-    "echo '=== Verifying WiFi packages are available ==='\n"
-    "if ! apt-cache show wpasupplicant >/dev/null 2>&1; then\n"
-    "  echo 'ERROR: wpasupplicant not found in apt cache' >&2\n"
-    "  cat /etc/apt/sources.list >&2\n"
-    "  exit 1\n"
-    "fi\n"
-    "if ! apt-cache show wireless-tools >/dev/null 2>&1; then\n"
-    "  echo 'ERROR: wireless-tools not found in apt cache' >&2\n"
-    "  cat /etc/apt/sources.list >&2\n"
-    "  exit 1\n"
-    "fi\n"
-    "echo 'WiFi packages verified in apt cache'\n"
-    "EOF\n"
-)
-ensure_archive_run.chmod(0o755)
+sys_tweaks_run = Path("stage2/01-sys-tweaks/01-run.sh")
+ensure_snippet = """
+# Ensure the apt sources remain pinned to archive.raspbian.org for legacy Buster packages
+on_chroot <<'EOF'
+set -e
+sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|archive.raspbian.org/raspbian|g' /etc/apt/sources.list
+sed -i 's|http://raspbian\\.raspberrypi\\.org|http://archive.raspbian.org|g' /etc/apt/sources.list
+if [ -d /etc/apt/sources.list.d ]; then
+  find /etc/apt/sources.list.d -type f -name '*.list' -exec sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|archive.raspbian.org/raspbian|g' {} \\;
+fi
+cat >/etc/apt/apt.conf.d/99archive-tweaks <<'APTCONF'
+Acquire::Check-Valid-Until "false";
+Acquire::Retries "5";
+Acquire::http::Pipeline-Depth "0";
+Acquire::AllowReleaseInfoChange::Suite "1";
+Acquire::AllowReleaseInfoChange::Codename "1";
+Acquire::AllowReleaseInfoChange::Version "1";
+APTCONF
+apt-get -o Acquire::Check-Valid-Until=false \\
+        -o Acquire::AllowReleaseInfoChange::Suite=true \\
+        -o Acquire::AllowReleaseInfoChange::Codename=true \\
+        -o Acquire::AllowReleaseInfoChange::Version=true \\
+        update
+apt-cache show wpasupplicant >/dev/null 2>&1 || { echo 'ERROR: wpasupplicant missing from archive mirror' >&2; exit 1; }
+apt-cache show wireless-tools >/dev/null 2>&1 || { echo 'ERROR: wireless-tools missing from archive mirror' >&2; exit 1; }
+EOF
+"""
+existing_sys_run = sys_tweaks_run.read_text()
+if "Ensure the apt sources remain pinned to archive.raspbian.org" not in existing_sys_run:
+    sys_tweaks_run.write_text(existing_sys_run.rstrip() + "\n\n" + ensure_snippet.lstrip())
 
 # Also add the apt-get update directly into stage2/02-net-tweaks to ensure it runs
 net_tweaks_update = Path("stage2/02-net-tweaks/00-apt-update")
