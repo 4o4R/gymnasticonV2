@@ -11,12 +11,14 @@ mkdir -p "${ROOTFS_DIR}/proc" \
 # before we install Gymnasticon-specific dependencies and disable the expiry
 # checks that archive.raspbian.org no longer refreshes.
 on_chroot <<'EOF'
-sed -i -E 's|https?://(raspbian\.raspberrypi\.org|archive\.raspbian\.org|mirrordirector\.raspbian\.org)/raspbian|https://archive.raspbian.org/raspbian|g' /etc/apt/sources.list
+sed -i -E 's|https?://(raspbian\.raspberrypi\.org|archive\.raspbian\.org|mirrordirector\.raspbian\.org)/raspbian|http://archive.raspbian.org/raspbian|g' /etc/apt/sources.list
 if [ -f /etc/apt/sources.list.d/raspi.list ]; then
-  sed -i -E 's|https?://archive.raspberrypi.org/debian|https://archive.raspberrypi.org/debian|g' /etc/apt/sources.list.d/raspi.list
+  sed -i -E 's|https?://archive.raspberrypi.org/debian|http://archive.raspberrypi.org/debian|g' /etc/apt/sources.list.d/raspi.list
 fi
 cat >/etc/apt/apt.conf.d/99legacy-repos <<'CONF'
 Acquire::Check-Valid-Until "false";
+Acquire::Retries "5";
+Acquire::http::Pipeline-Depth "0";
 CONF
 apt-get update
 EOF
