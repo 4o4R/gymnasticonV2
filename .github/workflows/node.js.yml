@@ -1,33 +1,71 @@
 # This workflow will do a clean install of node dependencies, build the source code and run tests across different versions of node
 # For more information see: https://help.github.com/actions/language-and-framework-guides/using-nodejs-with-github-actions
 
+# The name that appears in the GitHub Actions tab
 name: Node.js CI
 
+# Define when this workflow should run
 on:
   push:
-    branches: [ main ]
+    branches: [ main ]  # Run whenever code is pushed to the main branch
   pull_request:
-    branches: [ main ]
+    branches: [ main ]  # Run whenever a pull request targets the main branch
 
+# Define the jobs (tasks) that will run
 jobs:
+  # This job is named "build" - you can have multiple jobs with different names
   build:
-
+    # Run this job on the latest Ubuntu Linux virtual machine provided by GitHub
     runs-on: ubuntu-latest
-
+    
+    # Strategy defines a matrix - this lets you test multiple configurations
     strategy:
       matrix:
+        # Test on Node.js version 14.x (14.21.3 or similar)
+        # You could add more versions like [14.x, 16.x, 18.x] to test on multiple Node versions
         node-version: [14.x]
-
+    
+    # Steps are the individual tasks that run in sequence
     steps:
+    # Step 1: Check out (download) your repository code into the virtual machine
     - uses: actions/checkout@v4
+    
+    # Step 2: Install and configure Node.js
     - name: Use Node.js ${{ matrix.node-version }}
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v4  # This is a pre-built action from GitHub
       with:
-        node-version: ${{ matrix.node-version }}
+        node-version: ${{ matrix.node-version }}  # Use the version from the matrix (14.x)
+    
+    # Step 3: Install system libraries needed to compile native Node.js modules
+    - name: Install system dependencies
+      # apt-get is Ubuntu's package manager
+      # sudo = run as administrator
+      # update = refresh the list of available packages
+      # install -y = install packages and auto-answer "yes" to prompts
+      # libudev-dev = library for device management (needed by usb package)
+      # libusb-1.0-0-dev = library for USB communication (needed by usb package)
+      run: sudo apt-get update && sudo apt-get install -y libudev-dev libusb-1.0-0-dev
+    
+    # Step 4: Pin node-gyp to a specific version
+    # node-gyp is a tool that compiles native C/C++ add-ons for Node.js
     - name: Pin node-gyp 9.x
       run: |
+        # Install node-gyp version 9.4.1 globally (-g flag)
         npm install -g node-gyp@9.4.1
+        # Set an environment variable so npm uses this specific version
+        # $(npm root -g) = get the global npm packages directory
+        # >> $GITHUB_ENV = append to GitHub's environment variables file
         echo "npm_config_node_gyp=$(npm root -g)/node-gyp/bin/node-gyp.js" >> $GITHUB_ENV
+    
+    # Step 5: Install your project's dependencies from package-lock.json
+    # "ci" = clean install - deletes node_modules and installs from scratch
+    # This ensures consistent, reproducible builds
     - run: npm ci
+    
+    # Step 6: Run the build script if it exists in package.json
+    # --if-present = only run if the "build" script is defined, otherwise skip
     - run: npm run build --if-present
+    
+    # Step 7: Run your project's tests defined in package.json
+    # This will fail the workflow if any tests fail
     - run: npm test
