@@ -70,12 +70,35 @@ for stage in ("stage1", "stage2"):
     update_dir = Path(stage) / "00-apt-update"
     update_dir.mkdir(parents=True, exist_ok=True)
     run_sh = update_dir / "00-run.sh"
-    run_sh.write_text(
-        "#!/bin/bash -e\n"
-        "on_chroot <<'EOF'\n"
-        "apt-get update\n"
-        "EOF\n"
-    )
+    lines = [
+        "#!/bin/bash -e",
+        "",
+        "on_chroot <<'EOF'",
+        "set -e",
+        "apt-get -o Acquire::Check-Valid-Until=false \\",
+        "        -o Acquire::AllowReleaseInfoChange::Suite=true \\",
+        "        -o Acquire::AllowReleaseInfoChange::Codename=true \\",
+        "        -o Acquire::AllowReleaseInfoChange::Version=true \\",
+        "        update",
+    ]
+    if stage == "stage2":
+        lines.extend([
+            "if ! apt-cache show wpasupplicant >/dev/null 2>&1; then",
+            "  echo 'wpasupplicant not found after apt-get update' >&2",
+            "  cat /etc/apt/sources.list >&2",
+            "  ls -R /etc/apt/sources.list.d >&2 || true",
+            "  exit 1",
+            "fi",
+            "if ! apt-cache show wireless-tools >/dev/null 2>&1; then",
+            "  echo 'wireless-tools not found after apt-get update' >&2",
+            "  cat /etc/apt/sources.list >&2",
+            "  ls -R /etc/apt/sources.list.d >&2 || true",
+            "  exit 1",
+            "fi",
+        ])
+    lines.append("EOF")
+    lines.append("")
+    run_sh.write_text("\n".join(lines))
     run_sh.chmod(0o755)
 
 PY
