@@ -67,7 +67,7 @@ for stage in ("stage1", "stage2"):
     update_dir = Path(stage) / "00-apt-update"
     update_dir.mkdir(parents=True, exist_ok=True)
     run_sh = update_dir / "00-run.sh"
-    
+
     lines = [
         "#!/bin/bash -e",
         "",
@@ -78,28 +78,62 @@ for stage in ("stage1", "stage2"):
         "        -o Acquire::AllowReleaseInfoChange::Codename=true \\",
         "        -o Acquire::AllowReleaseInfoChange::Version=true \\",
         "        update",
+        "EOF",
+        "",
     ]
-    
-    if stage == "stage2":
-        lines.extend([
-            "if ! apt-cache show wpasupplicant >/dev/null 2>&1; then",
-            "  echo 'wpasupplicant not found after apt-get update' >&2",
-            "  cat /etc/apt/sources.list >&2",
-            "  ls -R /etc/apt/sources.list.d >&2 || true",
-            "  exit 1",
-            "fi",
-            "if ! apt-cache show wireless-tools >/dev/null 2>&1; then",
-            "  echo 'wireless-tools not found after apt-get update' >&2",
-            "  cat /etc/apt/sources.list >&2",
-            "  ls -R /etc/apt/sources.list.d >&2 || true",
-            "  exit 1",
-            "fi",
-        ])
-    
-    lines.append("EOF")
-    lines.append("")
+
     run_sh.write_text("\n".join(lines))
     run_sh.chmod(0o755)
+
+# Ensure raspberrypi-sys-mods doesn't leave sources pointing at raspbian.raspberrypi.org
+ensure_archive_dir = Path("stage2/01-sys-tweaks/02-ensure-archive")
+ensure_archive_dir.mkdir(parents=True, exist_ok=True)
+ensure_archive_run = ensure_archive_dir / "00-run.sh"
+ensure_archive_run.write_text(
+    "#!/bin/bash -e\n"
+    "\n"
+    "on_chroot <<'EOF'\n"
+    "set -e\n"
+    "\n"
+    "echo '=== Reverting sources.list to archive.raspbian.org ==='\n"
+    "sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|archive.raspbian.org/raspbian|g' /etc/apt/sources.list\n"
+    "sed -i 's|http://raspbian\\.raspberrypi\\.org|http://archive.raspbian.org|g' /etc/apt/sources.list\n"
+    "if [ -d /etc/apt/sources.list.d ]; then\n"
+    "  find /etc/apt/sources.list.d -type f -name '*.list' -exec \\\n"
+    "    sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|archive.raspbian.org/raspbian|g' {} \\;\n"
+    "fi\n"
+    "\n"
+    "cat >/etc/apt/apt.conf.d/99archive-tweaks <<'APTCONF'\n"
+    "Acquire::Check-Valid-Until \"false\";\n"
+    "Acquire::Retries \"5\";\n"
+    "Acquire::http::Pipeline-Depth \"0\";\n"
+    "Acquire::AllowReleaseInfoChange::Suite \"1\";\n"
+    "Acquire::AllowReleaseInfoChange::Codename \"1\";\n"
+    "Acquire::AllowReleaseInfoChange::Version \"1\";\n"
+    "APTCONF\n"
+    "\n"
+    "echo '=== Updating apt cache with archive mirror ==='\n"
+    "apt-get -o Acquire::Check-Valid-Until=false \\\n"
+    "        -o Acquire::AllowReleaseInfoChange::Suite=true \\\n"
+    "        -o Acquire::AllowReleaseInfoChange::Codename=true \\\n"
+    "        -o Acquire::AllowReleaseInfoChange::Version=true \\\n"
+    "        update\n"
+    "\n"
+    "echo '=== Verifying WiFi packages are available ==='\n"
+    "if ! apt-cache show wpasupplicant >/dev/null 2>&1; then\n"
+    "  echo 'ERROR: wpasupplicant not found in apt cache' >&2\n"
+    "  cat /etc/apt/sources.list >&2\n"
+    "  exit 1\n"
+    "fi\n"
+    "if ! apt-cache show wireless-tools >/dev/null 2>&1; then\n"
+    "  echo 'ERROR: wireless-tools not found in apt cache' >&2\n"
+    "  cat /etc/apt/sources.list >&2\n"
+    "  exit 1\n"
+    "fi\n"
+    "echo 'WiFi packages verified in apt cache'\n"
+    "EOF\n"
+)
+ensure_archive_run.chmod(0o755)
 
 # Also add the apt-get update directly into stage2/02-net-tweaks to ensure it runs
 net_tweaks_update = Path("stage2/02-net-tweaks/00-apt-update")
