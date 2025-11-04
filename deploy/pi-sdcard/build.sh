@@ -36,12 +36,14 @@ if needle not in original: # bail out early if the Dockerfile structure changes 
     raise SystemExit('Expected apt-get stanza not found in Dockerfile')
 dockerfile.write_text(original.replace(needle, replacement, 1)) # write the patched Dockerfile back to disk
 
-mirror = "http://legacy.raspbian.org/raspbian/" # canonical archive mirror for oldstable Raspberry Pi OS packages
+mirror = "https://archive.raspbian.org/raspbian/" # canonical archive mirror for archived Raspberry Pi OS packages
 for path in (Path("stage0/prerun.sh"), Path("stage0/00-configure-apt/files/sources.list")):
     text = path.read_text()
-    if "http://raspbian.raspberrypi.org/raspbian/" not in text:
+    if "http://raspbian.raspberrypi.org/raspbian/" not in text and "https://raspbian.raspberrypi.org/raspbian/" not in text:
         continue # allow future pi-gen revisions that may already point to the legacy mirror
-    path.write_text(text.replace("http://raspbian.raspberrypi.org/raspbian/", mirror))
+    text = text.replace("http://raspbian.raspberrypi.org/raspbian/", mirror)
+    text = text.replace("https://raspbian.raspberrypi.org/raspbian/", mirror)
+    path.write_text(text)
 
 PY
 cp ../config config
