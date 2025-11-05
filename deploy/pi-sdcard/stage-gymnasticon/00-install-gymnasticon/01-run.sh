@@ -1,4 +1,5 @@
-#!/bin/bash -e # fail fast inside the pi-gen stage so build issues surface immediately
+#!/bin/bash -e
+# fail fast inside the pi-gen stage so build issues surface immediately
 
 NODE_VERSION=14.21.3 # pin the bundled Node runtime to the Raspberry Pi Zero-compatible release
 NODE_SHASUM256= # placeholder for an optional checksum should we decide to verify downloads later
