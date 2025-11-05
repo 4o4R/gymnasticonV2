@@ -148,6 +148,8 @@ net_tweaks_run.chmod(0o755)
 PY
 cp ../config config
 cp -a ../stage-gymnasticon stage-gymnasticon
+find stage-gymnasticon -type f -name '*.sh' -exec sed -i 's/\r$//' {} +
+find stage-gymnasticon -type f -name '*.sh' -exec chmod +x {} +
 sed -i 's/\r$//' config # strip potential CRLF endings introduced by Windows checkouts so pi-gen parses the config
 touch stage2/SKIP_IMAGES
 ./build-docker.sh
