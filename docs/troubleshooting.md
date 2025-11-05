@@ -146,9 +146,3 @@ code .
 
 ---
 
-If you want, I can:
-
-- Try the above steps for you (I can't run commands on your machine, but I can generate the exact commands and edits). 
-- Add a small PowerShell helper script in the repo to set `nvm use 14.21.3` and then launch VSCode (so you don't forget to start VSCode from the correct PATH).
-
-Which would you like next? Run the checklist yourself and paste any failing npm-install.log tail (last ~200 lines), or have me add the helper script and further edits to the repo? 
