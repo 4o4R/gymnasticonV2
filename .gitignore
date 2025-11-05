@@ -4,5 +4,4 @@ node_modules
 *.sw*
 *~
 
-deploy/pi-sdcard/pi-gen
-build.log
+
