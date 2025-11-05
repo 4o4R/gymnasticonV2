@@ -14,7 +14,7 @@ on_chroot <<'EOF'
 set -e
 
 echo "[gymnasticon] Normalising Raspberry Pi mirror URLs"
-sed -i -E 's|https?://(raspbian\.raspberrypi\.org|archive\.raspbian\.org|mirrordirector\.raspbian\.org)/raspbian|http://archive.raspbian.org/raspbian|g' /etc/apt/sources.list
+sed -i -E 's@https?://(raspbian\.raspberrypi\.org|archive\.raspbian\.org|mirrordirector\.raspbian\.org)/raspbian@http://archive.raspbian.org/raspbian@g' /etc/apt/sources.list
 if [ -f /etc/apt/sources.list.d/raspi.list ]; then
   sed -i -E 's|https?://archive.raspberrypi.org/debian|http://archive.raspberrypi.org/debian|g' /etc/apt/sources.list.d/raspi.list
 fi
