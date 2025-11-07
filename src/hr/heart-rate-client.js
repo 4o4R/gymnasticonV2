@@ -1,5 +1,5 @@
 import {EventEmitter} from 'events';
-import {createNameFilter, scan} from '../util/ble-scan.js';
+import {createNameFilter} from '../util/ble-scan.js';
 
 export class HeartRateClient extends EventEmitter {
   constructor(noble, deviceName = 'GARMIN') {
@@ -7,17 +7,47 @@ export class HeartRateClient extends EventEmitter {
     this.noble = noble;
     this.filter = createNameFilter(deviceName);
     this.onDiscover = this.onDiscover.bind(this);
+    this.isScanning = false;
   }
 
   async connect() {
     this.noble.on('discover', this.onDiscover);
-    await this.noble.startScanningAsync(['180d'], true);
+    await this.startSharedScan();
+  }
+
+  async startSharedScan() {
+    if (this.isScanning) {
+      return;
+    }
+    try {
+      await this.noble.startScanningAsync(null, true);
+      this.isScanning = true;
+    } catch (error) {
+      if (!/already (?:start(ed)? )?scanning/i.test(String(error))) {
+        throw error;
+      }
+    }
+  }
+
+  async stopSharedScan() {
+    if (!this.isScanning) {
+      return;
+    }
+    try {
+      await this.noble.stopScanningAsync();
+    } catch (error) {
+      if (!/not scanning/i.test(String(error))) {
+        throw error;
+      }
+    } finally {
+      this.isScanning = false;
+    }
   }
 
   async onDiscover(peripheral) {
     if (!this.filter(peripheral)) return;
     this.noble.removeListener('discover', this.onDiscover);
-    await this.noble.stopScanningAsync();
+    await this.stopSharedScan();
     this.peripheral = peripheral;
     await peripheral.connectAsync();
     const services = await peripheral.discoverServicesAsync(['180d']);
@@ -34,6 +64,7 @@ export class HeartRateClient extends EventEmitter {
   }
 
   async disconnect() {
+    this.noble.removeListener('discover', this.onDiscover);
     if (this.characteristic) {
       this.characteristic.removeAllListeners('data');
       await this.characteristic.unsubscribeAsync();
@@ -41,5 +72,6 @@ export class HeartRateClient extends EventEmitter {
     if (this.peripheral) {
       await this.peripheral.disconnectAsync();
     }
+    await this.stopSharedScan().catch(() => {});
   }
 }

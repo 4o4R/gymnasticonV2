@@ -215,9 +215,13 @@ export class App {
       process.on('SIGINT', this.onSigInt);
       process.on('exit', this.onExit);
 
-      const [state] = await once(this.noble, 'stateChange');
-      if (state !== 'poweredOn')
+      let state = this.noble?.state;
+      if (state !== 'poweredOn') {
+        [state] = await once(this.noble, 'stateChange');
+      }
+      if (state !== 'poweredOn') {
         throw new Error(`Bluetooth adapter state: ${state}`);
+      }
 
       this.logger.log('connecting to bike...');
       this.bike = await createBikeClient(this.opts, this.noble);
