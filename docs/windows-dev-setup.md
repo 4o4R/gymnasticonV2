@@ -32,6 +32,8 @@ This script will:
 - Install required build tools
 - Set up project dependencies
 
+> **Important:** `npm install` now runs `scripts/check-node-version.cjs` and will fail fast if anything other than Node 14.21.3 is active. Run `nvm use 14.21.3` (the version in `.nvmrc`) before installing dependencies, or export `GYMNASTICON_ALLOW_UNSUPPORTED_NODE=1` only if you truly need to bypass the guard.
+
 ### 4. Verify Installation
 After setup completes, you should see:
 - Node.js version: v14.21.3
