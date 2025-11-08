@@ -18,6 +18,9 @@ const MEASUREMENTS_HEX_ENUM = {
 const PACKET_DELIMITER = Buffer.from('f6', 'hex');
 const POLL_RATE = 100;
 const STATS_TIMEOUT = 1.0;
+const CSC_FLAG_CRANK_PRESENT = 1 << 1; // Cycling Speed & Cadence bitfield for “crank data included”.
+const CRANK_TIME_SCALE = 1024; // Spec: timestamps are expressed in 1/1024 second units.
+const CRANK_TIME_WRAP = 0x10000; // 16-bit event time wraps every ~64 seconds.
 
 const serialPortModule = loadDependency('serialport', '../../stubs/serialport.cjs', import.meta);
 const SerialPort = toDefaultExport(serialPortModule);
@@ -53,6 +56,15 @@ export class PelotonBikeClient extends EventEmitter {
     // Let's collect interval handles for cancellation
     this.intervalHandles = new Map();
     this.nextMetric = 0;
+
+    // Track CSC crank metadata so we can generate spec-compliant measurements
+    // that downstream consumers (or future Gymnasticon features) can reuse
+    // without reverse-engineering Peloton’s private packets.
+    this.crankState = {
+      revolutions: 0, // Floating-point accumulator so we can wrap cleanly at 16 bits.
+      eventTime: 0,   // 16-bit timer expressed in 1/1024 second increments.
+      lastSampleMs: null // Wall-clock reference to compute elapsed time between samples.
+    };
   }
 
   async connect() {
@@ -98,24 +110,38 @@ export class PelotonBikeClient extends EventEmitter {
   }
 
   formatCSCMeasurement(cadence) {
-    // CSC measurement flags: 
-    // Bit 0 = wheel rev present (0 = no)
-    // Bit 1 = crank rev present (1 = yes)
-    const flags = 0x02;
-    
-    // Get cumulative crank revolutions
-    this.crankRevs = (this.crankRevs || 0) + (cadence > 0 ? 1 : 0);
-    
-    // Get current time in 1/1024th of a second
-    const timestamp = Math.floor((Date.now() % 64000) * 1.024);
-    
-    // Create Buffer for CSC measurement
-    const cscData = Buffer.alloc(7);
-    cscData.writeUInt8(flags, 0);
-    cscData.writeUInt16LE(this.crankRevs, 3);
-    cscData.writeUInt16LE(timestamp, 5);
-    
-    return cscData;
+    const safeCadence = Number.isFinite(cadence) ? Math.max(0, cadence) : 0;
+    const nowMs = Date.now();
+
+    // Initialize the reference timestamp the very first time we are called so
+    // that subsequent updates can compute a meaningful delta.
+    if (this.crankState.lastSampleMs === null) {
+      this.crankState.lastSampleMs = nowMs;
+    }
+
+    const deltaSeconds = Math.max(0, (nowMs - this.crankState.lastSampleMs) / 1000);
+    this.crankState.lastSampleMs = nowMs;
+
+    if (safeCadence > 0 && deltaSeconds > 0) {
+      const crankRevolutionsDelta = (safeCadence / 60) * deltaSeconds;
+      this.crankState.revolutions = (this.crankState.revolutions + crankRevolutionsDelta) % CRANK_TIME_WRAP;
+      const crankTimeDelta = Math.round(deltaSeconds * CRANK_TIME_SCALE) % CRANK_TIME_WRAP;
+      this.crankState.eventTime = (this.crankState.eventTime + crankTimeDelta) % CRANK_TIME_WRAP;
+    }
+
+    const flags = safeCadence > 0 ? CSC_FLAG_CRANK_PRESENT : 0;
+    if (flags === 0) {
+      // When cadence drops to zero we broadcast a single-byte frame (flags only)
+      // to indicate “no movement”.  Downstream BLE stacks treat this exactly the
+      // same as native sensors that temporarily withhold crank fields.
+      return Buffer.from([0x00]);
+    }
+
+    const buffer = Buffer.alloc(5); // 1 byte flags + 4 bytes crank data.
+    buffer.writeUInt8(flags, 0);
+    buffer.writeUInt16LE(Math.floor(this.crankState.revolutions) & 0xffff, 1);
+    buffer.writeUInt16LE(this.crankState.eventTime & 0xffff, 3);
+    return buffer;
   }
   onSerialMessage(data) {
     tracelog("RECV: ", data);

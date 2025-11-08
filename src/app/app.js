@@ -32,6 +32,7 @@ import {nowSeconds} from '../util/time.js'; // Helper to get monotonic-ish times
 import {loadDependency, toDefaultExport} from '../util/optional-deps.js'; // Optional dependency loader with stub fallback support.
 import {detectAdapters} from '../util/adapter-detect.js'; // Reuse the same adapter probe logic the CLI uses so runtime decisions stay consistent.
 import {defaults as sharedDefaults} from './defaults.js'; // Lightweight defaults kept separate so CLI can set env vars before loading Bluetooth deps.
+import {isSingleAdapterMultiRoleCapable} from '../util/hardware-info.js'; // Detect boards (Pi Zero 2 W, Pi 3/4, etc.) that can safely scan + advertise on one radio.
 
 const nobleModule = loadDependency('@abandonware/noble', '../../stubs/noble.cjs', import.meta);
 const nobleDefault = toDefaultExport(nobleModule);
@@ -181,6 +182,12 @@ export class App {
     this.stopAnt();
     if (this.hrClient) {
       await this.hrClient.disconnect();
+    }
+    if (this.healthMonitor?.stop) {
+      // Shutting down the periodic monitor prevents Node from holding the event
+      // loop open and ensures repeated starts (during development or CLI
+      // restarts) do not create leaked intervals.
+      this.healthMonitor.stop();
     }
   }
 
@@ -446,6 +453,18 @@ export class App {
 
     if (configuredAdapters.size >= 2) {
       return true; // Hot-plugging a second adapter (even without explicit CLI overrides) is enough to safely run HR.
+    }
+
+    // At this point we only see a single adapter.  Some radios (Pi Zero 2 W,
+    // Pi 3/4, Pi 400, CM4) handle simultaneous scan+advertise just fine, so we
+    // whitelist those boards to make heart-rate rebroadcast automatic on
+    // higher-end hardware while keeping the fragile Pi Zero W family disabled.
+    if (configuredAdapters.size === 1) {
+      const capability = isSingleAdapterMultiRoleCapable();
+      if (capability.capable) {
+        this.logger.log(`Heart-rate auto-enabled on single adapter (${capability.model ?? capability.reason})`);
+        return true;
+      }
     }
 
     // Reaching this point means only a single adapter is visible, regardless of Pi model.

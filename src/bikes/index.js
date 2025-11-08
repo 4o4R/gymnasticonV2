@@ -1,4 +1,5 @@
 import fs from 'fs'; // Check for Peloton USB serial presence during autodetect.
+import {BikeAutoDetector} from './auto-detect.js'; // Helper that centralizes BLE scan + classification logic.
 import {FlywheelBikeClient, FLYWHEEL_LOCALNAME} from './flywheel.js'; // Flywheel BLE profile.
 import {PelotonBikeClient} from './peloton.js'; // Peloton USB profile.
 import {Ic4BikeClient, IC4_LOCALNAME} from './ic4.js'; // Schwinn IC4 profile.
@@ -78,18 +79,13 @@ async function autodetectBikeClient(options, noble) { // Attempt to identify the
     return createPelotonBikeClient(options, noble);
   }
 
-  const matchers = Object.entries(NAME_MATCHERS); // Collect the name matchers so we can scan once and classify.
-  const filter = peripheral => matchers.some(([, predicate]) => predicate(peripheral)); // Filter that accepts any known bike advertisement.
-  const peripheral = await scan(noble, null, filter); // Perform an active BLE scan until a matching advertisement appears.
+  const detector = new BikeAutoDetector(noble, NAME_MATCHERS); // Reuse the shared detector so matcher updates live in one place.
+  const match = await detector.detectBike(); // Perform an active BLE scan until any known bike advertisement appears.
 
-  if (peripheral) { // When a peripheral was discovered, map it to the first matching profile.
-    const entry = matchers.find(([, predicate]) => predicate(peripheral));
-    if (entry) {
-      const [type] = entry;
-      const factory = factories[type];
-      if (factory) {
-        return factory(options, noble, peripheral);
-      }
+  if (match && match.type) { // When a peripheral was discovered, map it to the matching profile factory.
+    const factory = factories[match.type];
+    if (factory) {
+      return factory(options, noble, match.peripheral);
     }
   }
 

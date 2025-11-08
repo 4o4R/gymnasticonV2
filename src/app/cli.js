@@ -30,6 +30,7 @@ import { hideBin } from 'yargs/helpers';  // Removes Node.js binary path from ar
 import { options as cliOptions } from './cli-options.js'; // Command line option definitions
 import { detectAdapters } from '../util/adapter-detect.js'; // Auto-detect Bluetooth and ANT+ adapters when the user does not specify them
 import { initializeBluetooth } from '../util/noble-wrapper.js'; // Bluetooth initialization (runs after we set adapter env vars)
+import { isSingleAdapterMultiRoleCapable } from '../util/hardware-info.js'; // Hardware helper to detect whether one adapter can safely scan + advertise.
 
 /**
  * Convert a kebab-case CLI option name into the camelCase property that yargs
@@ -143,14 +144,17 @@ const main = async () => {
     if (argv.bikeAdapter) adapterPool.add(argv.bikeAdapter);
     if (argv.serverAdapter) adapterPool.add(argv.serverAdapter);
     const hasMultiAdapter = adapterPool.size >= 2; // True when at least two radios are available (dedicated scan/advertise roles).
+    const singleAdapterCapability = isSingleAdapterMultiRoleCapable();
+    const canSingleAdapterHandleHr = adapterPool.size === 1 && singleAdapterCapability.capable;
+    const canAutoEnableHr = hasMultiAdapter || canSingleAdapterHandleHr;
 
     if (argv.heartRateDevice && argv.heartRateEnabled === undefined) {
-        // Only auto-enable the heart-rate bridge when the system truly has two adapters.
-        // Sharing a single adapter for scanning + advertising hurts bike telemetry stability, especially on Pi Zero boards.
-        if (hasMultiAdapter) {
+        // Only auto-enable the heart-rate bridge when the system truly has two adapters
+        // OR the detected board is on the single-adapter whitelist (Pi Zero 2 W, Pi 3/4, etc.).
+        if (canAutoEnableHr) {
             argv.heartRateEnabled = true;
         } else {
-            console.warn('[Gymnasticon] Heart-rate device requested but only one adapter detected. Set --heart-rate-enabled true at your own risk once a second radio is attached.');
+            console.warn('[Gymnasticon] Heart-rate device requested but only one adapter detected. Attach a second radio or set --heart-rate-enabled true after confirming stability. (Hint: export GYMNASTICON_SINGLE_ADAPTER_HR=1 to override on trusted hardware.)');
         }
     }
 
