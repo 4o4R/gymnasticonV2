@@ -1,7 +1,7 @@
 import {Characteristic, Descriptor} from '../../../bleno-deps.js'; // grab the shared bleno exports via our centralized helper so every characteristic finds the right stub
 
 const FLAG_HASCRANKDATA = (1<<5);
-const CRANK_TIMESTAMP_SCALE = 1024 / 1000; // timestamp resolution is 1/1024 sec
+const CRANK_TIMESTAMP_SCALE = 1024; // convert seconds into the BLE spec's 1/1024th of a second resolution
 
 /**
  * Bluetooth LE GATT Cycling Power Measurement Characteristic implementation.
@@ -37,6 +37,8 @@ export class CyclingPowerMeasurementCharacteristic extends Characteristic {
     // include crank data if provided
     if (crank) {
       const revolutions16bit = crank.revolutions & 0xffff;
+      // Teaching note: integrateKinematics() stores timestamps in whole seconds so
+      // we multiply by 1024 here to match the CPS requirement of 1/1024s units.
       const timestamp16bit = Math.round(crank.timestamp * CRANK_TIMESTAMP_SCALE) & 0xffff;
       value.writeUInt16LE(revolutions16bit, 4);
       value.writeUInt16LE(timestamp16bit, 6);

@@ -3,8 +3,8 @@ import {Characteristic, Descriptor} from '../../../bleno-deps.js'; // Import sha
 const FLAG_WHEEL = 1 << 0; // BLE Spec 2A5B flag indicating wheel revolution data follows.
 const FLAG_CRANK = 1 << 1; // BLE Spec 2A5B flag indicating crank revolution data follows.
 
-const CRANK_TS_SCALE = 1024 / 1000; // Convert seconds into the 1/1024 second units required by the spec.
-const WHEEL_TS_SCALE = 1024 / 1000; // Same scale applies to wheel event timestamps.
+const CRANK_TS_SCALE = 1024; // convert seconds -> 1/1024s to match the CSC spec (since integrateKinematics stores seconds)
+const WHEEL_TS_SCALE = 1024; // same conversion for wheel timestamps so both characteristics wrap correctly every 64 seconds
 
 export class CscMeasurementCharacteristic extends Characteristic { // Measurement characteristic that emits instantaneous wheel/crank data.
   constructor() {
@@ -25,6 +25,8 @@ export class CscMeasurementCharacteristic extends Characteristic { // Measuremen
     if (wheel) { // Include wheel revolution data when provided.
       flags |= FLAG_WHEEL; // Mark the wheel-present bit.
       const revolutions = wheel.revolutions >>> 0; // Ensure the cumulative wheel revolutions are treated as an unsigned 32-bit value.
+      // Teaching note: we measure wheel timestamps in seconds for readability and only down-convert
+      // to 1/1024s here so the BLE characteristic stays spec-compliant without losing precision earlier.
       const timestamp = Math.round(wheel.timestamp * WHEEL_TS_SCALE) & 0xffff; // Convert seconds to 1/1024s and clamp to 16 bits.
       buffer.writeUInt32LE(revolutions, offset); offset += 4; // Write the 32-bit cumulative wheel revolution count.
       buffer.writeUInt16LE(timestamp, offset); offset += 2; // Write the 16-bit last wheel event timestamp.

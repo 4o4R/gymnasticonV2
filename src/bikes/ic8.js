@@ -3,19 +3,33 @@ import {scan} from '../util/ble-scan.js'; // Helper that performs BLE scans usin
 import {loadDependency, toDefaultExport} from '../util/optional-deps.js'; // Optional dependency loader so we can swap in stubs.
 import {estimatePower, Ewma} from '../util/power-estimator.js'; // Shared helpers for power estimation and smoothing.
 
-const nobleModule = loadDependency('@abandonware/noble', '../../stubs/noble.cjs', import.meta); // Load noble with stub fallback.
-const Noble = toDefaultExport(nobleModule);
 const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta); // Debug logging helper.
 const debug = toDefaultExport(debugModule)('gym:bikes:ic8');
+
+let NobleSingleton;
+/**
+ * Lazily resolve the noble dependency so CLI options (which import this file
+ * early just to enumerate bike types) do not accidentally initialize the BLE
+ * stack before we have pointed it at the correct adapter.  Waiting until
+ * someone actually instantiates Ic8BikeClient keeps adapter override logic
+ * working on Pi Zero dual-dongle setups.
+ */
+function resolveNoble() {
+  if (!NobleSingleton) {
+    const nobleModule = loadDependency('@abandonware/noble', '../../stubs/noble.cjs', import.meta);
+    NobleSingleton = toDefaultExport(nobleModule);
+  }
+  return NobleSingleton;
+}
 
 const FTMS_SERVICE_UUID = '1826'; // Fitness Machine Service UUID.
 const CSC_SERVICE_UUID = '1816'; // Cycling Speed and Cadence service for cadence data.
 const CSC_MEASUREMENT_UUID = '2a5b'; // CSC Measurement characteristic.
 
 export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 client that estimates power from cadence + resistance.
-  constructor({ noble = Noble, log = console, config = {} } = {}) {
+  constructor({ noble, log = console, config = {} } = {}) {
     super();
-    this.noble = noble; // Noble instance used for BLE operations.
+    this.noble = noble || resolveNoble(); // Accept the shared noble instance from the App when provided; otherwise fall back to the lazy loader above.
     this.log = log; // Logger interface (console by default).
     this.config = config; // Optional calibration config for power estimation.
     this.device = null; // Active noble peripheral once connected.

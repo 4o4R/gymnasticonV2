@@ -137,6 +137,13 @@ Need a customized Raspberry Pi image or want to publish a new release? Follow th
 - Keiser M Series Bikes (M3i, M3i-TBT, M3iX)
 - LifeFitness IC5 (power estimation)
 
+> **Why "power estimation" for IC8/C6?** The IC8/Bowflex C6 consoles only expose cadence
+> and resistance hints over Bluetooth. They do *not* broadcast the standard FTMS power
+> characteristic, so Gymnasticon derives wattage from those two signals via a calibrated
+> curve (`src/bikes/ic8.js`). If your bike starts emitting native FTMS power in a future
+> firmware update you can flip to the IC4 profile to consume that directly, but as of
+> now every IC8/C6 report we have seen requires this calculated wattage.
+
 ## Apps and devices tested
 
 Any software, bike computer, or watch that supports standard Bluetooth LE and ANT+ power meter/cadence sensors should work, including:

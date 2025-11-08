@@ -20,11 +20,18 @@ export class HeartRateClient extends EventEmitter {
   }
 
   buildFilter() {
-    if (this.deviceName) {
-      const nameFilter = createNameFilter(this.deviceName);
-      return (peripheral) => nameFilter(peripheral) && this.advertisesHrService(peripheral);
-    }
-    return (peripheral) => this.advertisesHrService(peripheral);
+    // Teaching note: Garmin Epix watches (and several Wahoo/CooSpo straps) often
+    // advertise only a user-friendly name while omitting the 0x180D UUID from
+    // their ADV payload.  We therefore accept peripherals that match either the
+    // requested name *or* advertise the Heart Rate service.  The subsequent GATT
+    // discovery still validates that the device actually exposes 0x180D before
+    // we start relaying data, so this relaxed filter does not risk false data.
+    const nameFilter = this.deviceName ? createNameFilter(this.deviceName) : null;
+    return (peripheral) => {
+      const nameMatches = nameFilter ? nameFilter(peripheral) : false;
+      const advertisesService = this.advertisesHrService(peripheral);
+      return nameMatches || advertisesService;
+    };
   }
 
   advertisesHrService(peripheral) {
@@ -45,7 +52,11 @@ export class HeartRateClient extends EventEmitter {
       return;
     }
     try {
-      await this.noble.startScanningAsync([this.serviceUuid], true);
+      // Scan the full spectrum instead of filtering by UUID so watches that only
+      // broadcast a name (e.g., Garmin Epix 2) still surface here.  We rely on
+      // the buildFilter() logic above plus the GATT discovery step to make sure
+      // we only pair with true heart-rate sensors.
+      await this.noble.startScanningAsync([], true);
       this.isScanning = true;
     } catch (error) {
       if (!/already (?:start(ed)? )?scanning/i.test(String(error))) {
