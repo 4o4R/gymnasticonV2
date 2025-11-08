@@ -8,7 +8,7 @@ Gymnasticon enables obsolete and proprietary exercise bikes to talk to Zwift and
 
 ## Thank you
 
-This is an attempt to "upgrade" https://github.com/ptx2/gymnasticon. Many thanks to "PTX2" -whoever they are - if anyone know who they are please let us know as they did some epic work several years ago with Gymnasticon. Their site is: https://ptx2.net/posts/unbricking-a-bike-with-a-raspberry-pi/
+This is an attempt to "upgrade" https://github.com/ptx2/gymnasticon. Many thanks to "PTX2" - whoever they are - if anyone knowa who they are please let us know as they did some epic work several years ago with Gymnasticon. Their site is: https://ptx2.net/posts/unbricking-a-bike-with-a-raspberry-pi/
 
 ## Development Prerequisite: Node 14.21.3
 
