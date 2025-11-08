@@ -7,3 +7,4 @@ node_modules
 
 deploy/pi-sdcard/pi-gen
 build.log
+deploy/releases/*.zip
