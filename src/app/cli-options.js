@@ -1,4 +1,5 @@
-import {defaults, getBikeTypes} from './app.js';
+import {defaults} from './defaults.js'; // Pull pure data defaults without triggering BLE initialization.
+import {getBikeTypes} from '../bikes/index.js'; // Import directly to avoid loading noble prematurely.
 
 export const options = {
   'config': {
@@ -131,6 +132,10 @@ export const options = {
   'heart-rate-device': {
     describe: '<name> optional heart-rate monitor name filter',
     type: 'string',
+  },
+  'heart-rate-enabled': {
+    describe: 'force-enable or disable heart-rate rebroadcast (auto when omitted)',
+    type: 'boolean',
   },
   'power-smoothing': {
     describe: '<0-1> exponential smoothing factor for power output',

@@ -30,6 +30,8 @@ import {createAntStick} from '../util/ant-stick.js'; // Factory for gd-ant-plus 
 import {estimateSpeedMps} from '../util/speed-estimator.js'; // Helper that estimates speed when bikes do not report it.
 import {nowSeconds} from '../util/time.js'; // Helper to get monotonic-ish timestamps in seconds.
 import {loadDependency, toDefaultExport} from '../util/optional-deps.js'; // Optional dependency loader with stub fallback support.
+import {detectBoardModel, isLikelyPiZero} from '../util/platform.js'; // Board detection helpers so we can gate multi-role features automatically.
+import {defaults as sharedDefaults} from './defaults.js'; // Lightweight defaults kept separate so CLI can set env vars before loading Bluetooth deps.
 
 const nobleModule = loadDependency('@abandonware/noble', '../../stubs/noble.cjs', import.meta);
 const nobleDefault = toDefaultExport(nobleModule);
@@ -41,50 +43,7 @@ const debug = toDefaultExport(debugModule);
 const debuglog = debug('gym:app:app');
 
 export {getBikeTypes};
-
-export const defaults = {
-  // bike options
-  bike: 'autodetect', // bike type chosen via CLI or automatically determined.
-  defaultBike: 'keiser', // fallback bike profile when autodetect does not find a match.
-  bikeReceiveTimeout: 4, // timeout for receiving stats from bike
-  bikeConnectTimeout: 0, // timeout for establishing bike connection
-  bikeAdapter: 'hci0', // bluetooth adapter to use for bike connection (BlueZ only)
-
-  // flywheel bike options
-  flywheelAddress: undefined, // mac address of bike
-  flywheelName: 'Flywheel 1', // name of bike
-
-  // peloton bike options
-  pelotonPath: '/dev/ttyUSB0', // default path for usb to serial device
-
-  // test bike options
-  botPower: 0, // power
-  botCadence: 0, // cadence
-  botHost: '0.0.0.0', // listen for udp message to update cadence/power
-  botPort: 3000,
-
-  // server options
-  serverAdapter: 'hci0', // adapter for receiving connections from apps
-  serverName: 'Gymnasticon', // how the Gymnasticon will appear to apps
-  serverPingInterval: 1, // send a power measurement update at least this often
-
-  // ANT+ server options
-  antDeviceId: 11234, // random default ANT+ device id
-  antAuto: true, // automatically enable ANT+ when a compatible stick is detected
-  antEnabled: false, // explicit override for enabling ANT+ regardless of auto-detect
-
-  // power adjustment (to compensate for inaccurate power measurements on bike)
-  powerScale: 1.0, // multiply power by this
-  powerOffset: 0.0, // add this to power
-
-  // speed estimation fallback parameters
-  speedFallback: { // heuristics used when the bike does not broadcast native speed
-    circumferenceM: 2.1, // virtual wheel circumference in meters
-    gearFactor: 3.0, // crank-to-wheel ratio assumption
-    min: 0, // minimum allowed estimated speed in m/s
-    max: 25 // maximum allowed estimated speed in m/s (~90 km/h)
-  },
-};
+export const defaults = sharedDefaults;
 
 /**
  * Gymnasticon App.
@@ -154,12 +113,29 @@ export class App {
     this.simulation = new Simulation();
     this.simulation.on('pedal', this.onPedalStroke.bind(this));
 
-    this.hrClient = new HeartRateClient(this.noble, {
-      deviceName: opts.heartRateDevice,
-      serviceUuid: opts.heartRateServiceUuid,
-      connectionManager: this.connectionManager,
-    });
-    this.hrClient.on('heartRate', this.onHeartRate.bind(this));
+    // Heart-rate capture is opt-in because many Pi Zero radios cannot scan and
+    // advertise simultaneously.  We only build the client when the caller
+    // explicitly asks for it to avoid blocking power/cadence broadcasts.
+    // Decide whether heart-rate rebroadcasting should run automatically.  We
+    // consider three tiers:
+    //   1. Explicit user override (config/CLI) wins.
+    //   2. When two different adapters are configured (bike+server), we assume
+    //      it is safe to dedicate one radio to scanning HRM peripherals.
+    //   3. On single-adapter Pi Zero units we disable HR by default because the
+    //      onboard radio struggles with simultaneous scan+advertise.  Every
+    //      other platform is treated as multi-role capable.
+    this.heartRateAutoPreference = this.shouldEnableHeartRate(opts);
+    if (this.heartRateAutoPreference) {
+      this.hrClient = new HeartRateClient(this.noble, {
+        deviceName: opts.heartRateDevice,
+        serviceUuid: opts.heartRateServiceUuid,
+        connectionManager: this.connectionManager,
+      });
+      this.hrClient.on('heartRate', this.onHeartRate.bind(this));
+    } else {
+      this.hrClient = null;
+      this.logger.log('Heart-rate rebroadcast disabled (hardware limitations detected)');
+    }
     if (this.healthMonitor) {
       this.healthMonitor.on('stale', this.onHealthMetricStale.bind(this));
     }
@@ -253,7 +229,15 @@ export class App {
       if (this.antEnabled) { // Only attempt ANT+ start when broadcasting is enabled.
         this.startAnt(); // Kick off ANT+ broadcasting (no-op if the stick is missing).
       }
-      await this.hrClient.connect();
+      if (this.hrClient) {
+        try {
+          await this.hrClient.connect();
+        } catch (err) {
+          this.logger.error('Heart-rate setup failed; continuing without HR data', err);
+          await this.hrClient.disconnect().catch(() => {});
+          this.hrClient = null;
+        }
+      }
       this.pingInterval.reset();
       this.statsTimeout.reset();
     } catch (e) {
@@ -426,5 +410,31 @@ export class App {
     if (this.antServer?.isRunning) { // Ensure ANT+ broadcasting stops cleanly on process exit.
       this.stopAnt();
     }
+  }
+
+  /**
+   * Decide whether the heart-rate rebroadcast subsystem should spin up
+   * automatically.  The logic purposely favors safety-first defaults:
+   *  - Respect explicit overrides (`true` or `false`) from config.
+   *  - Enable HR when two different adapters are configured (bike/server),
+   *    because those setups have isolated scan/advertise radios.
+   *  - On single-adapter Pi Zero boards we disable HR by default since the
+   *    onboard radio frequently fails multi-role scenarios.
+   *  - Unknown platforms or higher-powered Pis default to enabling HR.
+   */
+  shouldEnableHeartRate(options) {
+    if (typeof options.heartRateEnabled === 'boolean') {
+      return options.heartRateEnabled;
+    }
+    const hasDedicatedAdapters =
+      options.bikeAdapter &&
+      options.serverAdapter &&
+      options.bikeAdapter !== options.serverAdapter;
+    if (hasDedicatedAdapters) {
+      return true;
+    }
+    const model = detectBoardModel();
+    const runningOnPiZero = model ? isLikelyPiZero(model) : false;
+    return !runningOnPiZero;
   }
 }

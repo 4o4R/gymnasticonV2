@@ -27,10 +27,9 @@ import { hideBin } from 'yargs/helpers';  // Removes Node.js binary path from ar
 
 // Local Application Imports
 // ------------------------
-import { GymnasticonApp } from './gymnasticon-app.js'; // High-level orchestrator that wires helper subsystems
 import { options as cliOptions } from './cli-options.js'; // Command line option definitions
-import { initializeBluetooth } from '../util/noble-wrapper.js'; // Bluetooth initialization
 import { detectAdapters } from '../util/adapter-detect.js'; // Auto-detect Bluetooth and ANT+ adapters when the user does not specify them
+import { initializeBluetooth } from '../util/noble-wrapper.js'; // Bluetooth initialization (runs after we set adapter env vars)
 
 /**
  * Builds the application options object by filtering out yargs-specific properties
@@ -96,6 +95,12 @@ const main = async () => {
     delete argv.speedMin;
     delete argv.speedMax;
 
+    if (argv.heartRateDevice && !argv.heartRateEnabled) {
+        // If the user points us at a specific HR monitor, automatically enable
+        // heart-rate rebroadcasting so they do not need to remember an extra flag.
+        argv.heartRateEnabled = true;
+    }
+
     const configPath = argv.configPath || argv.config || '/etc/gymnasticon.json'; // Support both legacy --config and explicit --config-path.
 
     // Configure Bluetooth Adapters and Settings
@@ -139,6 +144,10 @@ const main = async () => {
         noble,
         configPath
     };
+    // Delay importing the heavy Gymnasticon runtime until after the environment
+    // variables above are set.  This guarantees noble/bleno see the intended
+    // adapter IDs even when the user runs dual-radio setups.
+    const { GymnasticonApp } = await import('./gymnasticon-app.js');
     const app = new GymnasticonApp(appOptions);
 
     // Start the application (connects to bike, starts BLE server)
