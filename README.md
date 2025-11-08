@@ -6,6 +6,10 @@ Gymnasticon enables obsolete and proprietary exercise bikes to talk to Zwift and
 
 ![Gymnasticon System Diagram](docs/diagram.png)
 
+## Thank you
+
+This is an attempt to "upgrade" https://github.com/ptx2/gymnasticon. Many thanks to "PTX2" - whoever they are - if anyone knowa who they are please let us know as they did some epic work several years ago with Gymnasticon. Their site is: https://ptx2.net/posts/unbricking-a-bike-with-a-raspberry-pi/
+
 ## Development Prerequisite: Node 14.21.3
 
 The build and native dependencies target Node.js 14.21.3 so they remain compatible with Raspberry Pi Zero/Zero W units. The repository ships an `.nvmrc` with that version, and `npm install` now runs a guard (`scripts/check-node-version.cjs`) that aborts if you attempt to install with anything outside `>=14.21.3 <15`. Run `nvm use` (or install Node 14.21.3 manually) before installing packages; set `GYMNASTICON_ALLOW_UNSUPPORTED_NODE=1` only if you absolutely need to bypass the check.
