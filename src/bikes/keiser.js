@@ -20,6 +20,13 @@ import {loadDependency, toDefaultExport} from '../util/optional-deps.js';
 const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta);
 const debuglog = toDefaultExport(debugModule)('gym:bikes:keiser');
 
+const KEISER_NAME_PATTERN = /^m3/i; // Many M-Series bikes append letters/numbers, so match on the prefix.
+
+export function matchesKeiserName(peripheral) {
+  const name = peripheral?.advertisement?.localName ?? '';
+  return KEISER_NAME_PATTERN.test(name);
+}
+
 
 /**
  * Handles communication with Keiser bikes
@@ -52,7 +59,7 @@ export class KeiserBikeClient extends EventEmitter {
 
     this.state = 'connecting';
 
-    const filter = createNameFilter(KEISER_LOCALNAME);
+    const filter = matchesKeiserName;
     const peripheral = await scan(this.noble, null, filter, {
       allowDuplicates: true,
       active: true
@@ -286,4 +293,3 @@ export function parse(data) {
   }
   throw new Error('unable to parse message');
 }
-

@@ -4,7 +4,7 @@ import {FlywheelBikeClient, FLYWHEEL_LOCALNAME} from './flywheel.js'; // Flywhee
 import {PelotonBikeClient} from './peloton.js'; // Peloton USB profile.
 import {Ic4BikeClient, IC4_LOCALNAME} from './ic4.js'; // Schwinn IC4 profile.
 import {Ic5BikeClient} from './ic5.js'; // LifeFitness IC5 profile built atop the IC4 implementation.
-import {KeiserBikeClient, KEISER_LOCALNAME} from './keiser.js'; // Keiser broadcast profile.
+import {KeiserBikeClient, KEISER_LOCALNAME, matchesKeiserName} from './keiser.js'; // Keiser broadcast profile.
 import {BotBikeClient} from './bot.js'; // Simulation/bot mode profile.
 import {macAddress} from '../util/mac-address.js'; // MAC normalization helper used when targeting specific peripherals.
 import {scan, createNameFilter, createAddressFilter} from '../util/ble-scan.js'; // BLE scanning utilities.
@@ -15,7 +15,7 @@ const NAME_MATCHERS = { // Heuristics used during autodetect to match advertisin
   ic4: createNameFilter(IC4_LOCALNAME), // Schwinn IC4 advertises "IC Bike".
   ic5: peripheral => /ic5|life ?fitness/i.test(peripheral?.advertisement?.localName ?? ''), // LifeFitness IC5 patterns.
   ic8: peripheral => /ic8|c6|schwinn|bowflex/i.test(peripheral?.advertisement?.localName ?? ''), // Schwinn IC8 / Bowflex C6 patterns.
-  keiser: createNameFilter(KEISER_LOCALNAME), // Keiser M series broadcasts "M3".
+  keiser: matchesKeiserName, // Keiser M series broadcasts names that start with "M3".
 };
 
 function createFlywheelBikeClient(options, noble) { // Factory for Flywheel bikes using optional MAC filter override.

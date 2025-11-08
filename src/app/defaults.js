@@ -51,4 +51,5 @@ export const defaults = {
 
   // heart-rate options (auto = let runtime decide based on hardware)
   heartRateEnabled: undefined,
+  heartRateAdapter: undefined,
 };

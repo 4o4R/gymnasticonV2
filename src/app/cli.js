@@ -148,6 +148,16 @@ const main = async () => {
     const canSingleAdapterHandleHr = adapterPool.size === 1 && singleAdapterCapability.capable;
     const canAutoEnableHr = hasMultiAdapter || canSingleAdapterHandleHr;
 
+    if (!argv.heartRateAdapter) {
+        const detectedAdapters = discovery.adapters ?? [];
+        const candidateAdapter = detectedAdapters.find(
+            (adapter) => adapter !== argv.bikeAdapter && adapter !== argv.serverAdapter
+        );
+        if (candidateAdapter) {
+            argv.heartRateAdapter = candidateAdapter; // Prefer an unused adapter when a second radio is present.
+        }
+    }
+
     if (argv.heartRateDevice && argv.heartRateEnabled === undefined) {
         // Only auto-enable the heart-rate bridge when the system truly has two adapters
         // OR the detected board is on the single-adapter whitelist (Pi Zero 2 W, Pi 3/4, etc.).
@@ -194,18 +204,29 @@ const main = async () => {
     // This sets up the BLE (Bluetooth Low Energy) subsystem
     const { noble } = await initializeBluetooth(argv.bikeAdapter);
 
+    // Delay importing the heavy Gymnasticon runtime until after the environment
+    // variables above are set so noble/bleno honor the adapter overrides.
+    const { GymnasticonApp } = await import('./gymnasticon-app.js');
+
+    let heartRateNoble;
+    if (argv.heartRateAdapter && argv.heartRateAdapter !== argv.bikeAdapter) {
+        try {
+            const hrBluetooth = await initializeBluetooth(argv.heartRateAdapter, {forceNewInstance: true});
+            heartRateNoble = hrBluetooth.noble;
+        } catch (err) {
+            console.warn('[Gymnasticon] Unable to initialize heart-rate adapter', argv.heartRateAdapter, err);
+        }
+    }
+
     // Create and Start Application
     // ---------------------------
     const appOptions = {
         ...buildAppOptions(argv),
         noble,
+        heartRateNoble,
         configPath,
         providedOptions: Array.from(providedOptions), // Pass the explicit CLI keys through so config merging can respect user intent.
     };
-    // Delay importing the heavy Gymnasticon runtime until after the environment
-    // variables above are set.  This guarantees noble/bleno see the intended
-    // adapter IDs even when the user runs dual-radio setups.
-    const { GymnasticonApp } = await import('./gymnasticon-app.js');
     const app = new GymnasticonApp(appOptions);
 
     // Start the application (connects to bike, starts BLE server)

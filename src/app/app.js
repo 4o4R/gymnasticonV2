@@ -61,6 +61,8 @@ export class App {
     this.logger = new Logger();
     this.noble = opts.noble || nobleDefault;
     this.bleno = bleno;
+    this.heartRateNoble = opts.heartRateNoble || this.noble;
+    this.heartRateAdapter = opts.heartRateAdapter;
     this.metricsProcessor = opts.metricsProcessor || new MetricsProcessor({ smoothingFactor: opts.powerSmoothing });
     this.healthMonitor = opts.healthMonitor || new HealthMonitor(opts.healthCheckInterval);
     this.connectionManager =
@@ -127,7 +129,11 @@ export class App {
     //      other platform is treated as multi-role capable.
     this.heartRateAutoPreference = this.shouldEnableHeartRate(opts);
     if (this.heartRateAutoPreference) {
-      this.hrClient = new HeartRateClient(this.noble, {
+      const hrNoble = this.heartRateNoble;
+      if (hrNoble !== this.noble) {
+        this.logger.log(`Heart-rate client using dedicated adapter ${this.heartRateAdapter}`);
+      }
+      this.hrClient = new HeartRateClient(hrNoble, {
         deviceName: opts.heartRateDevice,
         serviceUuid: opts.heartRateServiceUuid,
         connectionManager: this.connectionManager,

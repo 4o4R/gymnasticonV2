@@ -133,6 +133,10 @@ export const options = {
     describe: '<name> optional heart-rate monitor name filter',
     type: 'string',
   },
+  'heart-rate-adapter': {
+    describe: '<name> optional Bluetooth adapter dedicated to heart-rate scanning',
+    type: 'string',
+  },
   'heart-rate-enabled': {
     describe: 'force-enable or disable heart-rate rebroadcast (auto when omitted)',
     type: 'boolean',
