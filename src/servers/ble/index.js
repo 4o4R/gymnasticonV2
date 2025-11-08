@@ -160,9 +160,9 @@ export class GymnasticonServer extends BleServer {
     this.state = 'starting';
 
     let state = this.bleno.state;
-    const transientStates = new Set(['unknown', 'resetting']);
+    const fatalStates = new Set(['unauthorized', 'unsupported']);
     while (state !== 'poweredOn') {
-      if (!transientStates.has(state) && state !== undefined) {
+      if (state && fatalStates.has(state)) {
         this.state = 'stopped';
         throw new Error(`Bluetooth adapter failed to power on: ${state}`);
       }
