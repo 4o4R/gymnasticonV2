@@ -159,12 +159,15 @@ export class GymnasticonServer extends BleServer {
 
     this.state = 'starting';
 
-    if (this.bleno.state !== 'poweredOn') {
-      const [state] = await once(this.bleno, 'stateChange');
-      if (state !== 'poweredOn') {
+    let state = this.bleno.state;
+    const transientStates = new Set(['unknown', 'resetting']);
+    while (state !== 'poweredOn') {
+      if (!transientStates.has(state) && state !== undefined) {
         this.state = 'stopped';
         throw new Error(`Bluetooth adapter failed to power on: ${state}`);
       }
+      const [next] = await once(this.bleno, 'stateChange');
+      state = next;
     }
 
     if (this.advertisingOptions) {
