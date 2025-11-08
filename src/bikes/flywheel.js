@@ -81,6 +81,21 @@ export class FlywheelBikeClient extends EventEmitter {
     };
 
     await this.peripheral.connectAsync(connectionParams);
+    try {
+      // The Nordic UART firmware expects the central to acknowledge its desired
+      // connection parameters. BlueZ sometimes ignores this, which causes the
+      // bike to hang up after ~30 seconds. Running `hcitool lecup` immediately
+      // after the connection cements the timing so the link stays alive on Pi Zero.
+      await updateConnectionParameters(
+        this.peripheral,
+        LE_MIN_INTERVAL,
+        LE_MAX_INTERVAL,
+        LE_LATENCY,
+        LE_SUPERVISION_TIMEOUT
+      );
+    } catch (err) {
+      debuglog('failed to update Flywheel connection parameters (continuing anyway)', err);
+    }
     this.peripheral.on('disconnect', this.onDisconnect);
 
     // discover services/characteristics

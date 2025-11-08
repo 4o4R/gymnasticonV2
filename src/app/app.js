@@ -31,7 +31,6 @@ import {estimateSpeedMps} from '../util/speed-estimator.js'; // Helper that esti
 import {nowSeconds} from '../util/time.js'; // Helper to get monotonic-ish timestamps in seconds.
 import {loadDependency, toDefaultExport} from '../util/optional-deps.js'; // Optional dependency loader with stub fallback support.
 import {detectAdapters} from '../util/adapter-detect.js'; // Reuse the same adapter probe logic the CLI uses so runtime decisions stay consistent.
-import {detectBoardModel, isLikelyPiZero} from '../util/platform.js'; // Board detection helpers so we can gate multi-role features automatically.
 import {defaults as sharedDefaults} from './defaults.js'; // Lightweight defaults kept separate so CLI can set env vars before loading Bluetooth deps.
 
 const nobleModule = loadDependency('@abandonware/noble', '../../stubs/noble.cjs', import.meta);
@@ -415,32 +414,42 @@ export class App {
 
   /**
    * Decide whether the heart-rate rebroadcast subsystem should spin up
-   * automatically.  The logic purposely favors safety-first defaults:
-   *  - Respect explicit overrides (`true` or `false`) from config.
-   *  - Enable HR when two different adapters are configured (bike/server),
-   *    because those setups have isolated scan/advertise radios.
-   *  - On single-adapter Pi Zero boards we disable HR by default since the
-   *    onboard radio frequently fails multi-role scenarios.
-   *  - Unknown platforms or higher-powered Pis default to enabling HR.
+   * automatically.  Safety rules:
+   *  - Always honor an explicit CLI/config override (`true` or `false`).
+   *  - Require *two* Bluetooth adapters (either explicitly assigned bike/server
+   *    radios or a combined count from detectAdapters) before enabling HR.
+   *    Sharing a single adapter for scanning + advertising is what causes bike
+   *    telemetry dropouts, so we avoid that hazard by default on every board.
    */
   shouldEnableHeartRate(options) {
     if (typeof options.heartRateEnabled === 'boolean') {
       return options.heartRateEnabled;
     }
-    const hasDedicatedAdapters =
-      options.bikeAdapter &&
-      options.serverAdapter &&
-      options.bikeAdapter !== options.serverAdapter;
-    if (hasDedicatedAdapters) { // Explicit dual-adapter config? assume HR is safe.
+
+    const configuredAdapters = new Set();
+    if (options.bikeAdapter) {
+      configuredAdapters.add(options.bikeAdapter);
+    }
+    if (options.serverAdapter) {
+      configuredAdapters.add(options.serverAdapter);
+    }
+
+    // User explicitly pointed the bike/server roles at two different adapters.
+    if (configuredAdapters.size >= 2 && options.bikeAdapter !== options.serverAdapter) {
       return true;
     }
-    const detected = detectAdapters(); // Probe the live OS for however many adapters are really present (accounts for USB hubs, hot-plugged dongles, etc.).
-    const adapterCount = new Set(detected.adapters ?? []).size;
-    if (adapterCount >= 2) { // Even if the config did not assign separate adapters, simply having two radios available (common on Pi Zero + USB dongle) is enough for HR.
-      return true;
+
+    const detected = detectAdapters(); // Probe the OS for every adapter (built-in + USB dongles).
+    for (const adapter of detected.adapters ?? []) {
+      configuredAdapters.add(adapter);
     }
-    const model = detectBoardModel();
-    const runningOnPiZero = model ? isLikelyPiZero(model) : false;
-    return !runningOnPiZero;
+
+    if (configuredAdapters.size >= 2) {
+      return true; // Hot-plugging a second adapter (even without explicit CLI overrides) is enough to safely run HR.
+    }
+
+    // Reaching this point means only a single adapter is visible, regardless of Pi model.
+    // Running HR on the same radio would disrupt bike comms, so we keep it off.
+    return false;
   }
 }

@@ -32,6 +32,47 @@ import { detectAdapters } from '../util/adapter-detect.js'; // Auto-detect Bluet
 import { initializeBluetooth } from '../util/noble-wrapper.js'; // Bluetooth initialization (runs after we set adapter env vars)
 
 /**
+ * Convert a kebab-case CLI option name into the camelCase property that yargs
+ * exposes on the parsed argv object. Example: `heart-rate-enabled` becomes
+ * `heartRateEnabled`.
+ */
+const toCamelCase = (flagName) => flagName.replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase());
+
+/**
+ * Scan the raw argv tokens (before yargs parsing) and record which long-form
+ * flags the user actually typed. We need this so that defaults coming from
+ * yargs do not stomp on values loaded from gymnasticon.json. Think of this as
+ * a tiny pre-parser that only cares about presence, not the actual values.
+ */
+function collectProvidedOptions(rawArgs, optionDefinitions) {
+    const provided = new Set();
+    const validFlags = new Set(Object.keys(optionDefinitions));
+
+    for (let i = 0; i < rawArgs.length; i++) {
+        const token = rawArgs[i];
+        if (token === '--') {
+            break; // everything after `--` is positional data; no more options
+        }
+        if (!token.startsWith('--')) {
+            continue; // we intentionally ignore short aliases to keep logic simple
+        }
+        let flag = token.slice(2);
+        const eqIndex = flag.indexOf('=');
+        if (eqIndex >= 0) {
+            flag = flag.slice(0, eqIndex); // remove `=value` suffix
+        }
+        if (flag.startsWith('no-')) {
+            flag = flag.slice(3); // yargs models `--no-foo` as the `foo` option
+        }
+        if (validFlags.has(flag)) {
+            provided.add(toCamelCase(flag));
+        }
+    }
+
+    return provided;
+}
+
+/**
  * Builds the application options object by filtering out yargs-specific properties
  * 
  * @param {Object} args - The parsed command line arguments
@@ -55,9 +96,12 @@ const buildAppOptions = ({ _, $0, ...rest }) => rest;
  * 5. Graceful shutdown
  */
 const main = async () => {
+    const rawArgs = hideBin(process.argv); // Capture the raw argv first so we can see what the user actually typed.
+    const providedOptions = collectProvidedOptions(rawArgs, cliOptions); // Record the explicit flags for later precedence decisions.
+
     // Parse command line arguments using yargs
     // hideBin removes the first two arguments (node executable and script path)
-    const argv = yargs(hideBin(process.argv))
+    const argv = yargs(rawArgs)
         // Add all our custom command line options
         .options(cliOptions)
         // Allow --my-option to be passed as --myOption
@@ -95,10 +139,19 @@ const main = async () => {
     delete argv.speedMin;
     delete argv.speedMax;
 
-    if (argv.heartRateDevice && !argv.heartRateEnabled) {
-        // If the user points us at a specific HR monitor, automatically enable
-        // heart-rate rebroadcasting so they do not need to remember an extra flag.
-        argv.heartRateEnabled = true;
+    const adapterPool = new Set(discovery.adapters ?? []); // Track every adapter we can see so far.
+    if (argv.bikeAdapter) adapterPool.add(argv.bikeAdapter);
+    if (argv.serverAdapter) adapterPool.add(argv.serverAdapter);
+    const hasMultiAdapter = adapterPool.size >= 2; // True when at least two radios are available (dedicated scan/advertise roles).
+
+    if (argv.heartRateDevice && argv.heartRateEnabled === undefined) {
+        // Only auto-enable the heart-rate bridge when the system truly has two adapters.
+        // Sharing a single adapter for scanning + advertising hurts bike telemetry stability, especially on Pi Zero boards.
+        if (hasMultiAdapter) {
+            argv.heartRateEnabled = true;
+        } else {
+            console.warn('[Gymnasticon] Heart-rate device requested but only one adapter detected. Set --heart-rate-enabled true at your own risk once a second radio is attached.');
+        }
     }
 
     const configPath = argv.configPath || argv.config || '/etc/gymnasticon.json'; // Support both legacy --config and explicit --config-path.
@@ -142,7 +195,8 @@ const main = async () => {
     const appOptions = {
         ...buildAppOptions(argv),
         noble,
-        configPath
+        configPath,
+        providedOptions: Array.from(providedOptions), // Pass the explicit CLI keys through so config merging can respect user intent.
     };
     // Delay importing the heavy Gymnasticon runtime until after the environment
     // variables above are set.  This guarantees noble/bleno see the intended
