@@ -6,12 +6,14 @@ export function detectAdapters() { // Return a summary describing which adapters
   const summary = { // Seed the return object with conservative defaults that work on single-adapter setups.
     bikeAdapter: 'hci0', // Assume the first HCI interface drives the bike connection unless we detect otherwise.
     serverAdapter: 'hci0', // Default the BLE server to the same adapter so single-radio Pi setups still work.
-    antPresent: false // Assume no ANT+ stick until we see a known USB identifier.
+    antPresent: false, // Assume no ANT+ stick until we see a known USB identifier.
+    adapters: [], // Record every discovered adapter so other subsystems (e.g., HR auto-enable) can gauge hardware capability.
   };
 
   try { // Wrap detection in a try/catch so missing tools do not crash headless installs.
     const hciconfig = execSync('hciconfig -a', { stdio: ['ignore', 'pipe', 'ignore'] }).toString(); // Query BlueZ for all available HCI interfaces.
     const matches = Array.from(hciconfig.matchAll(/\bhci(\d+):/g)).map(match => Number(match[1])).sort((a, b) => a - b); // Extract adapter indices and sort them numerically.
+    summary.adapters = matches.map(index => `hci${index}`); // Expose the entire list (e.g., ["hci0","hci1"]) for downstream heuristics.
     if (matches.length >= 2) { // When two or more adapters exist pick a dedicated role for each.
       summary.bikeAdapter = `hci${matches[0]}`; // Use the lowest-index adapter for the bike (often the onboard radio).
       summary.serverAdapter = `hci${matches[1]}`; // Use the next adapter for advertising to apps (often a USB dongle).

@@ -30,6 +30,7 @@ import {createAntStick} from '../util/ant-stick.js'; // Factory for gd-ant-plus 
 import {estimateSpeedMps} from '../util/speed-estimator.js'; // Helper that estimates speed when bikes do not report it.
 import {nowSeconds} from '../util/time.js'; // Helper to get monotonic-ish timestamps in seconds.
 import {loadDependency, toDefaultExport} from '../util/optional-deps.js'; // Optional dependency loader with stub fallback support.
+import {detectAdapters} from '../util/adapter-detect.js'; // Reuse the same adapter probe logic the CLI uses so runtime decisions stay consistent.
 import {detectBoardModel, isLikelyPiZero} from '../util/platform.js'; // Board detection helpers so we can gate multi-role features automatically.
 import {defaults as sharedDefaults} from './defaults.js'; // Lightweight defaults kept separate so CLI can set env vars before loading Bluetooth deps.
 
@@ -430,7 +431,12 @@ export class App {
       options.bikeAdapter &&
       options.serverAdapter &&
       options.bikeAdapter !== options.serverAdapter;
-    if (hasDedicatedAdapters) {
+    if (hasDedicatedAdapters) { // Explicit dual-adapter config? assume HR is safe.
+      return true;
+    }
+    const detected = detectAdapters(); // Probe the live OS for however many adapters are really present (accounts for USB hubs, hot-plugged dongles, etc.).
+    const adapterCount = new Set(detected.adapters ?? []).size;
+    if (adapterCount >= 2) { // Even if the config did not assign separate adapters, simply having two radios available (common on Pi Zero + USB dongle) is enough for HR.
       return true;
     }
     const model = detectBoardModel();
