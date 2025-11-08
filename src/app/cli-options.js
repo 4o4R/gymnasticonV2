@@ -2,8 +2,13 @@ import {defaults, getBikeTypes} from './app.js';
 
 export const options = {
   'config': {
-    describe: '<filename> load options from json file',
+    describe: '<filename> load legacy options from json file',
     type: 'string',
+  },
+  'config-path': {
+    describe: '<path> primary configuration file location',
+    type: 'string',
+    default: '/etc/gymnasticon.json',
   },
 
   'bike': {
@@ -121,5 +126,30 @@ export const options = {
     describe: '<m/s> maximum estimated speed',
     type: 'number',
     default: defaults.speedFallback.max,
+  },
+
+  'heart-rate-device': {
+    describe: '<name> optional heart-rate monitor name filter',
+    type: 'string',
+  },
+  'power-smoothing': {
+    describe: '<0-1> exponential smoothing factor for power output',
+    type: 'number',
+    default: 0.8,
+  },
+  'health-check-interval': {
+    describe: '<ms> interval for health monitor checks',
+    type: 'number',
+    default: 5000,
+  },
+  'connection-timeout': {
+    describe: '<ms> timeout for BLE connection attempts',
+    type: 'number',
+    default: 10000,
+  },
+  'connection-retries': {
+    describe: '<count> maximum BLE connection retries',
+    type: 'number',
+    default: 3,
   }
 };

@@ -1,13 +1,38 @@
 import {EventEmitter} from 'events';
 import {createNameFilter} from '../util/ble-scan.js';
+import {BluetoothConnectionManager} from '../util/connection-manager.js';
+
+const HEART_RATE_SERVICE = '180d';
 
 export class HeartRateClient extends EventEmitter {
-  constructor(noble, deviceName = 'GARMIN') {
+  constructor(noble, options = {}) {
     super();
     this.noble = noble;
-    this.filter = createNameFilter(deviceName);
+    this.deviceName = options.deviceName;
+    this.serviceUuid = (options.serviceUuid || HEART_RATE_SERVICE).toLowerCase();
+    this.connectionManager = options.connectionManager || new BluetoothConnectionManager(noble, {
+      timeout: options.connectionTimeout,
+      maxRetries: options.connectionRetries,
+    });
+    this.filter = this.buildFilter();
     this.onDiscover = this.onDiscover.bind(this);
     this.isScanning = false;
+  }
+
+  buildFilter() {
+    if (this.deviceName) {
+      const nameFilter = createNameFilter(this.deviceName);
+      return (peripheral) => nameFilter(peripheral) && this.advertisesHrService(peripheral);
+    }
+    return (peripheral) => this.advertisesHrService(peripheral);
+  }
+
+  advertisesHrService(peripheral) {
+    return Boolean(
+      peripheral?.advertisement?.serviceUuids?.some(
+        (uuid) => uuid?.toLowerCase() === this.serviceUuid
+      )
+    );
   }
 
   async connect() {
@@ -20,7 +45,7 @@ export class HeartRateClient extends EventEmitter {
       return;
     }
     try {
-      await this.noble.startScanningAsync(null, true);
+      await this.noble.startScanningAsync([this.serviceUuid], true);
       this.isScanning = true;
     } catch (error) {
       if (!/already (?:start(ed)? )?scanning/i.test(String(error))) {
@@ -49,7 +74,7 @@ export class HeartRateClient extends EventEmitter {
     this.noble.removeListener('discover', this.onDiscover);
     await this.stopSharedScan();
     this.peripheral = peripheral;
-    await peripheral.connectAsync();
+    await this.connectionManager.connect(peripheral);
     const services = await peripheral.discoverServicesAsync(['180d']);
     const chars = await services[0].discoverCharacteristicsAsync(['2a37']);
     this.characteristic = chars[0];

@@ -14,11 +14,6 @@
  * The shebang line above (#!) tells Unix-like systems to run this with Node.js
  */
 
-// Built-in Node.js Modules
-// -----------------------
-import { readFileSync } from 'fs';        // For reading configuration files
-import { resolve } from 'path';           // For handling file paths
-
 // Third-party Dependencies
 // ----------------------
 // yargs: A command-line argument parser that makes it easy to build interactive commands
@@ -32,36 +27,10 @@ import { hideBin } from 'yargs/helpers';  // Removes Node.js binary path from ar
 
 // Local Application Imports
 // ------------------------
-import { App } from './app.js';                          // Main application class
+import { GymnasticonApp } from './gymnasticon-app.js'; // High-level orchestrator that wires helper subsystems
 import { options as cliOptions } from './cli-options.js'; // Command line option definitions
 import { initializeBluetooth } from '../util/noble-wrapper.js'; // Bluetooth initialization
 import { detectAdapters } from '../util/adapter-detect.js'; // Auto-detect Bluetooth and ANT+ adapters when the user does not specify them
-
-/**
- * Configuration File Loader
- * ------------------------
- * Loads and parses a JSON configuration file from the specified path.
- * 
- * @param {string} configPath - Path to the configuration file
- * @returns {Object} The parsed configuration object
- * 
- * Example config file:
- * {
- *   "bikeType": "flywheel",
- *   "serverName": "My Gymnasticon"
- * }
- */
-const loadConfig = (configPath) => {
-    // Convert relative paths to absolute paths
-    const fullPath = resolve(configPath);
-    
-    // Read the file synchronously (blocking)
-    // We use utf8 encoding for text files
-    const contents = readFileSync(fullPath, 'utf8');
-    
-    // Parse the JSON content into a JavaScript object
-    return JSON.parse(contents);
-};
 
 /**
  * Builds the application options object by filtering out yargs-specific properties
@@ -73,7 +42,7 @@ const loadConfig = (configPath) => {
  * @param {Object} rest - All other arguments that will be passed to the app
  * @returns {Object} Clean options object for the application
  */
-const buildAppOptions = ({ _, $0, config, ...rest }) => rest;
+const buildAppOptions = ({ _, $0, ...rest }) => rest;
 
 /**
  * Main Application Entry Point
@@ -92,8 +61,6 @@ const main = async () => {
     const argv = yargs(hideBin(process.argv))
         // Add all our custom command line options
         .options(cliOptions)
-        // Enable loading options from a config file
-        .config('config', loadConfig)
         // Allow --my-option to be passed as --myOption
         .parserConfiguration({ 'camel-case-expansion': true })
         // Add --help option
@@ -128,6 +95,8 @@ const main = async () => {
     delete argv.speedGearFactor;
     delete argv.speedMin;
     delete argv.speedMax;
+
+    const configPath = argv.configPath || argv.config || '/etc/gymnasticon.json'; // Support both legacy --config and explicit --config-path.
 
     // Configure Bluetooth Adapters and Settings
     // ----------------------------------------
@@ -165,13 +134,12 @@ const main = async () => {
 
     // Create and Start Application
     // ---------------------------
-    // Create a new instance of our main application class
-    const app = new App({
-        // Spread the cleaned command line options
+    const appOptions = {
         ...buildAppOptions(argv),
-        // Pass the initialized Bluetooth stack
-        noble
-    });
+        noble,
+        configPath
+    };
+    const app = new GymnasticonApp(appOptions);
 
     // Start the application (connects to bike, starts BLE server)
     await app.start();

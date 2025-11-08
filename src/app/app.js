@@ -18,6 +18,9 @@ import {AntServer} from '../servers/ant/index.js';
 // Bike and sensor integrations
 import {createBikeClient, getBikeTypes} from '../bikes/index.js';
 import {HeartRateClient} from '../hr/heart-rate-client.js';
+import {MetricsProcessor} from '../util/metrics-processor.js';
+import {HealthMonitor} from '../util/health-monitor.js';
+import {BluetoothConnectionManager} from '../util/connection-manager.js';
 
 // Utility modules
 import {Simulation} from './simulation.js'; // Simulation helper for bot mode and testing.
@@ -98,6 +101,14 @@ export class App {
     this.logger = new Logger();
     this.noble = opts.noble || nobleDefault;
     this.bleno = bleno;
+    this.metricsProcessor = opts.metricsProcessor || new MetricsProcessor({ smoothingFactor: opts.powerSmoothing });
+    this.healthMonitor = opts.healthMonitor || new HealthMonitor(opts.healthCheckInterval);
+    this.connectionManager =
+      opts.connectionManager ||
+      new BluetoothConnectionManager(this.noble, {
+        timeout: opts.connectionTimeout,
+        maxRetries: opts.connectionRetries,
+      });
 
     this.powerScale = opts.powerScale;
     this.powerOffset = opts.powerOffset;
@@ -143,8 +154,15 @@ export class App {
     this.simulation = new Simulation();
     this.simulation.on('pedal', this.onPedalStroke.bind(this));
 
-    this.hrClient = new HeartRateClient(this.noble);
+    this.hrClient = new HeartRateClient(this.noble, {
+      deviceName: opts.heartRateDevice,
+      serviceUuid: opts.heartRateServiceUuid,
+      connectionManager: this.connectionManager,
+    });
     this.hrClient.on('heartRate', this.onHeartRate.bind(this));
+    if (this.healthMonitor) {
+      this.healthMonitor.on('stale', this.onHealthMetricStale.bind(this));
+    }
 
     this.onSigInt = this.onSigInt.bind(this);
     this.onExit = this.onExit.bind(this);
@@ -300,19 +318,36 @@ export class App {
     this.server.updateHeartRate(hr);
   }
 
+  onHealthMetricStale(metricName) {
+    if (metricName === 'bikeStats') {
+      this.logger.log('health monitor detected stale bike telemetry');
+      this.onBikeStatsTimeout();
+    }
+  }
+
   onBikeStats({ power, cadence, speed }) {
     const scaledPower = power > 0 ? Math.max(0, Math.round(power * this.powerScale + this.powerOffset)) : 0; // Apply calibration and clamp to non-negative watts.
     const safeCadence = Number.isFinite(cadence) ? Math.max(0, cadence) : 0; // Guard against undefined or negative cadence readings.
     const nativeSpeed = Number.isFinite(speed) ? Math.max(0, speed) : null; // Use bike-provided speed when available.
     const inferredSpeed = nativeSpeed ?? estimateSpeedMps(safeCadence, this.speedOptions); // Fall back to our cadence-based estimator when speed is absent.
 
-    this.logger.log(`received stats from bike [power=${scaledPower}W cadence=${safeCadence}rpm speed=${inferredSpeed.toFixed(2)}m/s]`); // Log the normalized metrics for debugging.
-    this.statsTimeout.reset(); // Clear the bike stats timeout since we just received fresh data.
-    this.power = scaledPower; // Store the scaled power for ping intervals and ANT+ updates.
-    this.currentCadence = safeCadence; // Track cadence for ANT+ and BLE keep-alives.
-    this.simulation.cadence = safeCadence; // Keep the simulation helper in sync for manual pedal triggers.
+    const processed = this.metricsProcessor.process({
+      power: scaledPower,
+      cadence: safeCadence,
+      speed: inferredSpeed,
+    });
 
-    this.integrateKinematics(safeCadence, inferredSpeed, nowSeconds()); // Update cumulative wheel/crank counters for CSC.
+    this.logger.log(`received stats from bike [power=${processed.power}W cadence=${processed.cadence}rpm speed=${(processed.speed ?? inferredSpeed).toFixed(2)}m/s]`); // Log the normalized metrics for debugging.
+    this.statsTimeout.reset(); // Clear the bike stats timeout since we just received fresh data.
+    this.power = processed.power; // Store the smoothed power for ping intervals and ANT+ updates.
+    this.currentCadence = processed.cadence; // Track cadence for ANT+ and BLE keep-alives.
+    this.simulation.cadence = processed.cadence; // Keep the simulation helper in sync for manual pedal triggers.
+    if (this.healthMonitor) {
+      this.healthMonitor.recordMetric('bikeStats', processed);
+    }
+
+    const speedForKinematics = Number.isFinite(processed.speed) ? processed.speed : inferredSpeed;
+    this.integrateKinematics(processed.cadence, speedForKinematics, nowSeconds()); // Update cumulative wheel/crank counters for CSC.
     this.publishTelemetry(); // Broadcast the updated metrics to BLE and ANT+ clients.
   }
 
