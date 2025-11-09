@@ -65,13 +65,13 @@ apt-get remove -y --purge logrotate fake-hwclock rsyslog # drop high-write servi
 
 setcap cap_net_raw+eip /opt/gymnasticon/node/bin/node || true # allow the bundled Node runtime to open raw BLE sockets
 
-mkdir -p /etc/systemd/system/getty@tty1.service.d
-cat >/etc/systemd/system/getty@tty1.service.d/override.conf <<EOF
+  mkdir -p /etc/systemd/system/getty@tty1.service.d
+  cat >/etc/systemd/system/getty@tty1.service.d/override.conf <<'GETTY_OVERRIDE'
 [Service]
 ExecStart=
 ExecStart=-/sbin/agetty --autologin ${FIRST_USER_NAME} --noclear %I \$TERM
-EOF
-systemctl daemon-reload
+GETTY_OVERRIDE
+  systemctl daemon-reload
 
 EOF
 
