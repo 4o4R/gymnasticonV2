@@ -46,6 +46,26 @@ sudo systemctl start bluetooth # Start the Bluetooth service immediately for the
 sudo hciconfig hci0 up || true # Bring the onboard Bluetooth adapter up if present
 sudo hciconfig hci1 up || true # Attempt to bring a second USB Bluetooth adapter up when available
 
+# Expand the root filesystem now (so resize2fs_once.service has already run)
+ROOT_DEVICE=$(df --output=source / | tail -n 1)
+if command -v resize2fs >/dev/null && [ -n "$ROOT_DEVICE" ]; then
+    sudo resize2fs "$ROOT_DEVICE" >/dev/null 2>&1 || true
+    sudo systemctl disable --now resize2fs_once.service resize2fs_once.timer >/dev/null 2>&1 || true
+    sudo systemctl mask resize2fs_once.service resize2fs_once.timer >/dev/null 2>&1 || true
+fi
+
+# Enable autologin on the primary console so the Pi boots straight into a shell.
+AUTOLOGIN_DIR="/etc/systemd/system/getty@tty1.service.d"
+AUTOLOGIN_USER="${AUTOLOGIN_USER:-pi}"
+sudo mkdir -p "$AUTOLOGIN_DIR"
+sudo tee "$AUTOLOGIN_DIR/override.conf" >/dev/null <<EOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin $AUTOLOGIN_USER --noclear %I \$TERM
+EOF
+sudo systemctl daemon-reload >/dev/null 2>&1 || true
+sudo systemctl restart getty@tty1.service >/dev/null 2>&1 || true
+
 # Allow the Node runtime to open raw BLE sockets without sudo (required for bleno/noble)
 sudo setcap cap_net_raw+eip "$(command -v node)" || true
 
@@ -77,4 +97,3 @@ sudo systemctl enable gymnasticon
 sudo systemctl start gymnasticon
 
 echo "Gymnasticon installation complete"
-

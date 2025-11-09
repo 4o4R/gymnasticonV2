@@ -33,6 +33,10 @@ When you clone or flash `gymnasticon-raspberrypi.img.xz` to an SSD/microSD from 
 1. Make sure the files (`wpa_supplicant.conf`, `ssh`, optional `userconf`) have been saved to the boot partition before ejecting the drive.
 2. Safely unmount/eject from Windows so that the files are fully written—Windows sometimes caches small files, especially when editing text.
 
+### 5. Reduce first‑boot friction
+- The installer now runs `resize2fs` automatically and disables the `resize2fs_once.service`, so you should no longer see the “Failed to start LSB: Resize the root filesystem” message on first boot.
+- We also enable `tty1` autologin for the `pi` user so your SSD boots straight to the shell without waiting for a login prompt. If you prefer a different user, set `AUTOLOGIN_USER=<username>` before running the installer or adjust the override file at `/etc/systemd/system/getty@tty1.service.d/override.conf` after boot.
+
 ### 5. Troubleshooting startup LEDs and boot output
 - If the green LED blinks in repeating patterns, bring the SSD back to your monitor/keyboard/HDMI and watch the boot messages; our systemd service now forwards logs to the console so you can read exactly where it failed (network, Node version guard, Bluetooth).
 - Use `journalctl -u gymnasticon -b` over SSH once you have network to diagnose lingering issues.
