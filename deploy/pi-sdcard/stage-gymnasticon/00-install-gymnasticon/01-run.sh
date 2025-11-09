@@ -65,6 +65,14 @@ apt-get remove -y --purge logrotate fake-hwclock rsyslog # drop high-write servi
 
 setcap cap_net_raw+eip /opt/gymnasticon/node/bin/node || true # allow the bundled Node runtime to open raw BLE sockets
 
+mkdir -p /etc/systemd/system/getty@tty1.service.d
+cat >/etc/systemd/system/getty@tty1.service.d/override.conf <<EOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin ${FIRST_USER_NAME} --noclear %I \$TERM
+EOF
+systemctl daemon-reload
+
 EOF
 
 install -v -m 644 files/motd "${ROOTFS_DIR}/etc/motd" # customize the login banner
