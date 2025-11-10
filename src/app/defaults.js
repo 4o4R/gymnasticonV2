@@ -33,7 +33,7 @@ export const defaults = {
   serverPingInterval: 1,         // seconds between keep-alive power frames
 
   // ANT+ server options
-  antDeviceId: 11234,            // deterministic default for ANT+ device ID
+  antDeviceId: 21234,            // deterministic default for ANT+ device ID
   antAuto: true,                 // auto-enable ANT+ when a stick is detected
   antEnabled: false,             // explicit override for ANT+ broadcasting
 

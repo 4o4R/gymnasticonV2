@@ -13,7 +13,7 @@ const RF_CHANNEL = 57; // 2457 MHz
 const BROADCAST_INTERVAL = PERIOD / 32768; // seconds
 
 const defaults = {
-  deviceId: 11234,
+  deviceId: 21234,
   channel: 1,
 }
 

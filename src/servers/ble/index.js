@@ -4,7 +4,7 @@ import {HeartRateService} from './services/heart-rate/index.js'; // Import HR se
 import {BleServer} from '../../util/ble-server.js'; // Base helper that wires our bleno services together.
 import {once} from 'events'; // Used to await bleno state changes before advertising.
 
-export const DEFAULT_NAME = 'Gymnasticon';
+export const DEFAULT_NAME = 'GymnasticonV2';
 
 const AD_TYPE_FLAGS = 0x01;
 const AD_TYPE_COMPLETE_16BIT_UUIDS = 0x03;
