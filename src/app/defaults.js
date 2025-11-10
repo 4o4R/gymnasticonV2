@@ -29,7 +29,7 @@ export const defaults = {
 
   // server options
   serverAdapter: 'hci0',         // BLE adapter used to advertise Gymnasticon
-  serverName: 'Gymnasticon',     // BLE name seen by Zwift/TrainerRoad/etc.
+  serverName: 'GymnasticonV2',     // BLE name seen by Zwift/TrainerRoad/etc.
   serverPingInterval: 1,         // seconds between keep-alive power frames
 
   // ANT+ server options
