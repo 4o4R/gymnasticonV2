@@ -65,6 +65,8 @@ apt-get remove -y --purge logrotate fake-hwclock rsyslog # drop high-write servi
 
 setcap cap_net_raw+eip /opt/gymnasticon/node/bin/node || true # allow the bundled Node runtime to open raw BLE sockets
 
+WIFI_COUNTRY=${WPA_COUNTRY:-US} # fall back to a sane default when no country code is provided
+
   mkdir -p /etc/systemd/system/getty@tty1.service.d
   cat >/etc/systemd/system/getty@tty1.service.d/override.conf <<'GETTY_OVERRIDE'
 [Service]
@@ -72,6 +74,9 @@ ExecStart=
 ExecStart=-/sbin/agetty --autologin ${FIRST_USER_NAME} --noclear %I \$TERM
 GETTY_OVERRIDE
   systemctl daemon-reload
+
+  raspi-config nonint do_wifi_country "${WIFI_COUNTRY}" || true # ensure radios are unblocked on first boot
+  rfkill unblock all || true # double-check that Bluetooth/Wi-Fi are free to start
 
 EOF
 
