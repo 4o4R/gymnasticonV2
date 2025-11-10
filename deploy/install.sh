@@ -1,6 +1,63 @@
 #!/bin/bash
 set -euo pipefail
 
+OS_RELEASE_NAME="Unknown" # default placeholder so log messages still make sense if /etc/os-release is missing
+OS_RELEASE_VERSION_ID="" # store Debian version numbers (10, 11, 12, …) once detected
+OS_RELEASE_CODENAME="" # store Debian codenames (buster, bullseye, bookworm) once detected
+
+detect_os_release() {
+    local os_release_file="/etc/os-release" # standard file shipped by Debian/Raspberry Pi OS describing the current image
+    if [ -r "$os_release_file" ]; then # only source the file when it exists and is readable (covers extremely minimal images)
+        # shellcheck disable=SC1090
+        . "$os_release_file" # load NAME / VERSION_ID / VERSION_CODENAME into this shell so we can use them later
+        OS_RELEASE_NAME="${NAME:-Unknown}" # capture the friendly OS name for helpful log messages
+        OS_RELEASE_VERSION_ID="${VERSION_ID:-}" # remember the numeric release (e.g. 10 for Buster, 12 for Bookworm)
+        OS_RELEASE_CODENAME="${VERSION_CODENAME:-}" # remember the codename so we can branch without parsing numbers
+    else
+        OS_RELEASE_NAME="Unknown" # fall back to placeholders when the metadata file is missing
+        OS_RELEASE_VERSION_ID="" # empty string keeps string comparisons simple even with set -u
+        OS_RELEASE_CODENAME="" # same as above for the codename
+    fi
+}
+
+maybe_enable_legacy_apt_mirror() {
+    local release_is_buster="false" # assume modern OS until proven otherwise
+    if [[ "${OS_RELEASE_CODENAME}" == "buster" || "${OS_RELEASE_VERSION_ID}" == "10" ]]; then # Raspberry Pi OS Legacy reports either codename or version 10
+        release_is_buster="true" # flag the detection so the later block runs
+    fi
+
+    if [[ "$release_is_buster" != "true" ]]; then # skip mirror surgery when we are already on Bullseye/Bookworm/etc.
+        echo "Detected ${OS_RELEASE_NAME} (${OS_RELEASE_CODENAME:-unknown}); legacy apt tweaks not required." # reassure the user that no manual action is needed
+        return # exit the helper cleanly without touching any files
+    fi
+
+    echo "Detected legacy Raspberry Pi OS (Buster). Updating apt sources to the archive mirror automatically..." # explain exactly what is happening
+
+    local apt_conf_file="/etc/apt/apt.conf.d/99-gymnasticon-archive-tweaks" # dedicated config file so we never clobber user changes
+    sudo tee "$apt_conf_file" >/dev/null <<'APTCONF' # create/overwrite the config file while running as root via sudo
+Acquire::Check-Valid-Until "false";
+Acquire::AllowReleaseInfoChange::Suite "1";
+Acquire::AllowReleaseInfoChange::Codename "1";
+Acquire::AllowReleaseInfoChange::Version "1";
+APTCONF
+
+    local -a sources_files=("/etc/apt/sources.list") # start with the default apt sources file
+    if [ -d /etc/apt/sources.list.d ]; then # Raspberry Pi OS usually ships extra snippets in this directory
+        while IFS= read -r -d '' extra_list; do # iterate safely over every *.list file using null delimiters
+            sources_files+=("$extra_list") # append each discovered file to the array so the loop below rewrites it
+        done < <(sudo find /etc/apt/sources.list.d -type f -name '*.list' -print0) # run the search with sudo because the files are root-owned
+    fi
+
+    local list_file # declare the loop variable outside the loop to keep shellcheck happy
+    for list_file in "${sources_files[@]}"; do # touch every apt sources file we collected
+        sudo sed -i 's|deb.debian.org|archive.debian.org|g' "$list_file" # Debian moved Buster packages to archive.debian.org; rewrite the mirror automatically
+        sudo sed -i 's|security.debian.org|archive.debian.org|g' "$list_file" # security updates moved as well, so keep them consistent
+        sudo sed -i 's|raspbian.raspberrypi.org|archive.raspbian.org|g' "$list_file" # Raspberry Pi’s mirror follows the same archive pattern
+    done
+
+    echo "Legacy mirror patch complete. Continuing with package installs..." # keep the user informed so they know the script is still running
+}
+
 # Cleanup previous installation
 if systemctl list-unit-files | grep -q '^gymnasticon.service'; then
     sudo systemctl stop gymnasticon || true
@@ -11,8 +68,28 @@ sudo npm uninstall -g gymnasticon >/dev/null 2>&1 || true
 sudo rm -rf /opt/gymnasticon
 
 # Install prerequisites
-sudo apt-get update # refresh apt metadata so we can fetch the latest package lists
-sudo apt-get install -y bluetooth bluez libbluetooth-dev libudev-dev libusb-1.0-0-dev build-essential python3 python-is-python3 pkg-config git curl ca-certificates # ensure all required system libraries and tools are present for BLE/USB and native builds
+detect_os_release # populate OS_RELEASE_* variables so the script knows whether it is on Buster, Bullseye, or Bookworm
+maybe_enable_legacy_apt_mirror # automatically adjust apt mirrors for legacy Buster images so users do not need to know what "Buster" means
+sudo apt-get update # refresh apt metadata using whatever mirrors are now configured (stock mirrors for new OSes, archive mirrors for Buster)
+APT_PACKAGES=(
+  bluetooth
+  bluez
+  libbluetooth-dev
+  libudev-dev
+  libusb-1.0-0-dev
+  build-essential
+  python3
+  pkg-config
+  git
+  curl
+  ca-certificates
+) # base dependencies required on every supported distro
+if sudo apt-cache show python-is-python3 >/dev/null 2>&1; then
+  APT_PACKAGES+=(python-is-python3) # Bullseye/Bookworm provide this virtual package to map python -> python3
+else
+  echo "Skipping python-is-python3 (package not available on this release)" # Pi Zero W Buster images lack python-is-python3; continue without it
+fi
+sudo apt-get install -y "${APT_PACKAGES[@]}" # ensure all required system libraries and tools are present for BLE/USB and native builds
 
 NODE_VERSION="${NODE_VERSION:-14.21.3}" # default to the Pi Zero-friendly Node.js LTS release unless the caller overrides it
 ARCH="$(uname -m)" # capture the current CPU architecture so we can choose the correct Node installation path

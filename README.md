@@ -66,6 +66,7 @@ Use this when you already have Raspberry Pi OS on the device, or when you want R
    curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/install.sh | bash
    ```
    This script removes any previous install, installs system packages, pulls Node.js 14.21.3 (ARMv6 build on Pi Zero family), clones Gymnasticon into `/opt/gymnasticon`, runs `npm install --omit=dev`, and enables the `gymnasticon` systemd service.
+   It automatically detects whether you are on Raspberry Pi OS Legacy (Buster) or newer releases (Bullseye/Bookworm), rewrites apt mirrors when necessary, and installs optional packages only when they exist—no codename knowledge required.
 3. Reinstalling remotely? Use nohup to watch progress later:
    ```bash
    sudo rm -rf /opt/gymnasticon && nohup bash -c "curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/install.sh | bash" > install.log 2>&1 &
@@ -92,7 +93,9 @@ Manual setup is useful for non-Raspberry Pi Linux hosts, development workstation
    - Pi 3/4/5 or x86_64/arm64: install Node.js 14.x from your package manager (NodeSource `setup_14.x`, Homebrew, etc.).
 2. System packages (Debian-based example):
    ```bash
-   sudo apt-get install -y bluetooth bluez libbluetooth-dev libudev-dev libusb-1.0-0-dev build-essential python3 python-is-python3 pkg-config git curl
+   sudo apt-get install -y bluetooth bluez libbluetooth-dev libudev-dev libusb-1.0-0-dev build-essential python3 pkg-config git curl ca-certificates
+   # Optional but recommended on Bullseye/Bookworm where available:
+   sudo apt-cache show python-is-python3 >/dev/null 2>&1 && sudo apt-get install -y python-is-python3
    ```
 3. BLE-capable Bluetooth adapter (LE multi-role recommended) and optional ANT+ USB stick.
 
