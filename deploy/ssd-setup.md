@@ -6,7 +6,17 @@ When you clone or flash `gymnasticon-raspberrypi.img.xz` to an SSD/microSD from 
 1. Attach the flashed SD/SSD to your Windows workstation (or macOS/Linux) and mount the `boot` partition that becomes visible as a removable volume.
 2. Note the drive letter (for example `E:`) so the rest of the commands can point there.
 
-### 2. Create `wpa_supplicant.conf`
+### 2. Provide Wi‑Fi details (pick one approach)
+
+**Option A – Zero-effort helper (recommended):**
+1. Copy the file `gymnasticon-wifi.env.example` (already on the boot partition) to `gymnasticon-wifi.env`.
+2. Edit `gymnasticon-wifi.env` and set:
+   - `WIFI_COUNTRY` to your two-letter country code (US, CA, GB, etc.). This automatically unblocks the radio so you never touch `raspi-config`.
+   - `WIFI_SSID` to your exact network name (case-sensitive).
+   - `WIFI_PSK` to your Wi‑Fi password.
+3. Save the file with standard text encoding (UTF-8) and re-open it to confirm the values stuck. The new `gymnasticon-wifi-setup.service` copies these values into `/etc/wpa_supplicant/wpa_supplicant.conf` on every boot.
+
+**Option B – Classic `wpa_supplicant.conf`:**
 1. Create a file named `wpa_supplicant.conf` on the `boot` partition with the following contents (replace `YourSSID`/`YourPassword`, keep the indentation/spaces as shown):
    ```conf
    ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev

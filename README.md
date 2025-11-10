@@ -41,9 +41,10 @@ The image is based on Raspberry Pi OS Buster and boots directly into Gymnasticon
    sha256sum gymnasticon-raspberrypi.img.xz
    ```
 3. Flash the archive with Raspberry Pi Imager (Use custom -> select the `.img.xz`) or `dd`.
-4. Optionally copy a `gymnasticon.json` config into the boot partition to pre-set your bike profile.
-5. Insert the card in the Pi and power it on. First boot takes about 2-3 minutes.
-6. Log in if needed (default credentials `pi` / `raspberry`) or just start pedaling and pair Zwift with the `Gymnasticon` power and cadence sensors.
+4. Optional: copy `gymnasticon-wifi.env.example` from the boot partition to `gymnasticon-wifi.env`, fill in `WIFI_COUNTRY`, `WIFI_SSID`, and `WIFI_PSK`, and the image will automatically unblock Wi-Fi and join your network on first boot—no HDMI, keyboard, or raspi-config required.
+5. Optional: copy a `gymnasticon.json` config into the boot partition to pre-set your bike profile.
+6. Insert the card in the Pi and power it on. First boot takes about 2-3 minutes.
+7. Log in if needed (default credentials `pi` / `raspberry`) or just start pedaling and pair Zwift with the `Gymnasticon` power and cadence sensors.
 
 **Verify**
 ```bash

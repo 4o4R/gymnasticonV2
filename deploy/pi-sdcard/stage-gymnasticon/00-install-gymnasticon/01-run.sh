@@ -36,6 +36,9 @@ EOF
 install -v -m 644 files/gymnasticon.json "${ROOTFS_DIR}/etc/gymnasticon.json" # seed the default runtime configuration file
 install -v -m 644 files/gymnasticon.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon.service" # ship the main systemd service unit
 install -v -m 644 files/gymnasticon-mods.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon-mods.service" # include the overlay adjustments service
+install -v -m 755 files/gymnasticon-wifi-setup.sh "${ROOTFS_DIR}/usr/local/sbin/gymnasticon-wifi-setup.sh" # copy the Wi-Fi bootstrap helper that reads /boot/gymnasticon-wifi.env
+install -v -m 644 files/gymnasticon-wifi-setup.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon-wifi-setup.service" # register the systemd unit that runs the helper before networking
+install -v -m 644 files/gymnasticon-wifi.env.example "${ROOTFS_DIR}/boot/gymnasticon-wifi.env.example" # drop a template on the boot partition so users know how to headlessly configure Wi-Fi
 
 install -v -m 644 files/lockrootfs.service "${ROOTFS_DIR}/etc/systemd/system/lockrootfs.service" # add the root filesystem lock service
 install -v -m 644 files/bootfs-ro.service "${ROOTFS_DIR}/etc/systemd/system/bootfs-ro.service" # mount /boot read-only after boot
@@ -55,6 +58,7 @@ hciconfig hci1 up || true # attempt to power on a second USB Bluetooth adapter
 
 systemctl enable gymnasticon # launch Gymnasticon automatically
 systemctl enable gymnasticon-mods # ensure overlay modifications happen at startup
+systemctl enable gymnasticon-wifi-setup.service # run the Wi-Fi bootstrapper on every boot before networking so users never need HDMI/keyboard again
 
 systemctl enable lockrootfs # switch the root filesystem to read-only
 

@@ -1,0 +1,22 @@
+[Unit]
+# Visible description so `systemctl status` explains what touched Wi-Fi.
+Description=Gymnasticon headless Wi-Fi bootstrapper
+# Run before the generic dependency tree so we can configure radios early.
+DefaultDependencies=no
+# Wait until /boot mounts so /boot/gymnasticon-wifi.env is readable.
+After=local-fs.target
+# Configure Wi-Fi before any network daemons (or the overlay) start.
+Before=network-pre.target dhcpcd.service wpa_supplicant.service lockrootfs.service
+
+[Service]
+# Run the helper exactly once per boot; it is fast and idempotent.
+Type=oneshot
+# Execute the annotated shell script that copies /boot settings into /etc.
+ExecStart=/usr/local/sbin/gymnasticon-wifi-setup.sh
+# Mirror stdout/stderr to HDMI and the journal for easy debugging.
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+# Tie into multi-user.target so the service runs on every boot.
+WantedBy=multi-user.target
