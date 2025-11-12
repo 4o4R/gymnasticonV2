@@ -10,6 +10,7 @@ ExecStart=raspi-config nonint enable_overlayfs
 ExecStart=systemctl disable lockrootfs
 ExecStart=systemctl enable bootfs-ro
 ExecStart=rm /etc/systemd/system/lockrootfs.service
+ExecStart=/bin/echo "lockrootfs: overlay enabled, rebooting once (expected on first boot)..."
 ExecStart=reboot
 Type=oneshot
 RemainAfterExit=no
