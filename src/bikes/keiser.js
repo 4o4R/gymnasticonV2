@@ -23,8 +23,26 @@ const debuglog = toDefaultExport(debugModule)('gym:bikes:keiser');
 const KEISER_NAME_PATTERN = /^m3/i; // Many M-Series bikes append letters/numbers, so match on the prefix.
 
 export function matchesKeiserName(peripheral) {
-  const name = peripheral?.advertisement?.localName ?? '';
-  return KEISER_NAME_PATTERN.test(name);
+  const advertisement = peripheral?.advertisement ?? {}; // Stash a local ref so the code below stays readable for new contributors.
+  const name = advertisement.localName ?? ''; // Local names only appear occasionally; treat missing names as blank strings.
+
+  if (KEISER_NAME_PATTERN.test(name)) { // Classic path: the Keiser console advertises as "M3i#123" (or similar). Quick bail-out keeps happy-path fast.
+    return true;
+  }
+
+  // Some Keiser consoles stop sending the local name after the very first advertisement (especially once another central has cached it).
+  // When that happens our old matcher never fired, so autodetect would fall back to the default bike and the service kept looping.
+  // Keiser's manufacturer data always begins with the magic 0x02 0x01 header that `parse()` and `bikeVersion()` already rely on,
+  // so we can treat that signature as a secondary detection path.
+  const manufacturer = advertisement.manufacturerData;
+  if (Buffer.isBuffer(manufacturer) && manufacturer.length >= KEISER_VALUE_MAGIC.length) {
+    const prefix = manufacturer.slice(0, KEISER_VALUE_MAGIC.length); // Only compare the header bytes so the rest of the payload can change freely.
+    if (prefix.equals(KEISER_VALUE_MAGIC)) {
+      return true; // The manufacturer payload looks like a Keiser beacon even though the local name is missing.
+    }
+  }
+
+  return false; // Nothing matched; let autodetect keep scanning.
 }
 
 

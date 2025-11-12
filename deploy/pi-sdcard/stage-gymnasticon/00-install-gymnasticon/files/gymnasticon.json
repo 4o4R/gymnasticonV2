@@ -1,2 +1,10 @@
 {
+  "_comment": "Default runtime config baked into the Pi image so first boot works without editing files.",
+  "bike": "keiser",
+  "defaultBike": "keiser",
+  "bikeAdapter": "hci0",
+  "serverAdapter": "hci0",
+  "serverName": "GymnasticonV2",
+  "powerScale": 1,
+  "powerOffset": 0
 }
