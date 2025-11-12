@@ -1,9 +1,7 @@
 {
-  "_comment": "Default runtime config baked into the Pi image so first boot works without editing files.",
-  "bike": "keiser",
+  "_comment": "Ship universal defaults so any supported bike works out-of-the-box; users can still drop /boot/gymnasticon.json to override.",
+  "bike": "autodetect",
   "defaultBike": "keiser",
-  "bikeAdapter": "hci0",
-  "serverAdapter": "hci0",
   "serverName": "GymnasticonV2",
   "powerScale": 1,
   "powerOffset": 0
