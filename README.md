@@ -172,6 +172,21 @@ Any software, bike computer, or watch that supports standard Bluetooth LE and AN
 - Garmin Edge
 - Wahoo Elemnt Bolt (requires ANT+ stick)
 
+### Apple Watch heart-rate bridge
+
+Gymnasticon listens for the standard Bluetooth Low Energy Heart Rate Service (UUIDs `0x180D/0x2A37`). Apple Watch does **not** broadcast that profile by itself, so you will not see heart-rate data unless the watch data is relayed through an app that re-advertises it over BLE.
+
+**Quick setup**
+
+1. Install a bridge app on the paired iPhone—free options that only request HealthKit permission include:
+   - [HeartCast](https://apps.apple.com/us/app/heartcast/id1476940466)
+   - [BlueHeart](https://apps.apple.com/us/app/blueheart-ble-heart-rate/id1548265110)
+   - [Echo Heart Rate](https://apps.apple.com/us/app/echo-heart-rate/id1548266440)
+2. Launch the companion watch app if prompted, start a broadcast, and keep the iPhone near the Raspberry Pi so the BLE advertisement stays in range.
+3. Power on your bike; Gymnasticon will auto-detect the new heart-rate peripheral and rebroadcast it to Zwift/TrainerRoad along with power/cadence/speed.
+
+> **Why not watch-only?** watchOS does not allow third-party apps to act as always-on BLE heart-rate peripherals without an iPhone relay, so there is currently no way for the Pi to read Apple Watch data directly. If Apple relaxes that policy in the future, Gymnasticon will pick it up automatically as soon as the watch advertises a standard Heart Rate Service.
+
 ## Platforms tested
 
 **Raspberry Pi Zero 2 W is the recommended target for best performance.** The prebuilt image targets Pi Zero/Zero W/Zero 2 W/3/4 and ships on Raspberry Pi OS Buster. For Raspberry Pi 5 devices, install Raspberry Pi OS Bookworm and use Option 2 or build a Bookworm-based image with Option 4.
