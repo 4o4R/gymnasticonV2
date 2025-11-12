@@ -1,4 +1,6 @@
 #!/bin/bash -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # path to deploy/pi-sdcard
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)" # repository root (contains src/, package.json, etc.)
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker is required to build the Raspberry Pi image. Please install Docker Desktop (with WSL2 integration) or the Linux docker engine before rerunning build.sh."
   exit 1
@@ -7,7 +9,10 @@ if ! docker info >/dev/null 2>&1; then
   echo "Docker daemon is not running. Start Docker (e.g. launch Docker Desktop or run 'sudo service docker start') and try again."
   exit 1
 fi
-REPO_ROOT="$(cd .. && pwd)" # Remember the absolute path to the gym repo so we can package the current sources into the image build context.
+if [ ! -f "${REPO_ROOT}/package.json" ] || [ ! -d "${REPO_ROOT}/src" ]; then
+  echo "Unable to locate the repository root (expected src/ and package.json next to deploy/) from ${REPO_ROOT}" >&2
+  exit 1
+fi
 if [ -d "pi-gen" ]; then
   echo "Removing previous pi-gen workspace..." # ensure stale clones don't break new builds
   rm -rf pi-gen # wipe the old pi-gen tree so the clone below starts clean
@@ -152,6 +157,7 @@ cp -a ../stage-gymnasticon stage-gymnasticon
 # Bundle the working tree so the pi-gen stage installs *this* checkout rather than whatever is published to npm.
 SRC_ARCHIVE="stage-gymnasticon/00-install-gymnasticon/files/gymnasticon-src.tar.gz" # Location inside the pi-gen tree where the stage consumes the source archive.
 rm -f "${SRC_ARCHIVE}" # Drop any stale archive from previous builds so we never accidentally reuse mismatched sources.
+echo "Bundling local sources into ${SRC_ARCHIVE}..."
 # --create starts a brand-new archive each time so we never append to stale data.
 # --gzip compresses the payload so docker shuffles fewer bytes.
 # --file selects the destination inside the pi-gen working tree.
@@ -170,7 +176,7 @@ tar \
   types \
   README.md \
   CHANGELOG.md \
-  LICENSE
+  LICENSE || { echo "Failed to create ${SRC_ARCHIVE} (tar exited with $?)" >&2; exit 1; }
 find stage-gymnasticon -type f -name '*.sh' -exec sed -i 's/\r$//' {} +
 find stage-gymnasticon -type f -name '*.sh' -exec chmod +x {} +
 sed -i 's/\r$//' config # strip potential CRLF endings introduced by Windows checkouts so pi-gen parses the config
