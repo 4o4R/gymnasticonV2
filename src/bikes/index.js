@@ -2,7 +2,7 @@ import fs from 'fs'; // Check for Peloton USB serial presence during autodetect.
 import {BikeAutoDetector} from './auto-detect.js'; // Helper that centralizes BLE scan + classification logic.
 import {FlywheelBikeClient, FLYWHEEL_LOCALNAME} from './flywheel.js'; // Flywheel BLE profile.
 import {PelotonBikeClient} from './peloton.js'; // Peloton USB profile.
-import {Ic4BikeClient, IC4_LOCALNAME} from './ic4.js'; // Schwinn IC4 profile.
+import {Ic4BikeClient, matchesIc4OrSchwinn290} from './ic4.js'; // Schwinn IC4 profile.
 import {Ic5BikeClient} from './ic5.js'; // LifeFitness IC5 profile built atop the IC4 implementation.
 import {KeiserBikeClient, KEISER_LOCALNAME, matchesKeiserName} from './keiser.js'; // Keiser broadcast profile.
 import {BotBikeClient} from './bot.js'; // Simulation/bot mode profile.
@@ -12,7 +12,7 @@ import {Ic8BikeClient} from './ic8.js'; // Schwinn IC8 / Bowflex C6 profile.
 
 const NAME_MATCHERS = { // Heuristics used during autodetect to match advertising names.
   flywheel: createNameFilter(FLYWHEEL_LOCALNAME), // Flywheel bikes advertise a fixed prefix.
-  ic4: createNameFilter(IC4_LOCALNAME), // Schwinn IC4 advertises "IC Bike".
+  ic4: matchesIc4OrSchwinn290, // Schwinn IC4 advertises "IC Bike" but Schwinn 290 variants reuse the same FTMS payloads.
   ic5: peripheral => /ic5|life ?fitness/i.test(peripheral?.advertisement?.localName ?? ''), // LifeFitness IC5 patterns.
   ic8: peripheral => /ic8|c6|schwinn|bowflex/i.test(peripheral?.advertisement?.localName ?? ''), // Schwinn IC8 / Bowflex C6 patterns.
   keiser: matchesKeiserName, // Keiser M series broadcasts names that start with "M3".
@@ -30,8 +30,7 @@ function createPelotonBikeClient(options) { // Factory for Peloton bikes using U
 }
 
 function createIc4BikeClient(_options, noble) { // Factory for Schwinn IC4 bikes.
-  const filter = createNameFilter(IC4_LOCALNAME); // Match the standard IC4 advertising name.
-  return new Ic4BikeClient(noble, filter);
+  return new Ic4BikeClient(noble, matchesIc4OrSchwinn290); // Match original IC Bike plus Schwinn 290 advert variations.
 }
 
 function createIc5BikeClient(_options, noble) { // Factory for LifeFitness IC5 bikes (inherits FTMS logic from IC4).

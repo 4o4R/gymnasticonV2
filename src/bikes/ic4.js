@@ -7,6 +7,17 @@ import {macAddress} from '../util/mac-address.js';
 
 export const IC4_LOCALNAME = 'IC Bike';
 
+export function matchesIc4OrSchwinn290(peripheral) {
+  const name = (peripheral?.advertisement?.localName || '').toLowerCase();
+  if (!name) {
+    return false;
+  }
+  if (name === IC4_LOCALNAME.toLowerCase()) {
+    return true;
+  }
+  return name === 'ftms-bike' || (name.includes('schwinn') && name.includes('290'));
+}
+
 // GATT service/characteristic UUIDs
 const FTMS_SERVICE_UUID = '1826';
 const INDOOR_BIKE_DATA_UUID = '2ad2';

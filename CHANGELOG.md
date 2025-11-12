@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+### Changed
+- Expanded the IC4 Bluetooth matcher to also recognize Schwinn 290 advertising names (shared FTMS payload).
+
 ## 1.4.0
 
 - Added support for Keiser M series bikes. [6c0e4571](https://github.com/ptx2/gymnasticon/commit/6c0e45713ba98b9921f1b70550246d5eded3280e)

@@ -138,6 +138,7 @@ Need a customized Raspberry Pi image or want to publish a new release? Follow th
 - Flywheel
 - Peloton Bike (requires an [additional cable](https://github.com/ptx2/gymnasticon/pull/12#issuecomment-696345309))
 - Schwinn IC4/IC8 aka Bowflex C6 (power estimation when necessary)
+- Schwinn 290 recumbent (auto-detected via the IC4 FTMS profile)
 - Keiser M Series Bikes (M3i, M3i-TBT, M3iX)
 - LifeFitness IC5 (power estimation)
 
@@ -147,6 +148,14 @@ Need a customized Raspberry Pi image or want to publish a new release? Follow th
 > curve (`src/bikes/ic8.js`). If your bike starts emitting native FTMS power in a future
 > firmware update you can flip to the IC4 profile to consume that directly, but as of
 > now every IC8/C6 report we have seen requires this calculated wattage.
+
+### Schwinn 290 Recumbent
+
+Gymnasticon now treats the Schwinn 290 console exactly like an IC4 because both broadcast
+the standard FTMS Indoor Bike Data flow (Service `0x1826`, Characteristic `0x2AD2`, Control
+Point `0x2AD9`). The only difference is the advertised name (`IC Bike`, `Schwinn 290 Bike`,
+or `FTMS-Bike`). Autodetect and `--bike ic4` now match all of those variants, so no extra
+configuration is needed—just power on the bike and let Gymnasticon connect.
 
 ## Apps and devices tested
 
