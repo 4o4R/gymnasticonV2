@@ -124,9 +124,16 @@ const main = async () => {
         argv.serverAdapter = discovery.serverAdapter;
     }
 
-    const antFlag = typeof argv.antPlus === 'boolean' ? argv.antPlus : undefined; // Interpret explicit ANT+ enable/disable requests.
-    const antAuto = argv.antAuto === undefined ? true : argv.antAuto; // Default auto mode to true when not provided.
-    argv.antEnabled = antFlag !== undefined ? antFlag : (antAuto && discovery.antPresent); // Enable ANT+ when the user forces it or auto-detect finds hardware.
+    const antFlag = typeof argv.antPlus === 'boolean' ? argv.antPlus : undefined; // Track whether the caller explicitly passed --ant-plus / --no-ant-plus.
+    const antAuto = argv.antAuto === undefined ? true : argv.antAuto; // Treat auto mode as enabled unless the config/CLI disabled it.
+    argv.antAuto = antAuto; // Persist the normalized boolean so the runtime can inspect the actual setting later.
+    if (antFlag !== undefined) { // Respect explicit user intent first.
+        argv.antEnabled = antFlag; // Use the exact value supplied on the CLI/config.
+    } else if (antAuto) { // Auto mode active (default): always attempt to broadcast and let hardware detection happen inside the ANT stack.
+        argv.antEnabled = true; // Turn on ANT+ broadcasting proactively; startAnt() will quietly skip if no stick is present.
+    } else {
+        argv.antEnabled = false; // Auto mode disabled and no explicit override, so keep ANT+ off.
+    }
 
     argv.speedFallback = { // Collect speed estimation overrides into a single object consumed by the App.
         circumferenceM: argv.speedCircumference,

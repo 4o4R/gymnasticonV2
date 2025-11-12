@@ -8,8 +8,8 @@ Type=simple
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
-WorkingDirectory=/opt/gymnasticon
+WorkingDirectory=/opt/gymnasticon/app
 # Mirror runtime logs to the console so HDMI output reflects what Gymnasticon emits during boot.
 StandardOutput=journal+console
 StandardError=journal+console
-ExecStart=/usr/bin/env node /opt/gymnasticon/src/app/cli.js
+ExecStart=/opt/gymnasticon/bin/gymnasticon --config /etc/gymnasticon.json

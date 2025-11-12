@@ -230,29 +230,41 @@ export class App {
         throw new Error(`Bluetooth adapter state: ${state}`);
       }
 
-      this.logger.log('connecting to bike...');
-      this.bike = await createBikeClient(this.opts, this.noble);
-      this.bike.on('disconnect', this.onBikeDisconnect.bind(this));
-      this.bike.on('stats', this.onBikeStats.bind(this));
-      this.connectTimeout.reset();
-      await this.bike.connect();
-      this.connectTimeout.cancel();
-      this.logger.log(`bike connected ${this.bike.address}`);
-      await this.server.start();
-      if (this.antEnabled) { // Only attempt ANT+ start when broadcasting is enabled.
-        this.startAnt(); // Kick off ANT+ broadcasting (no-op if the stick is missing).
-      }
-      if (this.hrClient) {
+      const retryDelayMs = Math.max(1000, Number(this.opts.connectionRetryDelay ?? sharedDefaults.connectionRetryDelay ?? 5000)); // Guarantee at least a one-second delay between attempts even if the config requests 0.
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); // Lightweight helper so the retry loop can pause via await without blocking Node's event loop.
+      while (true) { // Keep looping until we successfully complete the full startup sequence.
         try {
-          await this.hrClient.connect();
-        } catch (err) {
-          this.logger.error('Heart-rate setup failed; continuing without HR data', err);
-          await this.hrClient.disconnect().catch(() => {});
-          this.hrClient = null;
+          this.logger.log('connecting to bike...'); // Show progress on the console so headless installs still provide feedback.
+          this.bike = await createBikeClient(this.opts, this.noble); // Instantiate the bike client selected via config/CLI (autodetect, keiser, etc.).
+          this.bike.on('disconnect', this.onBikeDisconnect.bind(this)); // Restart the app when the bike disconnects unexpectedly.
+          this.bike.on('stats', this.onBikeStats.bind(this)); // Stream bike telemetry into the BLE/ANT broadcasters.
+          this.connectTimeout.reset(); // Arm the watchdog so wedged BLE connections do not hang forever.
+          await this.bike.connect(); // Begin scanning or connecting based on the specific bike implementation.
+          this.connectTimeout.cancel(); // Clear the watchdog because the connect phase finished successfully.
+          this.logger.log(`bike connected ${this.bike.address}`); // Log the MAC so users can confirm which console paired.
+          await this.server.start(); // Start advertising Cycling Power/CSC services for Zwift and friends.
+          if (this.antEnabled) { // Only talk to the ANT+ stick when the user opted in.
+            this.startAnt(); // Fire up ANT+ broadcasting (no-op if the stick is missing).
+          }
+          if (this.hrClient) {
+            try {
+              await this.hrClient.connect(); // Attempt to bring up the optional heart-rate bridge.
+            } catch (err) {
+              this.logger.error('Heart-rate setup failed; continuing without HR data', err); // Never abort startup when HR pairing fails.
+              await this.hrClient.disconnect().catch(() => {}); // Ensure failed attempts do not leave dangling BLE scans.
+              this.hrClient = null; // Disable HR until the service restarts to avoid noisy retries.
+            }
+          }
+          this.pingInterval.reset(); // Kick off the BLE keep-alive timer so Zwift sees data even when you pause pedaling.
+          this.statsTimeout.reset(); // Start the "bike telemetry" watchdog so we can log when stats go stale.
+          break; // Exit the retry loop because startup finished successfully.
+        } catch (e) {
+          this.logger.error(e); // Surface the failure reason so users can photograph the console for debugging.
+          await this.stop().catch(() => {}); // Tear down partial state (BLE server, timers, HR client) before the next attempt.
+          this.logger.log(`retrying connection in ${retryDelayMs / 1000}s (adjust with --connection-retry-delay)`); // Give a friendly heads-up that retries are automatic.
+          await sleep(retryDelayMs); // Wait before the next attempt to avoid hammering the Bluetooth stack.
         }
       }
-      this.pingInterval.reset();
-      this.statsTimeout.reset();
     } catch (e) {
       this.logger.error(e);
       process.exit(1);

@@ -160,5 +160,10 @@ export const options = {
     describe: '<count> maximum BLE connection retries',
     type: 'number',
     default: 3,
+  },
+  'connection-retry-delay': {
+    describe: '<ms> wait before retrying bike startup after a failure',
+    type: 'number',
+    default: defaults.connectionRetryDelay,
   }
 };

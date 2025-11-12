@@ -23,17 +23,31 @@ if [ ! -x "${ROOTFS_DIR}/opt/gymnasticon/node/bin/node" ] ; then # skip the inst
     cd /opt/gymnasticon/node # enter the runtime directory before extraction
     tar --strip-components=1 -xJf /tmp/node.tar.xz # unpack the .tar.xz archive and drop the leading folder
     chown -R "${GYMNASTICON_USER}:${GYMNASTICON_GROUP}" /opt/gymnasticon # give ownership to the default user so npm installs work without sudo
-    echo "export PATH=/opt/gymnasticon/node/bin:\$PATH" >> /home/pi/.profile # ensure the bundled Node binaries are available in interactive shells
+    echo "export PATH=/opt/gymnasticon/bin:/opt/gymnasticon/node/bin:\$PATH" >> /home/pi/.profile # make both the shim (bin) and the bundled Node runtime available in shells for debugging
     echo "raspi-config nonint get_overlay_now || export PROMPT_COMMAND=\"echo  -e '\033[1m(rw-mode)\033[0m\c'\"" >> /home/pi/.profile # keep the overlayfs prompt helper
     echo "overctl -s" >> /home/pi/.profile # show overlay mount status on login
 EOF
 fi
 
+install -v -m 644 files/gymnasticon-src.tar.gz "${ROOTFS_DIR}/tmp/gymnasticon-src.tar.gz" # copy the freshly-built source bundle from the stage files into the target rootfs
 on_chroot <<EOF
-su ${GYMNASTICON_USER} -c 'export PATH=/opt/gymnasticon/node/bin:\$PATH; CXXFLAGS="-std=gnu++14" /opt/gymnasticon/node/bin/npm install -g gymnasticon' # install Gymnasticon globally using the bundled Node runtime
+  set -e # stop immediately if any extraction step fails so we do not leave a half-installed tree
+  APP_ROOT="/opt/gymnasticon/app" # keep the application code under /opt/gymnasticon/app to separate it from the bundled runtime
+  mkdir -p "\${APP_ROOT}" # ensure the application directory exists before we extract files
+  tar -xzf /tmp/gymnasticon-src.tar.gz -C "\${APP_ROOT}" # unpack the repo snapshot directly into the application directory
+  chown -R "${GYMNASTICON_USER}:${GYMNASTICON_GROUP}" /opt/gymnasticon # hand ownership of the entire /opt/gymnasticon tree to the default user for easier maintenance
+  rm -f /tmp/gymnasticon-src.tar.gz # remove the temporary archive now that the contents are in place to save space
+  ln -sf /etc/gymnasticon.json "\${APP_ROOT}/gymnasticon.json" # expose the live config file inside the repo so docs referencing /opt/gymnasticon/gymnasticon.json remain accurate
+  ln -sf /etc/gymnasticon.json /opt/gymnasticon/gymnasticon.json # also provide a top-level shortcut for users who expect the legacy path
+EOF
+
+on_chroot <<EOF
+su ${GYMNASTICON_USER} -c 'export PATH=/opt/gymnasticon/node/bin:\$PATH; cd /opt/gymnasticon/app; CXXFLAGS="-std=gnu++14" npm install --omit=dev' # install production dependencies inside the unpacked repo using the bundled Node toolchain
 EOF
 
 install -v -m 644 files/gymnasticon.json "${ROOTFS_DIR}/etc/gymnasticon.json" # seed the default runtime configuration file
+install -d -m 755 "${ROOTFS_DIR}/opt/gymnasticon/bin" # create a dedicated bin directory for helper scripts exposed to users
+install -v -m 755 files/gymnasticon-wrapper.sh "${ROOTFS_DIR}/opt/gymnasticon/bin/gymnasticon" # drop the commented wrapper that launches the CLI with the bundled Node runtime
 install -v -m 644 files/gymnasticon.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon.service" # ship the main systemd service unit
 install -v -m 644 files/gymnasticon-mods.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon-mods.service" # include the overlay adjustments service
 install -v -m 755 files/gymnasticon-wifi-setup.sh "${ROOTFS_DIR}/usr/local/sbin/gymnasticon-wifi-setup.sh" # copy the Wi-Fi bootstrap helper that reads /boot/gymnasticon-wifi.env

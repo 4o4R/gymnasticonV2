@@ -52,4 +52,7 @@ export const defaults = {
   // heart-rate options (auto = let runtime decide based on hardware)
   heartRateEnabled: undefined,
   heartRateAdapter: undefined,
+
+  // connection retry behavior
+  connectionRetryDelay: 5000,   // milliseconds to wait before retrying a failed startup attempt
 };

@@ -147,9 +147,15 @@ sudo systemctl restart getty@tty1.service >/dev/null 2>&1 || true
 sudo setcap cap_net_raw+eip "$(command -v node)" || true
 
 # Clone Gymnasticon repository
-sudo git clone https://github.com/4o4R/gymnasticonV2.git /opt/gymnasticon
-cd /opt/gymnasticon
-sudo env CXXFLAGS="-std=gnu++14" npm install --omit=dev
+sudo mkdir -p /opt/gymnasticon # ensure the parent prefix exists before cloning
+sudo git clone https://github.com/4o4R/gymnasticonV2.git /opt/gymnasticon/app # place the repo under /opt/gymnasticon/app to match the image layout
+cd /opt/gymnasticon/app
+sudo env CXXFLAGS="-std=gnu++14" npm install --omit=dev # install production dependencies directly inside the repo
+sudo install -d -m 755 /opt/gymnasticon/bin # create a bin directory for helper scripts
+sudo install -m 755 /opt/gymnasticon/app/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon-wrapper.sh /opt/gymnasticon/bin/gymnasticon # reuse the wrapper so users can run `gymnasticon` manually
+sudo install -m 644 /opt/gymnasticon/app/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon.json /etc/gymnasticon.json # seed the default config on manual installs for parity with the image
+sudo ln -sf /etc/gymnasticon.json /opt/gymnasticon/app/gymnasticon.json # expose the config inside the repo tree for documentation consistency
+sudo ln -sf /etc/gymnasticon.json /opt/gymnasticon/gymnasticon.json # provide the legacy /opt/gymnasticon/gymnasticon.json convenience path
 
 # Configure systemd service
 sudo tee /etc/systemd/system/gymnasticon.service > /dev/null <<'SERVICE'
@@ -160,8 +166,8 @@ Requires=bluetooth.service
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/gymnasticon
-ExecStart=/usr/bin/env node /opt/gymnasticon/src/app/cli.js
+WorkingDirectory=/opt/gymnasticon/app
+ExecStart=/opt/gymnasticon/bin/gymnasticon --config /etc/gymnasticon.json
 Restart=always
 RestartSec=10
 
