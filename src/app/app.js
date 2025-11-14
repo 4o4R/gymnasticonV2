@@ -116,18 +116,18 @@ export class App {
     this.simulation = new Simulation();
     this.simulation.on('pedal', this.onPedalStroke.bind(this));
 
-    // Heart-rate capture is opt-in because many Pi Zero radios cannot scan and
-    // advertise simultaneously.  We only build the client when the caller
-    // explicitly asks for it to avoid blocking power/cadence broadcasts.
-    // Decide whether heart-rate rebroadcasting should run automatically.  We
-    // consider three tiers:
-    //   1. Explicit user override (config/CLI) wins.
-    //   2. When two different adapters are configured (bike+server), we assume
-    //      it is safe to dedicate one radio to scanning HRM peripherals.
-    //   3. On single-adapter Pi Zero units we disable HR by default because the
-    //      onboard radio struggles with simultaneous scan+advertise.  Every
-    //      other platform is treated as multi-role capable.
-    this.heartRateAutoPreference = this.shouldEnableHeartRate(opts);
+    // Heart-rate capture defaults to "auto": when at least two adapters are
+    // available (or the board is on the single-adapter whitelist) we run the
+    // bridge with zero user interaction. Users can still force-enable or
+    // disable it via heartRateEnabled.
+    let heartRatePreference = null; // null => auto, true => force, false => disable.
+    if (typeof opts.heartRateEnabled === 'boolean') {
+      heartRatePreference = opts.heartRateEnabled;
+    } else if (opts.heartRateDevice) {
+      heartRatePreference = true; // requesting a specific device implies they want HR.
+    }
+    const autoAllowed = this.shouldEnableHeartRate(opts);
+    this.heartRateAutoPreference = heartRatePreference === null ? autoAllowed : (heartRatePreference && autoAllowed);
     if (this.heartRateAutoPreference) {
       const hrNoble = this.heartRateNoble;
       if (hrNoble !== this.noble) {
@@ -141,7 +141,13 @@ export class App {
       this.hrClient.on('heartRate', this.onHeartRate.bind(this));
     } else {
       this.hrClient = null;
-      this.logger.log('Heart-rate rebroadcast disabled (hardware limitations detected)');
+      if (heartRatePreference === false) {
+        this.logger.log('Heart-rate rebroadcast disabled per configuration');
+      } else if (heartRatePreference === true) {
+        this.logger.log('Heart-rate rebroadcast disabled (hardware limitations detected)');
+      } else {
+        this.logger.log('Heart-rate rebroadcast disabled (auto mode requires two adapters or supported hardware)');
+      }
     }
     if (this.healthMonitor) {
       this.healthMonitor.on('stale', this.onHealthMetricStale.bind(this));

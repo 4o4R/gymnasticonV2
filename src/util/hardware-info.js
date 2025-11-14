@@ -8,11 +8,11 @@ const DEVICE_TREE_PATHS = [
 const SINGLE_ADAPTER_ENV = 'GYMNASTICON_SINGLE_ADAPTER_HR';
 
 // Boards whose built-in Bluetooth radios handle simultaneous scan + advertise
-// reliably.  Pi Zero 2 W is explicitly allowed here because it ships with the
-// BCM43436 “combo” radio that mirrors the Pi 3/4 capabilities, while the
-// original Pi Zero / Zero W remain excluded.
+// reliably.  The original Pi Zero / Zero W remain excluded, and we now treat
+// Pi Zero 2 W conservatively because older 5.10 kernels occasionally crash the
+// Bluetooth stack when it tries to scan + advertise + connect at the same
+// time.  Users can still force-enable single-adapter HR via the env override.
 const SINGLE_ADAPTER_WHITELIST = [
-  /raspberry pi zero 2/i,
   /raspberry pi 3/i,
   /raspberry pi 4/i,
   /raspberry pi 400/i,
