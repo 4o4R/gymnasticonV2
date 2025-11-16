@@ -154,6 +154,15 @@ net_tweaks_run.chmod(0o755)
 PY
 cp ../config config
 cp -a ../stage-gymnasticon stage-gymnasticon
+# Mirror any pre-packaged firmware blobs (e.g., Broadcom Bluetooth patches) into
+# the stage files tree so the image ships them even without Internet access.
+FIRMWARE_SRC="${REPO_ROOT}/deploy/firmware"
+FIRMWARE_DEST="stage-gymnasticon/00-install-gymnasticon/files/firmware"
+rm -rf "${FIRMWARE_DEST}"
+if [ -d "${FIRMWARE_SRC}" ]; then
+  mkdir -p "${FIRMWARE_DEST}"
+  cp -av "${FIRMWARE_SRC}/." "${FIRMWARE_DEST}/"
+fi
 # Bundle the working tree so the pi-gen stage installs *this* checkout rather than whatever is published to npm.
 SRC_ARCHIVE="stage-gymnasticon/00-install-gymnasticon/files/gymnasticon-src.tar.gz" # Location inside the pi-gen tree where the stage consumes the source archive.
 rm -f "${SRC_ARCHIVE}" # Drop any stale archive from previous builds so we never accidentally reuse mismatched sources.

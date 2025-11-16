@@ -156,6 +156,10 @@ sudo install -m 755 /opt/gymnasticon/app/deploy/pi-sdcard/stage-gymnasticon/00-i
 sudo install -m 644 /opt/gymnasticon/app/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon.json /etc/gymnasticon.json # seed the default config on manual installs for parity with the image
 sudo ln -sf /etc/gymnasticon.json /opt/gymnasticon/app/gymnasticon.json # expose the config inside the repo tree for documentation consistency
 sudo ln -sf /etc/gymnasticon.json /opt/gymnasticon/gymnasticon.json # provide the legacy /opt/gymnasticon/gymnasticon.json convenience path
+sudo install -d -m 755 /lib/firmware/brcm # make sure the firmware directory exists even on minimal images
+if [ -f /opt/gymnasticon/app/deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd ]; then
+    sudo install -m 644 /opt/gymnasticon/app/deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd /lib/firmware/brcm/ # preload the Broadcom BCM20702 patch so CSR-based USB Bluetooth dongles work without Internet
+fi
 
 # Configure systemd service
 sudo tee /etc/systemd/system/gymnasticon.service > /dev/null <<'SERVICE'

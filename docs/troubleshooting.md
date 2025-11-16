@@ -146,3 +146,21 @@ code .
 
 ---
 
+## USB Bluetooth dongle firmware (Kinivo BTD-400 / BCM20702A1)
+
+Some USB Bluetooth adapters (Kinivo BTD-400, Plugable BT-USB4LE, etc.) use Broadcom's BCM20702A1 radio. Linux requires a small firmware patch file before it creates `hci1`. If the file is missing you will see boot logs similar to:
+
+```
+Bluetooth: hci1: BCM: firmware Patch file not found, tried: brcm/BCM20702A1-0a5c-21e8.hcd
+```
+
+Gymnasticon bundles that patch so even offline installs have it:
+
+- `deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd` is baked into the SD image and copied during the one-line installer (`/lib/firmware/brcm/...` on the Pi).
+- On boot the kernel loads it automatically and the adapter appears as `hci1` when you run `hciconfig -a`.
+
+**If you still do not see `hci1`:**
+
+1. `lsusb` should list the dongle (e.g., `0a5c:21e8 Broadcom Corp.`). If it is missing, the hub/OTG cable is not providing power/data.
+2. `sudo dmesg | grep -i hci1` should no longer show the “Patch file not found” error. If it does, verify the firmware file exists at `/lib/firmware/brcm/`.
+3. After the firmware loads run `sudo hciconfig -a`; you should now see both `hci0` (onboard) and `hci1` (USB). Gymnasticon will automatically dedicate one adapter to heart-rate scanning once both are present.
