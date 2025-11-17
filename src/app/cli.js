@@ -165,14 +165,15 @@ const main = async () => {
         }
     }
 
-    if (argv.heartRateDevice && argv.heartRateEnabled === undefined) {
-        // Only auto-enable the heart-rate bridge when the system truly has two adapters
-        // OR the detected board is on the single-adapter whitelist (Pi Zero 2 W, Pi 3/4, etc.).
-        if (canAutoEnableHr) {
-            argv.heartRateEnabled = true;
-        } else {
-            console.warn('[Gymnasticon] Heart-rate device requested but only one adapter detected. Attach a second radio or set --heart-rate-enabled true after confirming stability. (Hint: export GYMNASTICON_SINGLE_ADAPTER_HR=1 to override on trusted hardware.)');
-        }
+    // If we see two adapters, automatically enable the heart-rate bridge (safe on dual-radio setups).
+    // This mirrors what most users want on Pi Zero 2 W + USB dongle without manual config.
+    if (argv.heartRateEnabled === undefined && (canAutoEnableHr || hasMultiAdapter)) {
+        argv.heartRateEnabled = true;
+    }
+
+    // If the user explicitly named an HR device but we still only have one adapter, warn them.
+    if (argv.heartRateDevice && argv.heartRateEnabled === undefined && !canAutoEnableHr) {
+        console.warn('[Gymnasticon] Heart-rate device requested but only one adapter detected. Attach a second radio or set --heart-rate-enabled true after confirming stability. (Hint: export GYMNASTICON_SINGLE_ADAPTER_HR=1 to override on trusted hardware.)');
     }
 
     const configPath = argv.configPath || argv.config || '/etc/gymnasticon.json'; // Support both legacy --config and explicit --config-path.

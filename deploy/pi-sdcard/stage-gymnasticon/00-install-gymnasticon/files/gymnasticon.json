@@ -3,6 +3,8 @@
   "bike": "autodetect",
   "defaultBike": "keiser",
   "serverName": "GymnasticonV2",
+  "bikeReceiveTimeout": 10,
+  "_comment_timeout": "Give the bike a little more time (seconds) before restarting; helps avoid disconnects during short pauses.",
   "powerScale": 1,
   "powerOffset": 0
 }
