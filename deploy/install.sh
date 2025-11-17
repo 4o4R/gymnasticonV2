@@ -160,6 +160,7 @@ sudo install -d -m 755 /lib/firmware/brcm # make sure the firmware directory exi
 if [ -f /opt/gymnasticon/app/deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd ]; then
     sudo install -m 644 /opt/gymnasticon/app/deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd /lib/firmware/brcm/ # preload the Broadcom BCM20702 patch so CSR-based USB Bluetooth dongles work without Internet
 fi
+sudo install -m 644 /opt/gymnasticon/app/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/btusb.conf /etc/modprobe.d/btusb.conf # force-reset and disable autosuspend for btusb to reduce patch failures on some dongles
 
 # Configure systemd service
 sudo tee /etc/systemd/system/gymnasticon.service > /dev/null <<'SERVICE'

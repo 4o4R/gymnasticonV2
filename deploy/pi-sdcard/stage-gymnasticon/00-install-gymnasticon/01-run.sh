@@ -55,6 +55,7 @@ install -v -m 644 files/gymnasticon-wifi-setup.service "${ROOTFS_DIR}/etc/system
 install -v -m 644 files/gymnasticon-wifi.env.example "${ROOTFS_DIR}/boot/gymnasticon-wifi.env.example" # drop a template on the boot partition so users know how to headlessly configure Wi-Fi
 install -d -m 755 "${ROOTFS_DIR}/lib/firmware/brcm" # ensure the target firmware directory exists for Bluetooth patch files
 install -v -m 644 files/firmware/brcm/BCM20702A1-0a5c-21e8.hcd "${ROOTFS_DIR}/lib/firmware/brcm/" # bundle the Broadcom BCM20702A1 firmware so CSR-based USB dongles work offline
+install -v -m 644 files/btusb.conf "${ROOTFS_DIR}/etc/modprobe.d/btusb.conf" # force btusb to reset and disable autosuspend to reduce patch-load failures on some dongles
 
 install -v -m 644 files/lockrootfs.service "${ROOTFS_DIR}/etc/systemd/system/lockrootfs.service" # add the root filesystem lock service
 install -v -m 644 files/bootfs-ro.service "${ROOTFS_DIR}/etc/systemd/system/bootfs-ro.service" # mount /boot read-only after boot
