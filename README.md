@@ -206,6 +206,7 @@ Gymnasticon listens for the standard Bluetooth Low Energy Heart Rate Service (UU
 - **Single-adapter fallback**: On original Pi Zero/Zero W (or when only one HCI is detected), power/cadence/speed/CSC still work, but heart-rate rebroadcast is disabled by default to avoid flapping scans/advertising on underpowered stacks. You can force-enable with `--heart-rate-enabled true` if you accept the risk.
 - **ANT+**: `--ant-auto` defaults to `true`; Gymnasticon will attempt ANT+ broadcasting whenever a compatible stick (e.g., Garmin USB-M 0fcf:1006/1008/1009) is seen. Use `--no-ant-plus` to turn it off explicitly.
 - **BlueZ refresh in images**: The pi-gen stage now installs/refreshes `bluez`, `bluez-firmware`, and `pi-bluetooth` on Pi 3/4/Zero 2/CM4 so dual-radio setups come up reliably even on old Buster bases.
+- **Onboard Bluetooth helpers**: The install stage now appends `enable_uart=1` and `dtoverlay=miniuart-bt` to `/boot/config.txt` inside the image so the Zero/Zero 2 UART radio always comes back as `hci0`, meaning the runtime’s dual-adapter detection kicks in immediately without manual edits.
 
 ## Troubleshooting and further reading
 
