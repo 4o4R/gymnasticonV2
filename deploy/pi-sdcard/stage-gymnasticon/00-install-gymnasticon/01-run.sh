@@ -111,10 +111,6 @@ raspi-config nonint do_wifi_country "${WIFI_COUNTRY}" || true
 rfkill unblock all || true
 CHROOT_EOF
 
-on_chroot <<'CHROOT_ENABLE'
-systemctl enable gymnasticon-bt-reprobe.service
-CHROOT_ENABLE
-
 # Systemd helper: if fewer than two HCIs exist at boot, restart hciuart and
 # bring both adapters up. This avoids manual unplug/replug when a USB dongle
 # races the onboard UART on Zero/Zero 2.
@@ -137,6 +133,10 @@ ExecStart=/bin/sh -c '\
 [Install]
 WantedBy=multi-user.target
 REPROBE
+
+on_chroot <<'CHROOT_ENABLE'
+systemctl enable gymnasticon-bt-reprobe.service
+CHROOT_ENABLE
 
 # Ensure the UART overlay lines remain in the read-only boot partition.
 if [ -f "${ROOTFS_DIR}/boot/config.txt" ]; then
