@@ -81,14 +81,6 @@ MODEL="$(tr -d '\0' </proc/device-tree/model 2>/dev/null || echo '')"
     systemctl restart bluetooth || true
   fi
 
-  # Make sure UART + overlay flags are baked into the image so the onboard
-  # Zero/Zero 2 adapter always comes up as hci0 alongside any USB dongles.
-  CONFIG_FILE="${ROOTFS_DIR}/boot/config.txt"
-  if [ -f "$CONFIG_FILE" ]; then
-    grep -q '^enable_uart=1' "$CONFIG_FILE" || printf '\nenable_uart=1\n' >> "$CONFIG_FILE"
-    grep -q '^dtoverlay=miniuart-bt' "$CONFIG_FILE" || printf 'dtoverlay=miniuart-bt\n' >> "$CONFIG_FILE"
-  fi
-
 systemctl enable gymnasticon # launch Gymnasticon automatically
 systemctl enable gymnasticon-mods # ensure overlay modifications happen at startup
 systemctl enable gymnasticon-wifi-setup.service # run the Wi-Fi bootstrapper on every boot before networking so users never need HDMI/keyboard again
@@ -116,6 +108,11 @@ GETTY_OVERRIDE
   rfkill unblock all || true # double-check that Bluetooth/Wi-Fi are free to start
 
 EOF
+
+if [ -f "${ROOTFS_DIR}/boot/config.txt" ]; then
+  grep -q '^enable_uart=1' "${ROOTFS_DIR}/boot/config.txt" || printf '\nenable_uart=1\n' >> "${ROOTFS_DIR}/boot/config.txt"
+  grep -q '^dtoverlay=miniuart-bt' "${ROOTFS_DIR}/boot/config.txt" || printf 'dtoverlay=miniuart-bt\n' >> "${ROOTFS_DIR}/boot/config.txt"
+fi
 
 install -v -m 644 files/motd "${ROOTFS_DIR}/etc/motd" # customize the login banner
 install -v -m 644 files/51-garmin-usb.rules "${ROOTFS_DIR}/etc/udev/rules.d/51-garmin-usb.rules" # add udev rules for Garmin ANT+ USB sticks
