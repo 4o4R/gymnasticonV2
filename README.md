@@ -200,6 +200,13 @@ Gymnasticon listens for the standard Bluetooth Low Energy Heart Rate Service (UU
 
 > Note: Bluetooth LE bikes require an adapter with multi-role capability. Raspberry Pi boards listed above include a compatible adapter. Dual-adapter setups (one for scanning, one for advertising) are also supported.
 
+### Bluetooth/ANT+ adapter behavior
+
+- **Dual adapters when available**: On Pi 3/4/Zero 2/CM4, we probe `/sys/class/bluetooth`, bring up all adapters, and default to using the onboard radio for bike (central) and the first USB radio for server (peripheral). If two adapters are present, heart-rate rebroadcast is enabled automatically.
+- **Single-adapter fallback**: On original Pi Zero/Zero W (or when only one HCI is detected), power/cadence/speed/CSC still work, but heart-rate rebroadcast is disabled by default to avoid flapping scans/advertising on underpowered stacks. You can force-enable with `--heart-rate-enabled true` if you accept the risk.
+- **ANT+**: `--ant-auto` defaults to `true`; Gymnasticon will attempt ANT+ broadcasting whenever a compatible stick (e.g., Garmin USB-M 0fcf:1006/1008/1009) is seen. Use `--no-ant-plus` to turn it off explicitly.
+- **BlueZ refresh in images**: The pi-gen stage now installs/refreshes `bluez`, `bluez-firmware`, and `pi-bluetooth` on Pi 3/4/Zero 2/CM4 so dual-radio setups come up reliably even on old Buster bases.
+
 ## Troubleshooting and further reading
 
 - [Troubleshooting guide](docs/troubleshooting.md)

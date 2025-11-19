@@ -1,2 +1,5 @@
 libudev-dev
 watchdog
+bluez
+bluez-firmware
+pi-bluetooth

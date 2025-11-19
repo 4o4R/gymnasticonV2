@@ -73,6 +73,14 @@ systemctl start bluetooth # start Bluetooth during image build so adapters are c
 hciconfig hci0 up || true # bring the onboard Bluetooth adapter online when available
 hciconfig hci1 up || true # attempt to power on a second USB Bluetooth adapter
 
+# Upgrade BlueZ on boards that can reliably expose two adapters (Pi 3/4/Zero 2 W/CM4).
+MODEL="$(tr -d '\0' </proc/device-tree/model 2>/dev/null || echo '')"
+if echo "$MODEL" | grep -qiE 'raspberry pi 4|compute module 4|raspberry pi 3|raspberry pi zero 2'; then
+  apt-get update
+  apt-get install -y --no-install-recommends bluez bluez-firmware pi-bluetooth || true
+  systemctl restart bluetooth || true
+fi
+
 systemctl enable gymnasticon # launch Gymnasticon automatically
 systemctl enable gymnasticon-mods # ensure overlay modifications happen at startup
 systemctl enable gymnasticon-wifi-setup.service # run the Wi-Fi bootstrapper on every boot before networking so users never need HDMI/keyboard again

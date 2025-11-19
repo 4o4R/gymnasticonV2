@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 
 const BLUETOOTH_SYSFS = '/sys/class/bluetooth';
+const MODEL_PATH = '/proc/device-tree/model';
 
 function discoverAdapters() {
   if (!fs.existsSync(BLUETOOTH_SYSFS)) {
@@ -47,20 +48,27 @@ export function detectAdapters() {
     bikeAdapter: 'hci0',
     serverAdapter: 'hci0',
     antPresent: false,
+    multiAdapter: false,
+    adapters: [],
   };
 
   const adapters = discoverAdapters();
   bringUpAdapters(adapters);
+  summary.adapters = adapters.map(a => a.name);
 
   const builtin = adapters.filter((adapter) => adapter.type === 'builtin');
   const usb = adapters.filter((adapter) => adapter.type === 'usb');
+  const allowDual = allowMultiAdapterBoards();
 
   if (builtin.length >= 1) {
     summary.bikeAdapter = builtin[0].name;
-    summary.serverAdapter = usb[0]?.name || builtin[1]?.name || builtin[0].name;
+    summary.serverAdapter = allowDual && (usb[0]?.name || builtin[1]?.name) ? (usb[0]?.name || builtin[1]?.name) : builtin[0].name;
   } else if (usb.length >= 1) {
     summary.bikeAdapter = usb[0].name;
-    summary.serverAdapter = usb[1]?.name || usb[0].name;
+    summary.serverAdapter = allowDual && usb[1]?.name ? usb[1].name : usb[0].name;
+  }
+  if (allowDual && adapters.length >= 2) {
+    summary.multiAdapter = true;
   }
 
   try {
@@ -73,4 +81,20 @@ export function detectAdapters() {
   }
 
   return summary;
+}
+
+function allowMultiAdapterBoards() {
+  try {
+    const model = fs.readFileSync(MODEL_PATH, 'utf8').toLowerCase();
+    // Models known to expose stable dual-HCI setups on Buster when BlueZ/firmware are refreshed.
+    // Example strings:
+    //   "Raspberry Pi Zero 2 W Rev 1.0"
+    //   "Raspberry Pi 3 Model B Rev 1.2"
+    //   "Raspberry Pi 4 Model B Rev 1.4"
+    return model.includes('raspberry pi 4') ||
+           model.includes('raspberry pi 3') ||
+           model.includes('raspberry pi zero 2');
+  } catch (_) {
+    return false;
+  }
 }

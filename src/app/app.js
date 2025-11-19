@@ -30,9 +30,7 @@ import {createAntStick} from '../util/ant-stick.js'; // Factory for gd-ant-plus 
 import {estimateSpeedMps} from '../util/speed-estimator.js'; // Helper that estimates speed when bikes do not report it.
 import {nowSeconds} from '../util/time.js'; // Helper to get monotonic-ish timestamps in seconds.
 import {loadDependency, toDefaultExport} from '../util/optional-deps.js'; // Optional dependency loader with stub fallback support.
-import {detectAdapters} from '../util/adapter-detect.js'; // Reuse the same adapter probe logic the CLI uses so runtime decisions stay consistent.
 import {defaults as sharedDefaults} from './defaults.js'; // Lightweight defaults kept separate so CLI can set env vars before loading Bluetooth deps.
-import {isSingleAdapterMultiRoleCapable} from '../util/hardware-info.js'; // Detect boards (Pi Zero 2 W, Pi 3/4, etc.) that can safely scan + advertise on one radio.
 
 const nobleModule = loadDependency('@abandonware/noble', '../../stubs/noble.cjs', import.meta);
 const nobleDefault = toDefaultExport(nobleModule);
@@ -116,17 +114,14 @@ export class App {
     this.simulation = new Simulation();
     this.simulation.on('pedal', this.onPedalStroke.bind(this));
 
-    // Heart-rate capture defaults to "auto": when at least two adapters are
-    // available (or the board is on the single-adapter whitelist) we run the
-    // bridge with zero user interaction. Users can still force-enable or
-    // disable it via heartRateEnabled.
+    // Heart-rate capture: enable automatically only when we know two adapters are present.
     let heartRatePreference = null; // null => auto, true => force, false => disable.
     if (typeof opts.heartRateEnabled === 'boolean') {
       heartRatePreference = opts.heartRateEnabled;
     } else if (opts.heartRateDevice) {
       heartRatePreference = true; // requesting a specific device implies they want HR.
     }
-    const autoAllowed = this.shouldEnableHeartRate(opts);
+    const autoAllowed = Boolean(opts.multiAdapter); // Only dual-radio setups get HR by default.
     this.heartRateAutoPreference = heartRatePreference === null ? autoAllowed : (heartRatePreference && autoAllowed);
     if (this.heartRateAutoPreference) {
       const hrNoble = this.heartRateNoble;
@@ -443,56 +438,4 @@ export class App {
     }
   }
 
-  /**
-   * Decide whether the heart-rate rebroadcast subsystem should spin up
-   * automatically.  Safety rules:
-   *  - Always honor an explicit CLI/config override (`true` or `false`).
-   *  - Require *two* Bluetooth adapters (either explicitly assigned bike/server
-   *    radios or a combined count from detectAdapters) before enabling HR.
-   *    Sharing a single adapter for scanning + advertising is what causes bike
-   *    telemetry dropouts, so we avoid that hazard by default on every board.
-   */
-  shouldEnableHeartRate(options) {
-    if (typeof options.heartRateEnabled === 'boolean') {
-      return options.heartRateEnabled;
-    }
-
-    const configuredAdapters = new Set();
-    if (options.bikeAdapter) {
-      configuredAdapters.add(options.bikeAdapter);
-    }
-    if (options.serverAdapter) {
-      configuredAdapters.add(options.serverAdapter);
-    }
-
-    // User explicitly pointed the bike/server roles at two different adapters.
-    if (configuredAdapters.size >= 2 && options.bikeAdapter !== options.serverAdapter) {
-      return true;
-    }
-
-    const detected = detectAdapters(); // Probe the OS for every adapter (built-in + USB dongles).
-    for (const adapter of detected.adapters ?? []) {
-      configuredAdapters.add(adapter);
-    }
-
-    if (configuredAdapters.size >= 2) {
-      return true; // Hot-plugging a second adapter (even without explicit CLI overrides) is enough to safely run HR.
-    }
-
-    // At this point we only see a single adapter.  Some radios (Pi Zero 2 W,
-    // Pi 3/4, Pi 400, CM4) handle simultaneous scan+advertise just fine, so we
-    // whitelist those boards to make heart-rate rebroadcast automatic on
-    // higher-end hardware while keeping the fragile Pi Zero W family disabled.
-    if (configuredAdapters.size === 1) {
-      const capability = isSingleAdapterMultiRoleCapable();
-      if (capability.capable) {
-        this.logger.log(`Heart-rate auto-enabled on single adapter (${capability.model ?? capability.reason})`);
-        return true;
-      }
-    }
-
-    // Reaching this point means only a single adapter is visible, regardless of Pi model.
-    // Running HR on the same radio would disrupt bike comms, so we keep it off.
-    return false;
-  }
 }

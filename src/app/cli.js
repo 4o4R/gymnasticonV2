@@ -30,7 +30,6 @@ import { hideBin } from 'yargs/helpers';  // Removes Node.js binary path from ar
 import { options as cliOptions } from './cli-options.js'; // Command line option definitions
 import { detectAdapters } from '../util/adapter-detect.js'; // Auto-detect Bluetooth and ANT+ adapters when the user does not specify them
 import { initializeBluetooth } from '../util/noble-wrapper.js'; // Bluetooth initialization (runs after we set adapter env vars)
-import { isSingleAdapterMultiRoleCapable } from '../util/hardware-info.js'; // Hardware helper to detect whether one adapter can safely scan + advertise.
 
 /**
  * Convert a kebab-case CLI option name into the camelCase property that yargs
@@ -147,33 +146,15 @@ const main = async () => {
     delete argv.speedMin;
     delete argv.speedMax;
 
-    const adapterPool = new Set(discovery.adapters ?? []); // Track every adapter we can see so far.
-    if (argv.bikeAdapter) adapterPool.add(argv.bikeAdapter);
+    const adapterPool = new Set(discovery.adapters ?? []); // All HCIs we detected via sysfs.
+    if (argv.bikeAdapter) adapterPool.add(argv.bikeAdapter); // Include overrides supplied by config/CLI to keep the count honest.
     if (argv.serverAdapter) adapterPool.add(argv.serverAdapter);
-    const hasMultiAdapter = adapterPool.size >= 2; // True when at least two radios are available (dedicated scan/advertise roles).
-    const singleAdapterCapability = isSingleAdapterMultiRoleCapable();
-    const canSingleAdapterHandleHr = adapterPool.size === 1 && singleAdapterCapability.capable;
-    const canAutoEnableHr = hasMultiAdapter || canSingleAdapterHandleHr;
-
-    if (!argv.heartRateAdapter) {
-        const detectedAdapters = discovery.adapters ?? [];
-        const candidateAdapter = detectedAdapters.find(
-            (adapter) => adapter !== argv.bikeAdapter && adapter !== argv.serverAdapter
-        );
-        if (candidateAdapter) {
-            argv.heartRateAdapter = candidateAdapter; // Prefer an unused adapter when a second radio is present.
-        }
-    }
-
-    // If we see two adapters, automatically enable the heart-rate bridge (safe on dual-radio setups).
-    // This mirrors what most users want on Pi Zero 2 W + USB dongle without manual config.
-    if (argv.heartRateEnabled === undefined && (canAutoEnableHr || hasMultiAdapter)) {
+    const hasMultiAdapter = discovery.multiAdapter || adapterPool.size >= 2; // Treat either detected dual-HCI or explicit dual overrides as “multi”.
+    argv.multiAdapter = hasMultiAdapter; // Pass through to the App so runtime decisions stay consistent with the CLI.
+    if (!hasMultiAdapter) { // On single-radio setups with older BlueZ, avoid flapping scans/ads by disabling HR bridge automatically.
+        argv.heartRateEnabled = false;
+    } else if (argv.heartRateEnabled === undefined) { // Only auto-enable HR when we are confident two adapters exist.
         argv.heartRateEnabled = true;
-    }
-
-    // If the user explicitly named an HR device but we still only have one adapter, warn them.
-    if (argv.heartRateDevice && argv.heartRateEnabled === undefined && !canAutoEnableHr) {
-        console.warn('[Gymnasticon] Heart-rate device requested but only one adapter detected. Attach a second radio or set --heart-rate-enabled true after confirming stability. (Hint: export GYMNASTICON_SINGLE_ADAPTER_HR=1 to override on trusted hardware.)');
     }
 
     const configPath = argv.configPath || argv.config || '/etc/gymnasticon.json'; // Support both legacy --config and explicit --config-path.
