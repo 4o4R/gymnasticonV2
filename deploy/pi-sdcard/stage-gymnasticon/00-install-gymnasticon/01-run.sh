@@ -1,118 +1,120 @@
 #!/bin/bash -e
-# fail fast inside the pi-gen stage so build issues surface immediately
+# Stage script that prepares the pi-gen image with Gymnasticon, Node, Bluetooth
+# helpers, watchdog, and systemd services so the flashed disk boots ready to ride.
 
-NODE_VERSION=14.21.3 # pin the bundled Node runtime to the Raspberry Pi Zero-compatible release
-NODE_SHASUM256= # placeholder for an optional checksum should we decide to verify downloads later
-NODE_ARCHIVE="node-v${NODE_VERSION}-linux-armv6l.tar.xz" # archive filename provided by the unofficial armv6 build server
-NODE_URL="https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/${NODE_ARCHIVE}" # download URL for the Node runtime
-GYMNASTICON_USER=${FIRST_USER_NAME} # reuse the default pi-gen user
-GYMNASTICON_GROUP=${FIRST_USER_NAME} # align the group with the chosen user
+NODE_VERSION=14.21.3  # Node.js build compatible with Pi Zero/Zero W (ARMv6)
+NODE_SHASUM256=       # optional checksum when we want to verify downloads again
+NODE_ARCHIVE="node-v${NODE_VERSION}-linux-armv6l.tar.xz"
+NODE_URL="https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/${NODE_ARCHIVE}"
+GYMNASTICON_USER=${FIRST_USER_NAME}  # default pi-gen user
+GYMNASTICON_GROUP=${FIRST_USER_NAME} # keep npm install permissions aligned
 
-if [ ! -x "${ROOTFS_DIR}/opt/gymnasticon/node/bin/node" ] ; then # skip the install if Node already exists
-  TMPD=$(mktemp -d) # temp directory to hold the download
-  trap 'rm -rf $TMPD' EXIT # ensure the temporary directory is cleaned up on exit
-  curl -Lo "$TMPD/node.tar.xz" "${NODE_URL}" # retrieve the Node archive quietly but fail on network errors
-  if [ -n "$NODE_SHASUM256" ]; then # perform checksum verification when a hash is available
-    sha256sum -c <(echo "$NODE_SHASUM256 $TMPD/node.tar.xz") # check the archive hash against the provided value
+# Download and extract Node.js into /opt/gymnasticon/node when missing.
+if [ ! -x "${ROOTFS_DIR}/opt/gymnasticon/node/bin/node" ] ; then
+  TMPD=$(mktemp -d)
+  trap 'rm -rf $TMPD' EXIT
+  curl -Lo "$TMPD/node.tar.xz" "${NODE_URL}"
+  if [ -n "$NODE_SHASUM256" ]; then
+    sha256sum -c <(echo "$NODE_SHASUM256 $TMPD/node.tar.xz")
   else
-    echo "Skipping Node.js tarball checksum verification (no hash provided)" # log that the checksum step is intentionally skipped
+    echo "Skipping Node.js tarball checksum verification (no hash provided)"
   fi
-  install -v -m 644 "$TMPD/node.tar.xz" "${ROOTFS_DIR}/tmp/node.tar.xz" # stage the archive within the target root filesystem
-  on_chroot <<EOF
-    mkdir -p /opt/gymnasticon/node # prepare the Node runtime directory
-    cd /opt/gymnasticon/node # enter the runtime directory before extraction
-    tar --strip-components=1 -xJf /tmp/node.tar.xz # unpack the .tar.xz archive and drop the leading folder
-    chown -R "${GYMNASTICON_USER}:${GYMNASTICON_GROUP}" /opt/gymnasticon # give ownership to the default user so npm installs work without sudo
-    echo "export PATH=/opt/gymnasticon/bin:/opt/gymnasticon/node/bin:\$PATH" >> /home/pi/.profile # make both the shim (bin) and the bundled Node runtime available in shells for debugging
-    echo "raspi-config nonint get_overlay_now || export PROMPT_COMMAND=\"echo  -e '\033[1m(rw-mode)\033[0m\c'\"" >> /home/pi/.profile # keep the overlayfs prompt helper
-    echo "overctl -s" >> /home/pi/.profile # show overlay mount status on login
-EOF
+  install -v -m 644 "$TMPD/node.tar.xz" "${ROOTFS_DIR}/tmp/node.tar.xz"
+  on_chroot <<'NODE_EOF'
+    mkdir -p /opt/gymnasticon/node
+    cd /opt/gymnasticon/node
+    tar --strip-components=1 -xJf /tmp/node.tar.xz
+    chown -R "${GYMNASTICON_USER}:${GYMNASTICON_GROUP}" /opt/gymnasticon
+    echo "export PATH=/opt/gymnasticon/bin:/opt/gymnasticon/node/bin:\$PATH" >> /home/pi/.profile
+    echo "raspi-config nonint get_overlay_now || export PROMPT_COMMAND=\"echo  -e '\033[1m(rw-mode)\033[0m\c'\"" >> /home/pi/.profile
+    echo "overctl -s" >> /home/pi/.profile
+NODE_EOF
 fi
 
-install -v -m 644 files/gymnasticon-src.tar.gz "${ROOTFS_DIR}/tmp/gymnasticon-src.tar.gz" # copy the freshly-built source bundle from the stage files into the target rootfs
-on_chroot <<EOF
-  set -e # stop immediately if any extraction step fails so we do not leave a half-installed tree
-  APP_ROOT="/opt/gymnasticon/app" # keep the application code under /opt/gymnasticon/app to separate it from the bundled runtime
-  mkdir -p "\${APP_ROOT}" # ensure the application directory exists before we extract files
-  tar -xzf /tmp/gymnasticon-src.tar.gz -C "\${APP_ROOT}" # unpack the repo snapshot directly into the application directory
-  chown -R "${GYMNASTICON_USER}:${GYMNASTICON_GROUP}" /opt/gymnasticon # hand ownership of the entire /opt/gymnasticon tree to the default user for easier maintenance
-  rm -f /tmp/gymnasticon-src.tar.gz # remove the temporary archive now that the contents are in place to save space
-  ln -sf /etc/gymnasticon.json "\${APP_ROOT}/gymnasticon.json" # expose the live config file inside the repo so docs referencing /opt/gymnasticon/gymnasticon.json remain accurate
-  ln -sf /etc/gymnasticon.json /opt/gymnasticon/gymnasticon.json # also provide a top-level shortcut for users who expect the legacy path
-EOF
+# Extract the bundled Gymnasticon source into /opt/gymnasticon/app.
+install -v -m 644 files/gymnasticon-src.tar.gz "${ROOTFS_DIR}/tmp/gymnasticon-src.tar.gz"
+on_chroot <<'APP_EOF'
+  set -e
+  APP_ROOT="/opt/gymnasticon/app"
+  mkdir -p "${APP_ROOT}"
+  tar -xzf /tmp/gymnasticon-src.tar.gz -C "${APP_ROOT}"
+  chown -R "${GYMNASTICON_USER}:${GYMNASTICON_GROUP}" /opt/gymnasticon
+  rm -f /tmp/gymnasticon-src.tar.gz
+  ln -sf /etc/gymnasticon.json "${APP_ROOT}/gymnasticon.json"
+  ln -sf /etc/gymnasticon.json /opt/gymnasticon/gymnasticon.json
+APP_EOF
 
-on_chroot <<EOF
-su ${GYMNASTICON_USER} -c 'export PATH=/opt/gymnasticon/node/bin:\$PATH; cd /opt/gymnasticon/app; CXXFLAGS="-std=gnu++14" npm install --omit=dev' # install production dependencies inside the unpacked repo using the bundled Node toolchain
-EOF
+# Install production dependencies using the bundled Node runtime.
+on_chroot <<'NPM_EOF'
+  su ${GYMNASTICON_USER} -c 'export PATH=/opt/gymnasticon/node/bin:\$PATH; cd /opt/gymnasticon/app; CXXFLAGS="-std=gnu++14" npm install --omit=dev'
+NPM_EOF
 
-install -v -m 644 files/gymnasticon.json "${ROOTFS_DIR}/etc/gymnasticon.json" # seed the default runtime configuration file
-install -d -m 755 "${ROOTFS_DIR}/opt/gymnasticon/bin" # create a dedicated bin directory for helper scripts exposed to users
-install -v -m 755 files/gymnasticon-wrapper.sh "${ROOTFS_DIR}/opt/gymnasticon/bin/gymnasticon" # drop the commented wrapper that launches the CLI with the bundled Node runtime
-install -v -m 644 files/gymnasticon.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon.service" # ship the main systemd service unit
-install -v -m 644 files/gymnasticon-mods.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon-mods.service" # include the overlay adjustments service
-install -v -m 755 files/gymnasticon-wifi-setup.sh "${ROOTFS_DIR}/usr/local/sbin/gymnasticon-wifi-setup.sh" # copy the Wi-Fi bootstrap helper that reads /boot/gymnasticon-wifi.env
-install -v -m 644 files/gymnasticon-wifi-setup.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon-wifi-setup.service" # register the systemd unit that runs the helper before networking
-install -v -m 644 files/gymnasticon-wifi.env.example "${ROOTFS_DIR}/boot/gymnasticon-wifi.env.example" # drop a template on the boot partition so users know how to headlessly configure Wi-Fi
-install -d -m 755 "${ROOTFS_DIR}/lib/firmware/brcm" # ensure the target firmware directory exists for Bluetooth patch files
-install -v -m 644 files/firmware/brcm/BCM20702A1-0a5c-21e8.hcd "${ROOTFS_DIR}/lib/firmware/brcm/" # bundle the Broadcom BCM20702A1 firmware so CSR-based USB dongles work offline
-install -v -m 644 files/btusb.conf "${ROOTFS_DIR}/etc/modprobe.d/btusb.conf" # force btusb to reset and disable autosuspend to reduce patch-load failures on some dongles
+# Deploy helper scripts, services, and firmware/udev assets.
+install -v -m 644 files/gymnasticon.json "${ROOTFS_DIR}/etc/gymnasticon.json"
+install -d -m 755 "${ROOTFS_DIR}/opt/gymnasticon/bin"
+install -v -m 755 files/gymnasticon-wrapper.sh "${ROOTFS_DIR}/opt/gymnasticon/bin/gymnasticon"
+install -v -m 644 files/gymnasticon.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon.service"
+install -v -m 644 files/gymnasticon-mods.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon-mods.service"
+install -v -m 755 files/gymnasticon-wifi-setup.sh "${ROOTFS_DIR}/usr/local/sbin/gymnasticon-wifi-setup.sh"
+install -v -m 644 files/gymnasticon-wifi-setup.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon-wifi-setup.service"
+install -v -m 644 files/gymnasticon-wifi.env.example "${ROOTFS_DIR}/boot/gymnasticon-wifi.env.example"
+install -d -m 755 "${ROOTFS_DIR}/lib/firmware/brcm"
+install -v -m 644 files/firmware/brcm/BCM20702A1-0a5c-21e8.hcd "${ROOTFS_DIR}/lib/firmware/brcm/"
+install -v -m 644 files/btusb.conf "${ROOTFS_DIR}/etc/modprobe.d/btusb.conf"
+install -v -m 644 files/lockrootfs.service "${ROOTFS_DIR}/etc/systemd/system/lockrootfs.service"
+install -v -m 644 files/bootfs-ro.service "${ROOTFS_DIR}/etc/systemd/system/bootfs-ro.service"
+install -v -m 644 files/overlayfs.sh "${ROOTFS_DIR}/etc/profile.d/overlayfs.sh"
+install -v -m 755 files/overctl "${ROOTFS_DIR}/usr/local/sbin/overctl"
+install -v -m 644 files/watchdog.conf "${ROOTFS_DIR}/etc/watchdog.conf"
 
-install -v -m 644 files/lockrootfs.service "${ROOTFS_DIR}/etc/systemd/system/lockrootfs.service" # add the root filesystem lock service
-install -v -m 644 files/bootfs-ro.service "${ROOTFS_DIR}/etc/systemd/system/bootfs-ro.service" # mount /boot read-only after boot
-install -v -m 644 files/overlayfs.sh "${ROOTFS_DIR}/etc/profile.d/overlayfs.sh" # expose overlayfs helper functions in shells
-install -v -m 755 files/overctl "${ROOTFS_DIR}/usr/local/sbin/overctl" # install the overlay control command
+# Configure Bluetooth, watchdog, and system settings from inside the chroot.
+on_chroot <<'CHROOT_EOF'
+echo 'dtparam=watchdog=on' >> /boot/config.txt
+systemctl enable watchdog
 
-install -v -m 644 files/watchdog.conf "${ROOTFS_DIR}/etc/watchdog.conf" # configure the watchdog daemon
+systemctl enable bluetooth
+systemctl start bluetooth
+hciconfig hci0 up || true
+hciconfig hci1 up || true
 
-on_chroot <<EOF
-echo 'dtparam=watchdog=on' >> /boot/config.txt # enable the hardware watchdog in firmware
-systemctl enable watchdog # start the watchdog on boot
-
-systemctl enable bluetooth # ensure BlueZ starts automatically after boot
-systemctl start bluetooth # start Bluetooth during image build so adapters are configured
-hciconfig hci0 up || true # bring the onboard Bluetooth adapter online when available
-hciconfig hci1 up || true # attempt to power on a second USB Bluetooth adapter
-
-# Upgrade BlueZ on boards that can reliably expose two adapters (Pi 3/4/Zero 2 W/CM4).
 MODEL="$(tr -d '\0' </proc/device-tree/model 2>/dev/null || echo '')"
-  if echo "$MODEL" | grep -qiE 'raspberry pi 4|compute module 4|raspberry pi 3|raspberry pi zero 2'; then
-    apt-get update
-    apt-get install -y --no-install-recommends bluez bluez-firmware pi-bluetooth || true
-    systemctl restart bluetooth || true
-  fi
+if echo "$MODEL" | grep -qiE 'raspberry pi 4|compute module 4|raspberry pi 3|raspberry pi zero 2'; then
+  apt-get update
+  apt-get install -y --no-install-recommends bluez bluez-firmware pi-bluetooth || true
+  systemctl restart bluetooth || true
+fi
 
-systemctl enable gymnasticon # launch Gymnasticon automatically
-systemctl enable gymnasticon-mods # ensure overlay modifications happen at startup
-systemctl enable gymnasticon-wifi-setup.service # run the Wi-Fi bootstrapper on every boot before networking so users never need HDMI/keyboard again
+systemctl enable gymnasticon
+systemctl enable gymnasticon-mods
+systemctl enable gymnasticon-wifi-setup.service
 
-systemctl enable lockrootfs # switch the root filesystem to read-only
+systemctl enable lockrootfs
 
-dphys-swapfile swapoff # disable swap for better SD longevity
-dphys-swapfile uninstall # remove the swap file entirely
-systemctl disable dphys-swapfile.service # keep the swap service from coming back
-apt-get remove -y --purge logrotate fake-hwclock rsyslog # drop high-write services that cause SD wear
+dphys-swapfile swapoff
+dphys-swapfile uninstall
+systemctl disable dphys-swapfile.service
+apt-get remove -y --purge logrotate fake-hwclock rsyslog
 
-setcap cap_net_raw+eip /opt/gymnasticon/node/bin/node || true # allow the bundled Node runtime to open raw BLE sockets
+setcap cap_net_raw+eip /opt/gymnasticon/node/bin/node || true
 
-WIFI_COUNTRY=${WPA_COUNTRY:-US} # fall back to a sane default when no country code is provided
-
-  mkdir -p /etc/systemd/system/getty@tty1.service.d
-  cat >/etc/systemd/system/getty@tty1.service.d/override.conf <<'GETTY_OVERRIDE'
+WIFI_COUNTRY=${WPA_COUNTRY:-US}
+mkdir -p /etc/systemd/system/getty@tty1.service.d
+cat >/etc/systemd/system/getty@tty1.service.d/override.conf <<'GETTY_OVERRIDE'
 [Service]
 ExecStart=
 ExecStart=-/sbin/agetty --autologin ${FIRST_USER_NAME} --noclear %I \$TERM
 GETTY_OVERRIDE
-  systemctl daemon-reload
+systemctl daemon-reload
 
-  raspi-config nonint do_wifi_country "${WIFI_COUNTRY}" || true # ensure radios are unblocked on first boot
-  rfkill unblock all || true # double-check that Bluetooth/Wi-Fi are free to start
+raspi-config nonint do_wifi_country "${WIFI_COUNTRY}" || true
+rfkill unblock all || true
+CHROOT_EOF
 
-EOF
-
+# Ensure the UART overlay lines remain in the read-only boot partition.
 if [ -f "${ROOTFS_DIR}/boot/config.txt" ]; then
   grep -q '^enable_uart=1' "${ROOTFS_DIR}/boot/config.txt" || printf '\nenable_uart=1\n' >> "${ROOTFS_DIR}/boot/config.txt"
   grep -q '^dtoverlay=miniuart-bt' "${ROOTFS_DIR}/boot/config.txt" || printf 'dtoverlay=miniuart-bt\n' >> "${ROOTFS_DIR}/boot/config.txt"
 fi
 
-install -v -m 644 files/motd "${ROOTFS_DIR}/etc/motd" # customize the login banner
-install -v -m 644 files/51-garmin-usb.rules "${ROOTFS_DIR}/etc/udev/rules.d/51-garmin-usb.rules" # add udev rules for Garmin ANT+ USB sticks
+install -v -m 644 files/motd "${ROOTFS_DIR}/etc/motd"
+install -v -m 644 files/51-garmin-usb.rules "${ROOTFS_DIR}/etc/udev/rules.d/51-garmin-usb.rules"
