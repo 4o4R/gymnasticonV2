@@ -46,7 +46,8 @@ APP_EOF
 
 # Install production dependencies using the bundled Node runtime.
 on_chroot <<'NPM_EOF'
-  su ${GYMNASTICON_USER} -c 'export PATH=/opt/gymnasticon/node/bin:\$PATH; cd /opt/gymnasticon/app; CXXFLAGS="-std=gnu++14" npm install --omit=dev'
+  # Force a full PATH so node-gyp-build can always find a shell inside qemu-user
+  su ${GYMNASTICON_USER} -c 'export PATH=/bin:/usr/bin:/usr/local/bin:/opt/gymnasticon/node/bin:/sbin:/usr/sbin:\$PATH; cd /opt/gymnasticon/app; CXXFLAGS="-std=gnu++14" npm install --omit=dev'
 NPM_EOF
 
 # Deploy helper scripts, services, and firmware/udev assets.
