@@ -3,3 +3,8 @@ watchdog
 bluez
 bluez-firmware
 pi-bluetooth
+build-essential
+python3
+python-is-python3
+pkg-config
+libusb-1.0-0-dev
