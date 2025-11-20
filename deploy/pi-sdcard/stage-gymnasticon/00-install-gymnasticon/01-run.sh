@@ -28,6 +28,10 @@ if [ ! -x "${ROOTFS_DIR}/opt/gymnasticon/node/bin/node" ] ; then
     echo "export PATH=/opt/gymnasticon/bin:/opt/gymnasticon/node/bin:\$PATH" >> /home/pi/.profile
     echo "raspi-config nonint get_overlay_now || export PROMPT_COMMAND=\"echo  -e '\033[1m(rw-mode)\033[0m\c'\"" >> /home/pi/.profile
     echo "overctl -s" >> /home/pi/.profile
+    # Python 3.11 (Bookworm) removes the 'rU' universal newline mode used by the bundled node-gyp.
+    # Patch node-gyp in place so native modules build cleanly during npm install.
+    find /opt/gymnasticon/node/lib/node_modules/npm/node_modules/node-gyp -type f -name '*.py' -print0 \
+      | xargs -0 sed -i "s/'rU'/'r'/g"
 NODE_EOF
 fi
 
