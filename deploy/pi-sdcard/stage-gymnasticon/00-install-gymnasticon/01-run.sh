@@ -117,10 +117,11 @@ setcap cap_net_raw+eip /opt/gymnasticon/node/bin/node || true
 
 WIFI_COUNTRY=${WPA_COUNTRY:-US}
 mkdir -p /etc/systemd/system/getty@tty1.service.d
-cat >/etc/systemd/system/getty@tty1.service.d/override.conf <<'GETTY_OVERRIDE'
+AUTOLOGIN_USER=${FIRST_USER_NAME:-pi}
+cat >/etc/systemd/system/getty@tty1.service.d/override.conf <<GETTY_OVERRIDE
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty --autologin ${FIRST_USER_NAME} --noclear %I \$TERM
+ExecStart=-/sbin/agetty --autologin ${AUTOLOGIN_USER} --noclear %I \$TERM
 GETTY_OVERRIDE
 systemctl daemon-reload
 
