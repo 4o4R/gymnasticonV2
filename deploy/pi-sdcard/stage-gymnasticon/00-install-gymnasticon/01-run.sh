@@ -67,6 +67,10 @@ install -v -m 644 files/bootfs-ro.service "${ROOTFS_DIR}/etc/systemd/system/boot
 install -v -m 644 files/overlayfs.sh "${ROOTFS_DIR}/etc/profile.d/overlayfs.sh"
 install -v -m 755 files/overctl "${ROOTFS_DIR}/usr/local/sbin/overctl"
 install -v -m 644 files/watchdog.conf "${ROOTFS_DIR}/etc/watchdog.conf"
+# Ensure onboard BT firmware exists in both /lib/firmware and the legacy /etc/firmware path.
+install -v -d -m 755 "${ROOTFS_DIR}/etc/firmware/brcm"
+install -v -m 644 /lib/firmware/brcm/BCM43430A1.hcd "${ROOTFS_DIR}/lib/firmware/brcm/" || true
+ln -sf /lib/firmware "${ROOTFS_DIR}/etc/firmware" || true
 
 # Configure Bluetooth, watchdog, and system settings from inside the chroot.
 on_chroot <<'CHROOT_EOF'
@@ -168,7 +172,7 @@ CHROOT_ENABLE
 # Ensure the UART overlay lines remain in the read-only boot partition.
 if [ -f "${ROOTFS_DIR}/boot/config.txt" ]; then
   grep -q '^enable_uart=1' "${ROOTFS_DIR}/boot/config.txt" || printf '\nenable_uart=1\n' >> "${ROOTFS_DIR}/boot/config.txt"
-  grep -q '^dtoverlay=miniuart-bt' "${ROOTFS_DIR}/boot/config.txt" || printf 'dtoverlay=miniuart-bt\n' >> "${ROOTFS_DIR}/boot/config.txt"
+  grep -q '^dtoverlay=pi3-miniuart-bt' "${ROOTFS_DIR}/boot/config.txt" || printf 'dtoverlay=pi3-miniuart-bt\n' >> "${ROOTFS_DIR}/boot/config.txt"
 fi
 
 install -v -m 644 files/motd "${ROOTFS_DIR}/etc/motd"
