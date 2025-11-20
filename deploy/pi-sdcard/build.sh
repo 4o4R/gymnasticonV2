@@ -1,6 +1,19 @@
 #!/bin/bash -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # path to deploy/pi-sdcard
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)" # repository root (contains src/, package.json, etc.)
+CONFIG_FILE="${SCRIPT_DIR}/config"
+if [ -n "${GYM_CONFIG}" ]; then
+  CONFIG_FILE="${SCRIPT_DIR}/${GYM_CONFIG}"
+fi
+if [ ! -f "${CONFIG_FILE}" ]; then
+  echo "Config file not found: ${CONFIG_FILE}" >&2
+  exit 1
+fi
+RELEASE="$(grep '^RELEASE=' "${CONFIG_FILE}" | tail -n1 | cut -d= -f2)"
+PI_GEN_BRANCH=""
+if [ "${RELEASE}" = "buster" ]; then
+  PI_GEN_BRANCH="2020-02-13-raspbian-buster"
+fi
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker is required to build the Raspberry Pi image. Please install Docker Desktop (with WSL2 integration) or the Linux docker engine before rerunning build.sh."
   exit 1
@@ -19,10 +32,13 @@ if [ -d "pi-gen" ]; then
 fi
 git clone https://github.com/RPi-Distro/pi-gen
 cd pi-gen
-git fetch
-git fetch --tags
-git checkout 2020-02-13-raspbian-buster
-python3 - <<'PY' # rewrite the Dockerfile so apt pulls from the Debian archive mirrors and ignores expired Release metadata
+if [ -n "${PI_GEN_BRANCH}" ]; then
+  git fetch
+  git fetch --tags
+  git checkout "${PI_GEN_BRANCH}"
+fi
+if [ "${RELEASE}" = "buster" ]; then
+python3 - <<'PY' # rewrite the Dockerfile so apt pulls from the Debian archive mirrors and ignores expired Release metadata for legacy Buster builds
 from pathlib import Path # use pathlib for concise file IO
 
 dockerfile = Path('Dockerfile') # reference the pi-gen Dockerfile we just checked out
@@ -152,7 +168,8 @@ net_tweaks_run.write_text(
 net_tweaks_run.chmod(0o755)
 
 PY
-cp ../config config
+fi
+cp "${CONFIG_FILE}" config
 cp -a ../stage-gymnasticon stage-gymnasticon
 # Mirror any pre-packaged firmware blobs (e.g., Broadcom Bluetooth patches) into
 # the stage files tree so the image ships them even without Internet access.

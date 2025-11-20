@@ -72,15 +72,26 @@ install -v -d -m 755 "${ROOTFS_DIR}/etc/firmware/brcm"
 install -v -m 644 /lib/firmware/brcm/BCM43430A1.hcd "${ROOTFS_DIR}/lib/firmware/brcm/" || true
 ln -sf /lib/firmware "${ROOTFS_DIR}/etc/firmware" || true
 
+# Detect availability of the miniuart BT overlay so we only turn on onboard BT when the dtbo exists (modern images).
+MINIUART_OVERLAY="miniuart-bt"
+ENABLE_MINIUART_BT=0
+if [ -f "${ROOTFS_DIR}/boot/overlays/${MINIUART_OVERLAY}.dtbo" ]; then
+  ENABLE_MINIUART_BT=1
+else
+  echo "Skipping ${MINIUART_OVERLAY} overlay (dtbo missing in this release); relying on USB BT only."
+fi
+
 # Configure Bluetooth, watchdog, and system settings from inside the chroot.
-on_chroot <<'CHROOT_EOF'
+ENABLE_MINIUART_BT=${ENABLE_MINIUART_BT} MINIUART_OVERLAY=${MINIUART_OVERLAY} on_chroot <<'CHROOT_EOF'
 echo 'dtparam=watchdog=on' >> /boot/config.txt
 systemctl enable watchdog
 
 systemctl enable bluetooth
 systemctl start bluetooth
-systemctl enable hciuart || true
-systemctl start hciuart || true
+if [ "${ENABLE_MINIUART_BT}" = "1" ]; then
+  systemctl enable hciuart || true
+  systemctl start hciuart || true
+fi
 hciconfig hci0 up || true
 hciconfig hci1 up || true
 
@@ -170,9 +181,9 @@ systemctl enable gymnasticon-bt-reprobe.service
 CHROOT_ENABLE
 
 # Ensure the UART overlay lines remain in the read-only boot partition.
-if [ -f "${ROOTFS_DIR}/boot/config.txt" ]; then
+if [ -f "${ROOTFS_DIR}/boot/config.txt" ] && [ "${ENABLE_MINIUART_BT}" = "1" ]; then
   grep -q '^enable_uart=1' "${ROOTFS_DIR}/boot/config.txt" || printf '\nenable_uart=1\n' >> "${ROOTFS_DIR}/boot/config.txt"
-  grep -q '^dtoverlay=pi3-miniuart-bt' "${ROOTFS_DIR}/boot/config.txt" || printf 'dtoverlay=pi3-miniuart-bt\n' >> "${ROOTFS_DIR}/boot/config.txt"
+  grep -q "^dtoverlay=${MINIUART_OVERLAY}" "${ROOTFS_DIR}/boot/config.txt" || printf "dtoverlay=${MINIUART_OVERLAY}\n" >> "${ROOTFS_DIR}/boot/config.txt"
 fi
 
 install -v -m 644 files/motd "${ROOTFS_DIR}/etc/motd"

@@ -28,7 +28,14 @@ Follow the steps below to create the Gymnasticon Raspberry Pi SD/SSD card image 
 4. From the repository root, launch the build helper:
    ```bash
    cd ~/gymnasticonV2
-   bash scripts/build-pi-image.sh
+   # Build the modern Bookworm image (Zero 2 W / Pi 3 / 4 / 400 / CM)
+   GYM_CONFIG=config.bookworm bash scripts/build-pi-image.sh
+
+   # Build the legacy Buster image (Zero / Zero W with USB BT dongle)
+   GYM_CONFIG=config.buster bash scripts/build-pi-image.sh
+
+   # Or build both back-to-back
+   deploy/pi-sdcard/build-all.sh
    ```
    - The wrapper clones Raspberry Pi's `pi-gen` project, applies Gymnasticon's stages, and starts the Docker build.
    - A full build takes 20-40 minutes on most machines. The script prints progress as each pi-gen stage finishes.
@@ -37,13 +44,12 @@ Follow the steps below to create the Gymnasticon Raspberry Pi SD/SSD card image 
 
 After the build completes, the compressed disk image and SHA256 sums live under:
 
-- `deploy/pi-sdcard/pi-gen/deploy/gymnasticon-raspberrypi.img`
-- `deploy/pi-sdcard/pi-gen/deploy/gymnasticon-raspberrypi.img.xz`
-- `deploy/pi-sdcard/pi-gen/deploy/gymnasticon-raspberrypi.img.xz.sha256`
+- Modern Bookworm: `deploy/pi-sdcard/pi-gen/deploy/Gymnasticon-modern-*.img.xz`
+- Legacy Buster: `deploy/pi-sdcard/pi-gen/deploy/Gymnasticon-legacy-*.img.xz`
 
 You can copy the `.img.xz` (or the raw `.img` if you prefer) onto your Windows filesystem, for example:
 
 ```bash
-cp deploy/pi-sdcard/pi-gen/deploy/gymnasticon-raspberrypi.img.xz /mnt/c/Users/James/Downloads/
+cp deploy/pi-sdcard/pi-gen/deploy/Gymnasticon-modern-*.img.xz /mnt/c/Users/James/Downloads/
 ```
 You can then clone this to an an SD card to use in your Rasberry Pi.

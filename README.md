@@ -27,22 +27,29 @@ Each option is detailed below. New users typically choose Option 1 or 2.
 
 ### Option 1 - Use the prebuilt Raspberry Pi image
 
-The image is based on Raspberry Pi OS Buster and boots directly into Gymnasticon. Recommended for Raspberry Pi Zero/Zero W/Zero 2 W/3/4.
+There are now two images so both old Zeros and newer boards “just work”:
+- **Modern (Bookworm)**: Raspberry Pi Zero 2 W, Pi 3/4/400/CM. Onboard Bluetooth is enabled automatically.
+- **Legacy (Buster)**: Raspberry Pi Zero / Zero W. Uses the USB Bluetooth dongle; onboard BT is not available on this stack.
 
 **Prerequisites**
-- Raspberry Pi Zero W, Zero 2 W, Pi 3, or Pi 4 (Pi 5 requires Option 2).
+- Pick the image for your board:
+  - Zero 2 W / 3 / 4 / CM: Modern image.
+  - Zero / Zero W: Legacy image (bring a USB BLE dongle).
+  - Pi 5: use Option 2 (installer) until a Pi 5-specific image is published.
 - 4 GB or larger micro-SD (or SSD with a USB adapter).
 - Computer with SD writer and flashing software (Raspberry Pi Imager, balenaEtcher, or `dd`).
 
 **Steps**
-1. Download `gymnasticon-raspberrypi.img.xz` from the [latest release](https://github.com/4o4R/gymnasticonV2/releases/latest).
+1. Download the right file from the [latest release](https://github.com/4o4R/gymnasticonV2/releases/latest):
+   - Modern: `Gymnasticon-modern-*.img.xz`
+   - Legacy: `Gymnasticon-legacy-*.img.xz`
 2. (Recommended) Verify the checksum from the release assets:
    ```bash
-   sha256sum gymnasticon-raspberrypi.img.xz
+   sha256sum Gymnasticon-*-*.img.xz
    ```
 3. Flash the archive with Raspberry Pi Imager (Use custom -> select the `.img.xz`) or `dd`.
-4. Optional: copy `gymnasticon-wifi.env.example` from the boot partition to `gymnasticon-wifi.env`, fill in `WIFI_COUNTRY`, `WIFI_SSID`, and `WIFI_PSK`, and the image will automatically unblock Wi-Fi and join your network on first boot—no HDMI, keyboard, or raspi-config required.
-5. Optional: copy a `gymnasticon.json` config into the boot partition to pre-set your bike profile.
+4. Optional (Wi-Fi headless): copy `gymnasticon-wifi.env.example` from the boot partition to `gymnasticon-wifi.env`, fill in `WIFI_COUNTRY`, `WIFI_SSID`, and `WIFI_PSK`. The Pi will join Wi-Fi on first boot.
+5. Optional: copy a `gymnasticon.json` into the boot partition to pre-set your bike profile.
 6. Insert the card in the Pi and power it on. First boot takes about 2-3 minutes.
 7. Log in if needed (default credentials `pi` / `raspberry`) or just start pedaling and pair Zwift with the `Gymnasticon` power and cadence sensors.
 
@@ -57,7 +64,7 @@ journalctl -u gymnasticon -f
 Use this when you already have Raspberry Pi OS on the device, or when you want Raspberry Pi OS Bookworm support for Pi 5.
 
 **Prerequisites**
-- Raspberry Pi OS Buster Lite (Zero/Zero W/Zero 2 W/3/4) or Bookworm Lite (Pi 5).
+- Raspberry Pi OS Legacy (Buster) for Zero/Zero W, Raspberry Pi OS (Bullseye/Bookworm) for Zero 2 W/3/4/5.
 - SSH access and internet connectivity on the Pi.
 
 **Steps**
@@ -125,7 +132,11 @@ For development builds, add dev dependencies with `npm install --include=dev` in
 
 ### Option 4 - Build the image yourself
 
-Need a customized Raspberry Pi image or want to publish a new release? Follow the step-by-step WSL/Linux guide in [`docs/build-sd-image.md`](docs/build-sd-image.md). The helper script (`scripts/build-pi-image.sh`) downloads Raspberry Pi's `pi-gen`, applies Gymnasticon's stages, and emits images in `deploy/pi-sdcard/pi-gen/deploy/`.
+Need a customized Raspberry Pi image or want to publish a new release? Follow the step-by-step WSL/Linux guide in [`docs/build-sd-image.md`](docs/build-sd-image.md). The helper script downloads Raspberry Pi's `pi-gen`, applies Gymnasticon's stages, and emits images in `deploy/pi-sdcard/pi-gen/deploy/`.
+
+- Modern Bookworm image (Zero 2 W / 3 / 4): `GYM_CONFIG=config.bookworm bash scripts/build-pi-image.sh`
+- Legacy Buster image (Zero / Zero W): `GYM_CONFIG=config.buster bash scripts/build-pi-image.sh`
+- Build both in one go: `deploy/pi-sdcard/build-all.sh`
 
 ## After installation
 
@@ -189,11 +200,15 @@ Gymnasticon listens for the standard Bluetooth Low Energy Heart Rate Service (UU
 
 ## Platforms tested
 
-**Raspberry Pi Zero 2 W is the recommended target for best performance.** The prebuilt image targets Pi Zero/Zero W/Zero 2 W/3/4 and ships on Raspberry Pi OS Buster. For Raspberry Pi 5 devices, install Raspberry Pi OS Bookworm and use Option 2 or build a Bookworm-based image with Option 4.
+**Raspberry Pi Zero 2 W is the recommended target for best performance.**
+- Modern Bookworm image: Zero 2 W / Pi 3 / 4 / 400 / CM.
+- Legacy Buster image: Zero / Zero W (bring a USB BLE dongle).
+- Pi 5: install via Option 2 (Bookworm) until a Pi 5 image is published.
 
 - Raspberry Pi OS Buster on Raspberry Pi Zero W
 - Raspberry Pi OS Buster on Raspberry Pi 3B+
 - Raspberry Pi OS Buster on Raspberry Pi 4
+- Raspberry Pi OS Bookworm on Raspberry Pi Zero 2 W / Pi 3 / Pi 4
 - Raspberry Pi OS Bookworm on Raspberry Pi 5 (manual install)
 - macOS 10.14+
 - Debian Buster/Bookworm on x86-64
