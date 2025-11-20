@@ -9,5 +9,6 @@ for cfg in config.bookworm config.buster; do
     continue
   fi
   echo "=== Building image with ${cfg} ==="
+  docker rm -v pigen_work >/dev/null 2>&1 || true
   GYM_CONFIG="${cfg}" bash "${SCRIPT_DIR}/build.sh"
 done

@@ -13,6 +13,9 @@ RELEASE="$(grep '^RELEASE=' "${CONFIG_FILE}" | tail -n1 | cut -d= -f2)"
 PI_GEN_BRANCH=""
 if [ "${RELEASE}" = "buster" ]; then
   PI_GEN_BRANCH="2020-02-13-raspbian-buster"
+elif [ "${RELEASE}" = "bookworm" ]; then
+  # Use a known-good Bookworm tag from pi-gen to avoid signature mismatches on main
+  PI_GEN_BRANCH="2025-05-13-raspios-bookworm-armhf"
 fi
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker is required to build the Raspberry Pi image. Please install Docker Desktop (with WSL2 integration) or the Linux docker engine before rerunning build.sh."
