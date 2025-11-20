@@ -117,18 +117,39 @@ CHROOT_EOF
 cat > "${ROOTFS_DIR}/etc/systemd/system/gymnasticon-bt-reprobe.service" <<'REPROBE'
 [Unit]
 Description=Ensure both Bluetooth HCIs are up for Gymnasticon
-After=bluetooth.service hciuart.service
+After=bluetooth.service hciuart.service systemd-udevd.service dev-ttyAMA0.device dev-ttyS0.device
+Wants=bluetooth.service hciuart.service dev-ttyAMA0.device dev-ttyS0.device
 
 [Service]
 Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=30
 ExecStart=/bin/sh -c '\
-  count=$(ls /sys/class/bluetooth 2>/dev/null | wc -l); \
-  if [ "$count" -lt 2 ]; then \
+  modprobe btusb || true; \
+  rfkill unblock all || true; \
+  udevadm settle --timeout=15 || true; \
+  for i in 1 2 3 4 5; do \
+    count=$(ls /sys/class/bluetooth 2>/dev/null | wc -l); \
+    if [ "$count" -ge 2 ]; then \
+      hciconfig hci0 up || true; \
+      hciconfig hci1 up || true; \
+      exit 0; \
+    fi; \
     systemctl restart hciuart || true; \
-    sleep 2; \
-    hciconfig hci0 up || true; \
-    hciconfig hci1 up || true; \
-  fi'
+    if [ ! -e /sys/class/bluetooth/hci0 ]; then \
+      if command -v btuart >/dev/null 2>&1; then \
+        btuart || true; \
+      elif command -v hciattach >/dev/null 2>&1; then \
+        DEV=/dev/ttyAMA0; \
+        [ -e /dev/ttyS0 ] && DEV=/dev/ttyS0; \
+        hciattach "$DEV" bcm43xx 921600 noflow || true; \
+      fi; \
+    fi; \
+    sleep 3; \
+  done; \
+  hciconfig hci0 up || true; \
+  hciconfig hci1 up || true; \
+'
 
 [Install]
 WantedBy=multi-user.target
