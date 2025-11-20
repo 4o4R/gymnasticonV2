@@ -75,6 +75,8 @@ systemctl enable watchdog
 
 systemctl enable bluetooth
 systemctl start bluetooth
+systemctl enable hciuart || true
+systemctl start hciuart || true
 hciconfig hci0 up || true
 hciconfig hci1 up || true
 
@@ -109,6 +111,9 @@ systemctl daemon-reload
 
 raspi-config nonint do_wifi_country "${WIFI_COUNTRY}" || true
 rfkill unblock all || true
+if [ -f /boot/cmdline.txt ]; then
+  sed -i 's/[[:space:]]*console=ttyAMA0,[0-9]\\+//g; s/[[:space:]]*console=serial0,[0-9]\\+//g' /boot/cmdline.txt
+fi
 CHROOT_EOF
 
 # Systemd helper: if fewer than two HCIs exist at boot, restart hciuart and
@@ -128,7 +133,7 @@ ExecStart=/bin/sh -c '\
   modprobe btusb || true; \
   rfkill unblock all || true; \
   udevadm settle --timeout=15 || true; \
-  for i in 1 2 3 4 5; do \
+  for i in 1 2 3 4 5 6 7; do \
     count=$(ls /sys/class/bluetooth 2>/dev/null | wc -l); \
     if [ "$count" -ge 2 ]; then \
       hciconfig hci0 up || true; \
@@ -145,6 +150,7 @@ ExecStart=/bin/sh -c '\
         hciattach "$DEV" bcm43xx 921600 noflow || true; \
       fi; \
     fi; \
+    printf \"[gymnasticon-bt-reprobe] attempt %s, hci count=%s\\n\" \"$i\" \"$count\"; \
     sleep 3; \
   done; \
   hciconfig hci0 up || true; \
