@@ -47,6 +47,11 @@ if [ -d "pi-gen" ]; then
 fi
 git clone https://github.com/RPi-Distro/pi-gen
 cd pi-gen
+if [ -n "${PI_GEN_BRANCH}" ]; then
+  git fetch
+  git fetch --tags
+  git checkout "${PI_GEN_BRANCH}"
+fi
 # Ensure the Docker image that runs pi-gen can generate .bmap files during export
 # (required for the export-image stage). The stock Dockerfile occasionally omits
 # bmap-tools; force it into the install set if missing.
@@ -58,11 +63,6 @@ needle = "git vim parted"
 if needle in text and "bmap-tools" not in text:
     dockerfile.write_text(text.replace(needle, f"{needle} bmap-tools", 1))
 PY
-if [ -n "${PI_GEN_BRANCH}" ]; then
-  git fetch
-  git fetch --tags
-  git checkout "${PI_GEN_BRANCH}"
-fi
 if [ "${RELEASE}" = "buster" ]; then
 python3 - <<'PY' # rewrite the Dockerfile so apt pulls from the Debian archive mirrors and ignores expired Release metadata for legacy Buster builds
 from pathlib import Path # use pathlib for concise file IO

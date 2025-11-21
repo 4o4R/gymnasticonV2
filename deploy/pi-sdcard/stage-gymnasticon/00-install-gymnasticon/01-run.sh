@@ -72,8 +72,14 @@ install -v -m 644 files/overlayfs.sh "${ROOTFS_DIR}/etc/profile.d/overlayfs.sh"
 install -v -m 755 files/overctl "${ROOTFS_DIR}/usr/local/sbin/overctl"
 install -v -m 644 files/watchdog.conf "${ROOTFS_DIR}/etc/watchdog.conf"
 # Ensure onboard BT firmware exists in both /lib/firmware and the legacy /etc/firmware path.
+# Only copy optional Pi Zero W Bluetooth firmware if present in the base image
 install -v -d -m 755 "${ROOTFS_DIR}/etc/firmware/brcm"
-install -v -m 644 /lib/firmware/brcm/BCM43430A1.hcd "${ROOTFS_DIR}/lib/firmware/brcm/" || true
+FW_SRC="/lib/firmware/brcm/BCM43430A1.hcd"
+if [ -f "${FW_SRC}" ]; then
+    install -v -m 644 "${FW_SRC}" "${ROOTFS_DIR}/lib/firmware/brcm/"
+else
+    echo "Skipping missing firmware ${FW_SRC}"
+fi
 ln -sf /lib/firmware "${ROOTFS_DIR}/etc/firmware" || true
 
 # Detect availability of the miniuart BT overlay so we only turn on onboard BT when the dtbo exists (modern images).
