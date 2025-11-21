@@ -17,6 +17,18 @@ elif [ "${RELEASE}" = "bookworm" ]; then
   # Use a known-good Bookworm tag from pi-gen to avoid signature mismatches on main
   PI_GEN_BRANCH="2025-05-13-raspios-bookworm-armhf"
 fi
+# Normalise Bookworm mirrors so we don't fall back to the occasionally unavailable
+# raspbian.raspberrypi.com endpoint. If the config leaves them empty (or uses the
+# .com host), force the stable .org mirror instead.
+if [ "${RELEASE}" = "bookworm" ]; then
+  DEFAULT_RASPBIAN_MIRROR="http://raspbian.raspberrypi.org/raspbian/"
+  if grep -Eq '^MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^MIRROR=http://raspbian\.raspberrypi\.com/raspbian/?$' "${CONFIG_FILE}"; then
+    sed -i "s|^MIRROR=.*|MIRROR=${DEFAULT_RASPBIAN_MIRROR}|" "${CONFIG_FILE}"
+  fi
+  if grep -Eq '^APT_MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^APT_MIRROR=http://raspbian\.raspberrypi\.com/raspbian/?$' "${CONFIG_FILE}"; then
+    sed -i "s|^APT_MIRROR=.*|APT_MIRROR=${DEFAULT_RASPBIAN_MIRROR}|" "${CONFIG_FILE}"
+  fi
+fi
 if ! command -v docker >/dev/null 2>&1; then
   echo "Docker is required to build the Raspberry Pi image. Please install Docker Desktop (with WSL2 integration) or the Linux docker engine before rerunning build.sh."
   exit 1

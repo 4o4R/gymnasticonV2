@@ -11,8 +11,10 @@ ENABLE_SSH=0
 STAGE_LIST="stage0 stage1 stage2 stage-gymnasticon"
 
 # Mirror settings (use defaults for current releases)
-APT_MIRROR=
-MIRROR=
+# Pin to the official .org mirror to avoid the occasionally unavailable
+# raspbian.raspberrypi.com endpoint seen in recent builds.
+APT_MIRROR=http://raspbian.raspberrypi.org/raspbian/
+MIRROR=http://raspbian.raspberrypi.org/raspbian/
 
 # Release version (optional; leave empty to use pi-gen defaults)
 RELEASE_VERSION=
