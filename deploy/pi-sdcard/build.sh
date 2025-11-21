@@ -47,6 +47,17 @@ if [ -d "pi-gen" ]; then
 fi
 git clone https://github.com/RPi-Distro/pi-gen
 cd pi-gen
+# Ensure the Docker image that runs pi-gen can generate .bmap files during export
+# (required for the export-image stage). The stock Dockerfile occasionally omits
+# bmap-tools; force it into the install set if missing.
+python3 - <<'PY'
+from pathlib import Path
+dockerfile = Path("Dockerfile")
+text = dockerfile.read_text()
+needle = "git vim parted"
+if needle in text and "bmap-tools" not in text:
+    dockerfile.write_text(text.replace(needle, f"{needle} bmap-tools", 1))
+PY
 if [ -n "${PI_GEN_BRANCH}" ]; then
   git fetch
   git fetch --tags
