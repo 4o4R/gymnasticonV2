@@ -18,9 +18,8 @@ elif [ "${RELEASE}" = "bookworm" ]; then
   PI_GEN_BRANCH="2025-05-13-raspios-bookworm-armhf"
 fi
 # Normalise Bookworm mirrors so we don't fall back to the occasionally unavailable
-# mirror redirector that has been sending us to dead hosts (e.g. fcix). If the config
-# leaves them empty or uses the standard raspbian.raspberrypi.{org,com} hosts, force
-# a stable, direct mirror and retain the upstream mirror as a fallback later.
+# redirector. If the config leaves them empty or uses the standard raspbian.raspberrypi
+# hosts, force a stable direct mirror and keep the upstream as fallback.
 if [ "${RELEASE}" = "bookworm" ]; then
   PRIMARY_RASPBIAN_MIRROR="https://raspbian.mirror.constant.com/raspbian/"
   FALLBACK_RASPBIAN_MIRROR="https://raspbian.raspberrypi.org/raspbian/"
@@ -30,6 +29,19 @@ if [ "${RELEASE}" = "bookworm" ]; then
   fi
   if grep -Eq '^APT_MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^APT_MIRROR=https?://raspbian\.raspberrypi\.(org|com)/raspbian/?$' "${CONFIG_FILE}"; then
     sed -i "s|^APT_MIRROR=.*|APT_MIRROR=${PRIMARY_RASPBIAN_MIRROR}|" "${CONFIG_FILE}"
+  fi
+fi
+
+# Normalise Buster mirrors separately so we can enforce a primary+fallback pair.
+if [ "${RELEASE}" = "buster" ]; then
+  PRIMARY_BUSTER_MIRROR="https://raspbian.mirror.constant.com/raspbian/"
+  FALLBACK_BUSTER_MIRROR="https://archive.raspbian.org/raspbian/"
+
+  if grep -Eq '^MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^MIRROR=https?://raspbian\.raspberrypi\.(org|com)/raspbian/?$' "${CONFIG_FILE}"; then
+    sed -i "s|^MIRROR=.*|MIRROR=${PRIMARY_BUSTER_MIRROR}|" "${CONFIG_FILE}"
+  fi
+  if grep -Eq '^APT_MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^APT_MIRROR=https?://raspbian\.raspberrypi\.(org|com)/raspbian/?$' "${CONFIG_FILE}"; then
+    sed -i "s|^APT_MIRROR=.*|APT_MIRROR=${PRIMARY_BUSTER_MIRROR}|" "${CONFIG_FILE}"
   fi
 fi
 if ! command -v docker >/dev/null 2>&1; then
@@ -83,19 +95,21 @@ if needle not in original: # bail out early if the Dockerfile structure changes 
     raise SystemExit('Expected apt-get stanza not found in Dockerfile')
 dockerfile.write_text(original.replace(needle, replacement, 1)) # write the patched Dockerfile back to disk
 
-# The legacy Buster packages now live on archive.raspbian.org; force pi-gen to use it explicitly
-mirror = "https://archive.raspbian.org/raspbian/"
-fallback = "https://raspbian.mirror.constant.com/raspbian/"
+# Prefer the more reliable constant.com mirror for Buster, with archive.raspbian.org
+# as a fallback.
+primary = "https://raspbian.mirror.constant.com/raspbian/"
+fallback = "https://archive.raspbian.org/raspbian/"
+mirror = primary
 Path("stage0/prerun.sh").write_text(
     '#!/bin/bash -e\n\n'
     'if [ ! -d "${ROOTFS_DIR}" ]; then\n'
-    f'\tbootstrap buster "${{ROOTFS_DIR}}" {mirror}\n'
+    f'\tbootstrap buster "${{ROOTFS_DIR}}" {primary}\n'
     'fi\n'
 )
 sources_list = (
-    f"deb {mirror} buster main contrib non-free rpi\n"
+    f"deb {primary} buster main contrib non-free rpi\n"
     f"deb {fallback} buster main contrib non-free rpi\n"
-    f"#deb-src {mirror} buster main contrib non-free rpi\n"
+    f"#deb-src {primary} buster main contrib non-free rpi\n"
 )
 Path("stage0/00-configure-apt/files/sources.list").write_text(sources_list)
 
@@ -140,13 +154,13 @@ for stage in ("stage1", "stage2"):
 
 sys_tweaks_run = Path("stage2/01-sys-tweaks/01-run.sh")
 ensure_snippet = """
-# Ensure the apt sources remain pinned to archive.raspbian.org for legacy Buster packages
+# Ensure the apt sources keep the preferred Buster mirror ordering (primary constant.com, fallback archive.raspbian.org)
 on_chroot <<'EOF'
 set -e
-sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|archive.raspbian.org/raspbian|g' /etc/apt/sources.list
-sed -i 's|https://raspbian\\.raspberrypi\\.org|https://archive.raspbian.org|g' /etc/apt/sources.list
+sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|raspbian.mirror.constant.com/raspbian|g' /etc/apt/sources.list
+sed -i 's|https://raspbian\\.raspberrypi\\.org|https://raspbian.mirror.constant.com|g' /etc/apt/sources.list
 if [ -d /etc/apt/sources.list.d ]; then
-  find /etc/apt/sources.list.d -type f -name '*.list' -exec sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|archive.raspbian.org/raspbian|g' {} \\;
+  find /etc/apt/sources.list.d -type f -name '*.list' -exec sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|raspbian.mirror.constant.com/raspbian|g' {} \\;
 fi
 cat >/etc/apt/apt.conf.d/99archive-tweaks <<'APTCONF'
 Acquire::Check-Valid-Until "false";
