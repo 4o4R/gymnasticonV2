@@ -21,11 +21,11 @@ fi
 # raspbian.raspberrypi.com endpoint. If the config leaves them empty (or uses the
 # .com host), force the stable .org mirror instead.
 if [ "${RELEASE}" = "bookworm" ]; then
-  DEFAULT_RASPBIAN_MIRROR="http://raspbian.raspberrypi.org/raspbian/"
-  if grep -Eq '^MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^MIRROR=http://raspbian\.raspberrypi\.com/raspbian/?$' "${CONFIG_FILE}"; then
+  DEFAULT_RASPBIAN_MIRROR="https://raspbian.raspberrypi.org/raspbian/"
+  if grep -Eq '^MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^MIRROR=https?://raspbian\.raspberrypi\.com/raspbian/?$' "${CONFIG_FILE}"; then
     sed -i "s|^MIRROR=.*|MIRROR=${DEFAULT_RASPBIAN_MIRROR}|" "${CONFIG_FILE}"
   fi
-  if grep -Eq '^APT_MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^APT_MIRROR=http://raspbian\.raspberrypi\.com/raspbian/?$' "${CONFIG_FILE}"; then
+  if grep -Eq '^APT_MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^APT_MIRROR=https?://raspbian\.raspberrypi\.com/raspbian/?$' "${CONFIG_FILE}"; then
     sed -i "s|^APT_MIRROR=.*|APT_MIRROR=${DEFAULT_RASPBIAN_MIRROR}|" "${CONFIG_FILE}"
   fi
 fi
@@ -81,7 +81,7 @@ if needle not in original: # bail out early if the Dockerfile structure changes 
 dockerfile.write_text(original.replace(needle, replacement, 1)) # write the patched Dockerfile back to disk
 
 # The legacy Buster packages now live on archive.raspbian.org; force pi-gen to use it explicitly
-mirror = "http://archive.raspbian.org/raspbian/"
+mirror = "https://archive.raspbian.org/raspbian/"
 Path("stage0/prerun.sh").write_text(
     '#!/bin/bash -e\n\n'
     'if [ ! -d "${ROOTFS_DIR}" ]; then\n'
@@ -139,7 +139,7 @@ ensure_snippet = """
 on_chroot <<'EOF'
 set -e
 sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|archive.raspbian.org/raspbian|g' /etc/apt/sources.list
-sed -i 's|http://raspbian\\.raspberrypi\\.org|http://archive.raspbian.org|g' /etc/apt/sources.list
+sed -i 's|https://raspbian\\.raspberrypi\\.org|https://archive.raspbian.org|g' /etc/apt/sources.list
 if [ -d /etc/apt/sources.list.d ]; then
   find /etc/apt/sources.list.d -type f -name '*.list' -exec sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|archive.raspbian.org/raspbian|g' {} \\;
 fi
