@@ -34,8 +34,8 @@ fi
 
 # Normalise Buster mirrors separately so we can enforce a primary+fallback pair.
 if [ "${RELEASE}" = "buster" ]; then
-  PRIMARY_BUSTER_MIRROR="https://raspbian.mirror.constant.com/raspbian/"
-  FALLBACK_BUSTER_MIRROR="https://archive.raspbian.org/raspbian/"
+  PRIMARY_BUSTER_MIRROR="https://archive.raspbian.org/raspbian/"
+  FALLBACK_BUSTER_MIRROR="https://raspbian.mirror.constant.com/raspbian/"
 
   if grep -Eq '^MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^MIRROR=https?://raspbian\.raspberrypi\.(org|com)/raspbian/?$' "${CONFIG_FILE}"; then
     sed -i "s|^MIRROR=.*|MIRROR=${PRIMARY_BUSTER_MIRROR}|" "${CONFIG_FILE}"
@@ -95,10 +95,9 @@ if needle not in original: # bail out early if the Dockerfile structure changes 
     raise SystemExit('Expected apt-get stanza not found in Dockerfile')
 dockerfile.write_text(original.replace(needle, replacement, 1)) # write the patched Dockerfile back to disk
 
-# Prefer the more reliable constant.com mirror for Buster, with archive.raspbian.org
-# as a fallback.
-primary = "https://raspbian.mirror.constant.com/raspbian/"
-fallback = "https://archive.raspbian.org/raspbian/"
+# Prefer archive.raspbian.org for Buster (authoritative), with constant.com as fallback.
+primary = "https://archive.raspbian.org/raspbian/"
+fallback = "https://raspbian.mirror.constant.com/raspbian/"
 mirror = primary
 Path("stage0/prerun.sh").write_text(
     '#!/bin/bash -e\n\n'
@@ -154,13 +153,13 @@ for stage in ("stage1", "stage2"):
 
 sys_tweaks_run = Path("stage2/01-sys-tweaks/01-run.sh")
 ensure_snippet = """
-# Ensure the apt sources keep the preferred Buster mirror ordering (primary constant.com, fallback archive.raspbian.org)
+# Ensure the apt sources keep the preferred Buster mirror ordering (primary archive.raspbian.org, fallback constant.com)
 on_chroot <<'EOF'
 set -e
-sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|raspbian.mirror.constant.com/raspbian|g' /etc/apt/sources.list
-sed -i 's|https://raspbian\\.raspberrypi\\.org|https://raspbian.mirror.constant.com|g' /etc/apt/sources.list
+sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|archive.raspbian.org/raspbian|g' /etc/apt/sources.list
+sed -i 's|https://raspbian\\.raspberrypi\\.org|https://archive.raspbian.org|g' /etc/apt/sources.list
 if [ -d /etc/apt/sources.list.d ]; then
-  find /etc/apt/sources.list.d -type f -name '*.list' -exec sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|raspbian.mirror.constant.com/raspbian|g' {} \\;
+  find /etc/apt/sources.list.d -type f -name '*.list' -exec sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|archive.raspbian.org/raspbian|g' {} \\;
 fi
 cat >/etc/apt/apt.conf.d/99archive-tweaks <<'APTCONF'
 Acquire::Check-Valid-Until "false";
@@ -180,7 +179,7 @@ apt-cache show wireless-tools >/dev/null 2>&1 || { echo 'ERROR: wireless-tools m
 EOF
 """
 existing_sys_run = sys_tweaks_run.read_text()
-if "Ensure the apt sources remain pinned to archive.raspbian.org" not in existing_sys_run:
+if "Ensure the apt sources keep the preferred Buster mirror ordering" not in existing_sys_run:
     sys_tweaks_run.write_text(existing_sys_run.rstrip() + "\n\n" + ensure_snippet.lstrip())
 
 # Also add the apt-get update directly into stage2/02-net-tweaks to ensure it runs
@@ -242,7 +241,12 @@ PY
 fi
 
 cp "${CONFIG_FILE}" config
-cp -a ../stage-gymnasticon stage-gymnasticon
+SRC_STAGE_DIR="${SCRIPT_DIR}/stage-gymnasticon"
+if [ ! -d "${SRC_STAGE_DIR}" ]; then
+  echo "stage-gymnasticon directory not found at ${SRC_STAGE_DIR}" >&2
+  exit 1
+fi
+cp -a "${SRC_STAGE_DIR}" stage-gymnasticon
 # Mirror any pre-packaged firmware blobs (e.g., Broadcom Bluetooth patches) into
 # the stage files tree so the image ships them even without Internet access.
 FIRMWARE_SRC="${REPO_ROOT}/deploy/firmware"
