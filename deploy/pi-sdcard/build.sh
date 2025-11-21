@@ -18,15 +18,18 @@ elif [ "${RELEASE}" = "bookworm" ]; then
   PI_GEN_BRANCH="2025-05-13-raspios-bookworm-armhf"
 fi
 # Normalise Bookworm mirrors so we don't fall back to the occasionally unavailable
-# raspbian.raspberrypi.com endpoint. If the config leaves them empty (or uses the
-# .com host), force the stable .org mirror instead.
+# mirror redirector that has been sending us to dead hosts (e.g. fcix). If the config
+# leaves them empty or uses the standard raspbian.raspberrypi.{org,com} hosts, force
+# a stable, direct mirror and retain the upstream mirror as a fallback later.
 if [ "${RELEASE}" = "bookworm" ]; then
-  DEFAULT_RASPBIAN_MIRROR="https://raspbian.raspberrypi.org/raspbian/"
-  if grep -Eq '^MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^MIRROR=https?://raspbian\.raspberrypi\.com/raspbian/?$' "${CONFIG_FILE}"; then
-    sed -i "s|^MIRROR=.*|MIRROR=${DEFAULT_RASPBIAN_MIRROR}|" "${CONFIG_FILE}"
+  PRIMARY_RASPBIAN_MIRROR="https://raspbian.mirror.constant.com/raspbian/"
+  FALLBACK_RASPBIAN_MIRROR="https://raspbian.raspberrypi.org/raspbian/"
+
+  if grep -Eq '^MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^MIRROR=https?://raspbian\.raspberrypi\.(org|com)/raspbian/?$' "${CONFIG_FILE}"; then
+    sed -i "s|^MIRROR=.*|MIRROR=${PRIMARY_RASPBIAN_MIRROR}|" "${CONFIG_FILE}"
   fi
-  if grep -Eq '^APT_MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^APT_MIRROR=https?://raspbian\.raspberrypi\.com/raspbian/?$' "${CONFIG_FILE}"; then
-    sed -i "s|^APT_MIRROR=.*|APT_MIRROR=${DEFAULT_RASPBIAN_MIRROR}|" "${CONFIG_FILE}"
+  if grep -Eq '^APT_MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^APT_MIRROR=https?://raspbian\.raspberrypi\.(org|com)/raspbian/?$' "${CONFIG_FILE}"; then
+    sed -i "s|^APT_MIRROR=.*|APT_MIRROR=${PRIMARY_RASPBIAN_MIRROR}|" "${CONFIG_FILE}"
   fi
 fi
 if ! command -v docker >/dev/null 2>&1; then
@@ -82,6 +85,7 @@ dockerfile.write_text(original.replace(needle, replacement, 1)) # write the patc
 
 # The legacy Buster packages now live on archive.raspbian.org; force pi-gen to use it explicitly
 mirror = "https://archive.raspbian.org/raspbian/"
+fallback = "https://raspbian.mirror.constant.com/raspbian/"
 Path("stage0/prerun.sh").write_text(
     '#!/bin/bash -e\n\n'
     'if [ ! -d "${ROOTFS_DIR}" ]; then\n'
@@ -90,6 +94,7 @@ Path("stage0/prerun.sh").write_text(
 )
 sources_list = (
     f"deb {mirror} buster main contrib non-free rpi\n"
+    f"deb {fallback} buster main contrib non-free rpi\n"
     f"#deb-src {mirror} buster main contrib non-free rpi\n"
 )
 Path("stage0/00-configure-apt/files/sources.list").write_text(sources_list)
@@ -195,6 +200,33 @@ net_tweaks_run.chmod(0o755)
 
 PY
 fi
+
+# For Bookworm, pin a direct mirror and keep a fallback to the upstream mirror to avoid
+# the redirector choosing dead mirrors (e.g., mirror.fcix.net).
+if [ "${RELEASE}" = "bookworm" ]; then
+python3 - <<'PY'
+from pathlib import Path
+
+primary = "https://raspbian.mirror.constant.com/raspbian/"
+fallback = "https://raspbian.raspberrypi.org/raspbian/"
+lines = [
+    f"deb {primary} bookworm main contrib non-free rpi",
+    f"deb {fallback} bookworm main contrib non-free rpi",
+]
+src_list = Path("stage0/00-configure-apt/files/sources.list")
+src_list.write_text("\n".join(lines) + "\n")
+
+apt_conf = Path("stage0/00-configure-apt/files/apt.conf.d/99retries")
+apt_conf.parent.mkdir(parents=True, exist_ok=True)
+apt_conf.write_text(
+    "Acquire::Retries \"5\";\n"
+    "Acquire::http::Pipeline-Depth \"0\";\n"
+    "Acquire::http::No-Cache \"true\";\n"
+    "Acquire::https::No-Cache \"true\";\n"
+)
+PY
+fi
+
 cp "${CONFIG_FILE}" config
 cp -a ../stage-gymnasticon stage-gymnasticon
 # Mirror any pre-packaged firmware blobs (e.g., Broadcom Bluetooth patches) into
