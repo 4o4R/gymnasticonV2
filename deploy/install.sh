@@ -94,6 +94,19 @@ sudo apt-get install -y "${APT_PACKAGES[@]}" # ensure all required system librar
 NODE_VERSION="${NODE_VERSION:-14.21.3}" # default to the Pi Zero-friendly Node.js LTS release unless the caller overrides it
 ARCH="$(uname -m)" # capture the current CPU architecture so we can choose the correct Node installation path
 
+remove_existing_node() {
+    if command -v node >/dev/null 2>&1; then # check for any existing Node.js installation
+        echo "Detected preinstalled Node.js ($(node -v 2>/dev/null || echo unknown)); replacing with ${NODE_VERSION} to match Gymnasticon requirements." # announce the replacement to avoid surprises
+    else
+        echo "No preinstalled Node.js detected; installing ${NODE_VERSION} fresh." # clarify when no replacement is needed
+    fi
+
+    sudo apt-get purge -y nodejs npm >/dev/null 2>&1 || true # remove conflicting distro/NodeSource Node.js/npm packages
+    sudo rm -f /etc/apt/sources.list.d/nodesource.list # drop any previously added NodeSource repo (e.g., 16/18) to prevent version clashes
+    sudo apt-get autoremove -y >/dev/null 2>&1 || true # clean up stray dependencies from the removed packages
+    sudo apt-get update # refresh apt metadata after repo changes
+}
+
 install_node_armv6() {
     local archive="node-v${NODE_VERSION}-linux-armv6l.tar.xz" # Node tarball name for armv6 boards
     local url="https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/${archive}" # unofficial archive that still publishes armv6 builds
@@ -110,6 +123,8 @@ install_node_default() {
     curl -fsSL https://deb.nodesource.com/setup_14.x | sudo -E bash - # configure the NodeSource repo for the Node 14 line
     sudo apt-get install -y nodejs npm # install the distro-specific Node.js 14 build along with npm
 }
+
+remove_existing_node # forcibly replace any preinstalled Node.js (e.g., Node 16/18) with the required Node 14 line
 
 if [ "${ARCH}" = "armv6l" ]; then
     install_node_armv6 # Pi Zero/Zero W path
