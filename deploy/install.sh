@@ -121,7 +121,7 @@ install_node_armv6() {
 
 install_node_default() {
     curl -fsSL https://deb.nodesource.com/setup_14.x | sudo -E bash - # configure the NodeSource repo for the Node 14 line
-    sudo apt-get install -y nodejs npm # install the distro-specific Node.js 14 build along with npm
+    sudo apt-get install -y nodejs # install the distro-specific Node.js 14 build (includes npm)
 }
 
 remove_existing_node # forcibly replace any preinstalled Node.js (e.g., Node 16/18) with the required Node 14 line
