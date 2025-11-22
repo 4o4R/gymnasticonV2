@@ -13,6 +13,8 @@
 
 set -u  # no unbound variables; we handle errors manually instead of `set -e`
 
+# Clean stale pi-gen docker container if present (no sudo, no prompt)
+docker rm -v pigen_work >/dev/null 2>&1 || true
 # --------------------------------------------------------------------
 # Resolve paths so we can call build.sh reliably from any CWD
 # --------------------------------------------------------------------
