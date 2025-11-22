@@ -124,6 +124,12 @@ install_node_default() {
     sudo apt-get install -y nodejs # install the distro-specific Node.js 14 build (includes npm)
 }
 
+unblock_bluetooth() {
+    if command -v rfkill >/dev/null 2>&1; then # only attempt unblocking when rfkill exists
+        sudo rfkill unblock bluetooth || true # clear soft blocks so hciconfig up does not fail with RF-kill errors
+    fi
+}
+
 remove_existing_node # forcibly replace any preinstalled Node.js (e.g., Node 16/18) with the required Node 14 line
 
 if [ "${ARCH}" = "armv6l" ]; then
@@ -135,6 +141,7 @@ fi
 # Ensure Bluetooth services are enabled and adapters powered before starting Gymnasticon
 sudo systemctl enable bluetooth # Persistently enable the BlueZ Bluetooth service
 sudo systemctl start bluetooth # Start the Bluetooth service immediately for the current session
+unblock_bluetooth # clear any rfkill blocks (common on USB dongles) before bringing adapters up
 sudo hciconfig hci0 up || true # Bring the onboard Bluetooth adapter up if present
 sudo hciconfig hci1 up || true # Attempt to bring a second USB Bluetooth adapter up when available
 
@@ -165,7 +172,7 @@ sudo setcap cap_net_raw+eip "$(command -v node)" || true
 sudo mkdir -p /opt/gymnasticon # ensure the parent prefix exists before cloning
 sudo git clone https://github.com/4o4R/gymnasticonV2.git /opt/gymnasticon/app # place the repo under /opt/gymnasticon/app to match the image layout
 cd /opt/gymnasticon/app
-sudo env CXXFLAGS="-std=gnu++14" npm install --omit=dev # install production dependencies directly inside the repo
+sudo env CXXFLAGS="-std=gnu++14" npm install --omit=dev --unsafe-perm --cache /tmp/npm-cache # install production dependencies directly inside the repo (allow scripts under sudo and avoid cache permission issues)
 sudo install -d -m 755 /opt/gymnasticon/bin # create a bin directory for helper scripts
 sudo install -m 755 /opt/gymnasticon/app/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon-wrapper.sh /opt/gymnasticon/bin/gymnasticon # reuse the wrapper so users can run `gymnasticon` manually
 sudo install -m 644 /opt/gymnasticon/app/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon.json /etc/gymnasticon.json # seed the default config on manual installs for parity with the image
