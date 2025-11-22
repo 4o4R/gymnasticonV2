@@ -138,6 +138,11 @@ else
     install_node_default # newer Pis or other architectures use the NodeSource repository
 fi
 
+# Ensure node-gyp is compatible with Python 3.11 on Bookworm (npm v6 ships node-gyp v5 which fails with 'rU')
+sudo npm install -g node-gyp@9 --unsafe-perm >/dev/null 2>&1 || sudo npm install -g node-gyp@9 --unsafe-perm
+sudo npm config set node_gyp /usr/local/lib/node_modules/node-gyp/bin/node-gyp.js
+sudo npm config set python /usr/bin/python3
+
 # Ensure Bluetooth services are enabled and adapters powered before starting Gymnasticon
 sudo systemctl enable bluetooth # Persistently enable the BlueZ Bluetooth service
 sudo systemctl start bluetooth # Start the Bluetooth service immediately for the current session
