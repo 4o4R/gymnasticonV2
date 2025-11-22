@@ -36,6 +36,35 @@ RESULT_CONFIGS=()
 RESULT_CODES=()
 
 # --------------------------------------------------------------------
+# Helper: copy built artifacts out of pi-gen so the next build's cleanup
+#         does not remove them.
+# --------------------------------------------------------------------
+stash_artifacts() {
+  local cfg="$1"
+  local rc="$2"
+  local src="${REPO_ROOT}/pi-gen/deploy"
+
+  if [ "${rc}" -ne 0 ]; then
+    echo "[INFO] Skipping artifact copy for ${cfg} (build failed)."
+    return
+  fi
+
+  if [ ! -d "${src}" ]; then
+    echo "[WARN] No deploy directory found for ${cfg}; nothing to copy."
+    return
+  fi
+
+  local dest_root="${REPO_ROOT}/deploy/releases"
+  local timestamp
+  timestamp="$(date +%Y%m%d-%H%M%S)"
+  local dest="${dest_root}/${cfg}-${timestamp}"
+
+  mkdir -p "${dest}"
+  echo "[INFO] Copying artifacts for ${cfg} to ${dest}..."
+  cp -a "${src}/." "${dest}/"
+}
+
+# --------------------------------------------------------------------
 # Helper: run a single build
 # --------------------------------------------------------------------
 run_build() {
@@ -63,6 +92,7 @@ run_build() {
     echo "*** [OK] Build SUCCEEDED for ${cfg}"
   fi
 
+  stash_artifacts "${cfg}" "${rc}"
   RESULT_CONFIGS+=("${cfg}")
   RESULT_CODES+=("${rc}")
 }
@@ -94,4 +124,3 @@ echo "======================================================="
 echo
 
 exit "${overall_rc}"
-
