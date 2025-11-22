@@ -58,6 +58,9 @@ APTCONF
     echo "Legacy mirror patch complete. Continuing with package installs..." # keep the user informed so they know the script is still running
 }
 
+# Ensure we are not executing from inside /opt/gymnasticon before deleting it (prevents ENOENT from getcwd)
+cd / || exit 1
+
 # Cleanup previous installation
 if systemctl list-unit-files | grep -q '^gymnasticon.service'; then
     sudo systemctl stop gymnasticon || true
