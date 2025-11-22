@@ -12,7 +12,7 @@ This is an attempt to "upgrade" https://github.com/ptx2/gymnasticon. Many thanks
 
 ## Development Prerequisite: Node 14.21.3
 
-The build and native dependencies target Node.js 14.21.3 so they remain compatible with Raspberry Pi Zero/Zero W units. The repository ships an `.nvmrc` with that version, and `npm install` now runs a guard (`scripts/check-node-version.cjs`) that aborts if you attempt to install with anything outside `>=14.21.3 <15`. Run `nvm use` (or install Node 14.21.3 manually) before installing packages; set `GYMNASTICON_ALLOW_UNSUPPORTED_NODE=1` only if you absolutely need to bypass the check.
+The build and native dependencies target Node.js 14.21.3 so they remain compatible with Raspberry Pi Zero/Zero W units. Node 16/18 drop official ARMv6 builds and our native stack (`@abandonware/noble`/`bleno`, `serialport@9`, `usb@1.6.2`) only ships prebuilds for Node 14, so using newer majors means rebuilding from source (often failing on Pi Zero/Buster). The repository ships an `.nvmrc` with 14.21.3, and `npm install` runs a guard (`scripts/check-node-version.cjs`) that aborts if you attempt to install with anything outside `>=14.21.3 <15`. Run `nvm use` (or install Node 14.21.3 manually) before installing packages; set `GYMNASTICON_ALLOW_UNSUPPORTED_NODE=1` only if you absolutely need to bypass the check.
 
 ## Choose Your Setup
 
@@ -96,9 +96,9 @@ Use this when you already have Raspberry Pi OS on the device, or when you want R
 Manual setup is useful for non-Raspberry Pi Linux hosts, development workstations, or when you need to audit each dependency.
 
 **Requirements**
-1. Node.js 14.x (14.21.3 recommended for broad compatibility).
+1. Node.js 14.21.3 (required; only 14.x is supported so we stay compatible with Raspberry Pi Zero/Zero W and Buster images—Node 16/18 lack ARMv6 builds and the native addons here only publish prebuilds for Node 14).
    - Pi Zero / Zero W (ARMv6): download `node-v14.21.3-linux-armv6l.tar.xz` from the [unofficial Node.js archive](https://unofficial-builds.nodejs.org/download/release/v14.21.3/) and extract into `/usr/local`.
-   - Pi 3/4/5 or x86_64/arm64: install Node.js 14.x from your package manager (NodeSource `setup_14.x`, Homebrew, etc.).
+   - Pi 3/4/5 or x86_64/arm64: install Node.js 14.21.3 (NodeSource `setup_14.x`, Homebrew, etc.).
 2. System packages (Debian-based example):
    ```bash
    sudo apt-get install -y bluetooth bluez libbluetooth-dev libudev-dev libusb-1.0-0-dev build-essential python3 pkg-config git curl ca-certificates
