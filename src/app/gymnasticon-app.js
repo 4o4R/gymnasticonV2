@@ -32,6 +32,7 @@ export class GymnasticonApp {
 
     // Resolve the config path. Support both the legacy --config flag and the new --config-path option.
     const configPath = this.options.configPath || this.options.config || DEFAULT_CONFIG_PATH;
+    console.log('[gym-cli] Resolved config path:', configPath);
 
     // Instantiate helpers, but allow callers (tests) to inject their own instances when needed.
     this.configManager = this.options.configManager || new ConfigManager(configPath, {
@@ -53,8 +54,11 @@ export class GymnasticonApp {
 
   async start() {
     let fileConfig = {};
+    const configPath = this.configManager?.configPath || DEFAULT_CONFIG_PATH;
+    console.log('[gym-cli] Loading config from', configPath);
     try {
       fileConfig = await this.configManager.load(); // Load persisted settings (bike type, server name, etc.).
+      console.log('[gym-cli] Loaded config:', JSON.stringify(fileConfig));
     } catch (error) {
       console.warn(`[GymnasticonApp] ${error.message}; continuing with CLI arguments only.`);
     }
@@ -86,6 +90,12 @@ export class GymnasticonApp {
     mergedOptions.metricsProcessor = this.metricsProcessor;
     mergedOptions.healthMonitor = this.healthMonitor;
     mergedOptions.connectionManager = this.connectionManager;
+    console.log('[gym-cli] Effective bike options:', JSON.stringify({
+      bike: mergedOptions.bike,
+      defaultBike: mergedOptions.defaultBike,
+      bikeAdapter: mergedOptions.bikeAdapter,
+      serverAdapter: mergedOptions.serverAdapter,
+    }));
 
     this.app = new App(mergedOptions);
     await this.app.start();

@@ -66,15 +66,21 @@ export function getBikeTypes() { // Expose the supported bike type keys so the C
 
 export function createBikeClient(options, noble) { // Main factory selector used by the App.
   const type = options.bike;
+  console.log('[gym-cli] createBikeClient called with bike:', type);
   const factory = factories[type];
   if (!factory) { // Guard against typos or unsupported bike types.
     throw new Error(`Unknown bike type: ${type}`);
+  }
+  if (type !== 'autodetect') {
+    console.log('[gym-cli] Fixed bike mode selected:', type);
   }
   return factory(options, noble);
 }
 
 async function autodetectBikeClient(options, noble) { // Attempt to identify the connected bike automatically.
+  console.log('[gym-cli] Autodetect mode selected; scanning for supported bikes...');
   if (fs.existsSync(options.pelotonPath)) { // If the Peloton USB serial device is present, prefer that profile immediately.
+    console.log('[gym-cli] Peloton USB detected at', options.pelotonPath);
     return createPelotonBikeClient(options, noble);
   }
 
@@ -84,6 +90,9 @@ async function autodetectBikeClient(options, noble) { // Attempt to identify the
   if (match && match.type) { // When a peripheral was discovered, map it to the matching profile factory.
     const factory = factories[match.type];
     if (factory) {
+      const advertName = match.peripheral?.advertisement?.localName;
+      const addr = match.peripheral?.address;
+      console.log(`[gym-cli] Autodetect matched ${match.type} (name=${advertName ?? 'unknown'} address=${addr ?? 'unknown'})`);
       return factory(options, noble, match.peripheral);
     }
   }
@@ -93,5 +102,6 @@ async function autodetectBikeClient(options, noble) { // Attempt to identify the
   if (!fallbackFactory) {
     throw new Error(`Unknown default bike type: ${fallback}`);
   }
+  console.log('[gym-cli] Autodetect falling back to default bike:', fallback);
   return fallbackFactory(options, noble);
 }

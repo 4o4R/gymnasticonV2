@@ -233,6 +233,7 @@ export class App {
 
       const retryDelayMs = Math.max(1000, Number(this.opts.connectionRetryDelay ?? sharedDefaults.connectionRetryDelay ?? 5000)); // Guarantee at least a one-second delay between attempts even if the config requests 0.
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); // Lightweight helper so the retry loop can pause via await without blocking Node's event loop.
+      this.logger.log(`[gym-app] startup opts: bike=${this.opts.bike} defaultBike=${this.opts.defaultBike} bikeAdapter=${this.opts.bikeAdapter} serverAdapter=${this.opts.serverAdapter}`);
       while (true) { // Keep looping until we successfully complete the full startup sequence.
         try {
           this.logger.log('connecting to bike...'); // Show progress on the console so headless installs still provide feedback.

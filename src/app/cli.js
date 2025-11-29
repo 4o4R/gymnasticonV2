@@ -96,6 +96,7 @@ const buildAppOptions = ({ _, $0, ...rest }) => rest;
  * 5. Graceful shutdown
  */
 const main = async () => {
+    console.log('[gym-cli] Gymnasticon CLI starting...');
     const rawArgs = hideBin(process.argv); // Capture the raw argv first so we can see what the user actually typed.
     const providedOptions = collectProvidedOptions(rawArgs, cliOptions); // Record the explicit flags for later precedence decisions.
 
@@ -158,6 +159,7 @@ const main = async () => {
     }
 
     const configPath = argv.configPath || argv.config || '/etc/gymnasticon.json'; // Support both legacy --config and explicit --config-path.
+    console.log('[gym-cli] Using config path:', configPath);
 
     // Configure Bluetooth Adapters and Settings
     // ----------------------------------------
