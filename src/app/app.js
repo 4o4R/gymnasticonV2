@@ -224,12 +224,23 @@ export class App {
       process.on('exit', this.onExit);
 
       let state = this.noble?.state;
+      this.logger.log(`[gym-app] checking Bluetooth adapter state: ${state ?? 'unknown'}`);
       if (state !== 'poweredOn') {
+        this.logger.log('[gym-app] waiting for Bluetooth adapter to become poweredOn...');
+        this.noble?.once('stateChange', (nextState) => {
+          this.logger.log(`[gym-app] noble stateChange event: ${nextState}`);
+        });
+        setTimeout(() => {
+          if (this.noble?.state !== 'poweredOn') {
+            this.logger.log('[gym-app] still waiting for poweredOn after 10s; current state:', this.noble?.state);
+          }
+        }, 10000);
         [state] = await once(this.noble, 'stateChange');
       }
       if (state !== 'poweredOn') {
         throw new Error(`Bluetooth adapter state: ${state}`);
       }
+      this.logger.log('[gym-app] Bluetooth adapter ready (poweredOn)');
 
       const retryDelayMs = Math.max(1000, Number(this.opts.connectionRetryDelay ?? sharedDefaults.connectionRetryDelay ?? 5000)); // Guarantee at least a one-second delay between attempts even if the config requests 0.
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); // Lightweight helper so the retry loop can pause via await without blocking Node's event loop.

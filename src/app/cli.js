@@ -194,6 +194,7 @@ const main = async () => {
     // -------------------------
     // This sets up the BLE (Bluetooth Low Energy) subsystem
     const { noble } = await initializeBluetooth(argv.bikeAdapter);
+    console.log('[gym-cli] Bluetooth initialized; noble state:', noble?.state);
 
     // Delay importing the heavy Gymnasticon runtime until after the environment
     // variables above are set so noble/bleno honor the adapter overrides.
