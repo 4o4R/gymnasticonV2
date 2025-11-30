@@ -61,7 +61,7 @@ journalctl -u gymnasticon -f
 
 ### Option 2 - Install onto Raspberry Pi OS using the script
 
-Use this when you already have Raspberry Pi OS on the device, or when you want Raspberry Pi OS Bookworm support for Pi 5.
+Use this when you already have Raspberry Pi OS on the device, or when you want Raspberry Pi OS Bookworm support for Pi 5. **This path is recommended** because it pins Node 14.21.3, installs a modern node-gyp, Python 3.11, build-essential, BLE/USB libs, and wires up systemd. Manual installs on Bookworm with Python 3.12 often fail with `ValueError: invalid mode: 'rU'` unless you upgrade node-gyp—this script avoids that.
 
 **Prerequisites**
 - Raspberry Pi OS Legacy (Buster) for Zero/Zero W, Raspberry Pi OS (Bullseye/Bookworm) for Zero 2 W/3/4/5.
@@ -73,7 +73,7 @@ Use this when you already have Raspberry Pi OS on the device, or when you want R
    ```bash
    curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/install.sh | bash
    ```
-   This script removes any previous install, installs system packages, pulls Node.js 14.21.3 (ARMv6 build on Pi Zero family), clones Gymnasticon into `/opt/gymnasticon`, runs `npm install --omit=dev`, and enables the `gymnasticon` systemd service.
+   This script removes any previous install, installs system packages, pulls Node.js 14.21.3 (ARMv6 build on Pi Zero family), installs node-gyp@9 and Python 3.11, clones Gymnasticon into `/opt/gymnasticon`, runs `npm install --omit=dev`, and enables the `gymnasticon` systemd service.
    It automatically detects whether you are on Raspberry Pi OS Legacy (Buster) or newer releases (Bullseye/Bookworm), rewrites apt mirrors when necessary, and installs optional packages only when they exist—no codename knowledge required.
 3. Reinstalling remotely? Use nohup to watch progress later:
    ```bash
@@ -112,6 +112,11 @@ Manual setup is useful for non-Raspberry Pi Linux hosts, development workstation
 # Clone the repo
 sudo git clone https://github.com/4o4R/gymnasticonV2.git /opt/gymnasticon
 cd /opt/gymnasticon
+
+# Bookworm/Bullseye tip (Python 3.12/3.11): use modern node-gyp + Python 3.11 to avoid gyp "invalid mode: 'rU'" errors
+NODE_GYP_BIN="$(npm root -g)/node-gyp/bin/node-gyp.js"
+npm config set node_gyp "$NODE_GYP_BIN"
+npm config set python /usr/bin/python3.11
 
 # ARMv6 boards need this before npm install
 export CXXFLAGS=-std=gnu++14
