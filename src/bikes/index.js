@@ -49,6 +49,33 @@ function createBotBikeClient(options) { // Factory for the simulation/bot profil
   return new BotBikeClient(options.botPower, options.botCadence, options.botHost, options.botPort);
 }
 
+function isAntUsbStick(devicePath) { // Heuristic to avoid misclassifying ANT+ sticks as Peloton consoles.
+  try {
+    const real = fs.realpathSync(devicePath); // Resolve /dev/serial/by-id links when present.
+    const tty = real.replace('/dev/', '');
+    const devDir = `/sys/class/tty/${tty}/device`;
+    const vendorPath = `${devDir}/../idVendor`;
+    const productPath = `${devDir}/../idProduct`;
+    if (!fs.existsSync(vendorPath) || !fs.existsSync(productPath)) {
+      return false;
+    }
+    const vendor = fs.readFileSync(vendorPath, 'utf8').trim().toLowerCase();
+    const product = fs.readFileSync(productPath, 'utf8').trim().toLowerCase();
+    const antPairs = new Set([
+      '0fcf:1008', // Garmin/ANT USB-m (common)
+      '0fcf:1009',
+      '0fcf:1019',
+      '0fcf:101f',
+      '0fcf:1021',
+      '0fcf:1025',
+      '0fcf:1031',
+    ]);
+    return antPairs.has(`${vendor}:${product}`);
+  } catch (_err) {
+    return false;
+  }
+}
+
 const factories = { // Map CLI bike types to factory functions.
   flywheel: createFlywheelBikeClient,
   peloton: createPelotonBikeClient,
@@ -79,7 +106,7 @@ export function createBikeClient(options, noble) { // Main factory selector used
 
 async function autodetectBikeClient(options, noble) { // Attempt to identify the connected bike automatically.
   console.log('[gym-cli] Autodetect mode selected; scanning for supported bikes...');
-  if (fs.existsSync(options.pelotonPath)) { // If the Peloton USB serial device is present, prefer that profile immediately.
+  if (options.pelotonPath && fs.existsSync(options.pelotonPath) && !isAntUsbStick(options.pelotonPath)) { // If the Peloton USB serial device is present, prefer that profile immediately unless it's an ANT+ stick.
     console.log('[gym-cli] Peloton USB detected at', options.pelotonPath);
     return createPelotonBikeClient(options, noble);
   }

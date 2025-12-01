@@ -6,6 +6,22 @@ const fs = require('fs'); // load the filesystem module to check if dependencies
 const nodeVersion = process.versions.node; // capture the current Node runtime version string (e.g. "14.21.3")
 const nodeMajor = Number(nodeVersion.split('.')[0]); // extract the major version number to allow conditional logic per runtime
 
+// Attempt to pull the latest bluetooth-hci-socket implementation that works on newer kernels.
+// This is intentionally done with --no-save so package.json/lock stay stable while installs pick up the
+// fixed native binding on platforms (like Raspberry Pi OS) where prebuilt binaries mismatch the kernel ABI.
+try {
+  console.log('\nRefreshing @abandonware/bluetooth-hci-socket from upstream...');
+  const installResult = spawnSync('npm', ['install', '--no-save', '--unsafe-perm', 'github:abandonware/node-bluetooth-hci-socket#master'], {
+    stdio: 'inherit',
+    env: { ...process.env, npm_config_build_from_source: 'true' }
+  });
+  if (installResult.status !== 0) {
+    console.warn('Optional bluetooth-hci-socket refresh failed; continuing with pinned dependency.');
+  }
+} catch (err) {
+  console.warn('Optional bluetooth-hci-socket refresh threw an error; continuing.', err);
+}
+
 const modulesToRebuild = [
   '@abandonware/noble', // BLE scanning library used for ANT+/Bluetooth communication
   '@abandonware/bleno', // BLE peripheral library that advertises the virtual device

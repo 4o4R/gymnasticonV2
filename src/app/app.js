@@ -392,8 +392,13 @@ export class App {
     if (!this.antEnabled || !this.antStick || !this.antServer) { // Skip when ANT+ broadcasting is disabled or hardware unavailable.
       return;
     }
-    if (!this.antStick.is_present()) { // If the stick is not detected, log and fall back to BLE-only mode.
-      this.logger.log('no ANT+ stick found');
+    try {
+      if (!this.antStick.is_present()) { // If the stick is not detected, log and fall back to BLE-only mode.
+        this.logger.log('no ANT+ stick found');
+        return;
+      }
+    } catch (err) {
+      this.logger.error('failed to probe ANT+ stick; continuing without ANT+', err);
       return;
     }
     try {
