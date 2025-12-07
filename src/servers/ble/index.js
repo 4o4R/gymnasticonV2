@@ -76,9 +76,14 @@ function buildAdvertisingPayload(name, options, uuids) {
 
   if (name) {
     const nameBuffer = Buffer.from(name);
-    const nameType = nameBuffer.length <= 29 ? AD_TYPE_COMPLETE_NAME : AD_TYPE_SHORT_NAME;
-    const truncated = nameBuffer.slice(0, nameBuffer.length <= 29 ? nameBuffer.length : 29);
-    scanResponseParts.push(buildAdStructure(nameType, truncated));
+    const fullName = nameBuffer.slice(0, 29); // Ensure we never exceed the 31-byte advertising payload when combined with headers.
+    const nameType = fullName.length < nameBuffer.length ? AD_TYPE_SHORT_NAME : AD_TYPE_COMPLETE_NAME;
+
+    // Include the name in both the advertising and scan response payloads so scanners that never issue
+    // active scans (or apps that ignore scan responses) still surface the custom device name.
+    const nameStructure = buildAdStructure(nameType, fullName);
+    advertisingParts.push(nameStructure);
+    scanResponseParts.push(nameStructure);
   }
 
   if (includeTxPower) {
