@@ -70,20 +70,20 @@ function buildAdvertisingPayload(name, options, uuids) {
     advertisingParts.push(buildAdStructure(Number(type), Buffer.concat(buffers)));
   });
 
-  if (manufacturerData && manufacturerData.length) {
-    advertisingParts.push(buildAdStructure(AD_TYPE_MANUFACTURER_DATA, manufacturerData));
-  }
-
+  // Always include a short name in the advertising payload so passive scanners/apps show the custom name.
+  // Use a compact short name to stay within the 31-byte limit alongside flags/UUIDs.
   if (name) {
     const nameBuffer = Buffer.from(name);
-    const fullName = nameBuffer.slice(0, 29); // Ensure we never exceed the 31-byte advertising payload when combined with headers.
+    const shortName = nameBuffer.slice(0, 10); // Short name for advertising payload.
+    advertisingParts.push(buildAdStructure(AD_TYPE_SHORT_NAME, shortName));
+    // Full name goes into the scan response for devices that perform active scans.
+    const fullName = nameBuffer.slice(0, 29);
     const nameType = fullName.length < nameBuffer.length ? AD_TYPE_SHORT_NAME : AD_TYPE_COMPLETE_NAME;
+    scanResponseParts.push(buildAdStructure(nameType, fullName));
+  }
 
-    // Include the name in both the advertising and scan response payloads so scanners that never issue
-    // active scans (or apps that ignore scan responses) still surface the custom device name.
-    const nameStructure = buildAdStructure(nameType, fullName);
-    advertisingParts.push(nameStructure);
-    scanResponseParts.push(nameStructure);
+  if (manufacturerData && manufacturerData.length) {
+    advertisingParts.push(buildAdStructure(AD_TYPE_MANUFACTURER_DATA, manufacturerData));
   }
 
   if (includeTxPower) {
