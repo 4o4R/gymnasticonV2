@@ -154,6 +154,18 @@ unblock_bluetooth # clear any rfkill blocks (common on USB dongles) before bring
 sudo hciconfig hci0 up || true # Bring the onboard Bluetooth adapter up if present
 sudo hciconfig hci1 up || true # Attempt to bring a second USB Bluetooth adapter up when available
 
+# Align adapter identity with Gymnasticon and reduce classic advertising conflicts.
+if command -v btmgmt >/dev/null 2>&1; then
+    for dev in hci0 hci1; do
+        if btmgmt -i "$dev" info >/dev/null 2>&1; then
+            sudo btmgmt -i "$dev" power off || true
+            sudo btmgmt -i "$dev" name GymnasticonV2 || true
+            sudo btmgmt -i "$dev" bredr off || true # disable BR/EDR so LE ads are not overshadowed
+            sudo btmgmt -i "$dev" power on || true
+        fi
+    done
+fi
+
 # Expand the root filesystem now (so resize2fs_once.service has already run)
 ROOT_DEVICE=$(df --output=source / | tail -n 1)
 if command -v resize2fs >/dev/null && [ -n "$ROOT_DEVICE" ]; then
@@ -178,20 +190,20 @@ sudo systemctl restart getty@tty1.service >/dev/null 2>&1 || true
 sudo setcap cap_net_raw+eip "$(command -v node)" || true
 
 # Clone Gymnasticon repository
-sudo mkdir -p /opt/gymnasticon # ensure the parent prefix exists before cloning
-sudo git clone https://github.com/4o4R/gymnasticonV2.git /opt/gymnasticon/app # place the repo under /opt/gymnasticon/app to match the image layout
-cd /opt/gymnasticon/app
+APP_DIR="/opt/gymnasticon"
+sudo mkdir -p "$APP_DIR" # ensure the parent prefix exists before cloning
+sudo git clone https://github.com/4o4R/gymnasticonV2.git "$APP_DIR"
+cd "$APP_DIR"
 sudo env CXXFLAGS="-std=gnu++14" npm install --omit=dev --unsafe-perm --cache /tmp/npm-cache # install production dependencies directly inside the repo (allow scripts under sudo and avoid cache permission issues)
 sudo install -d -m 755 /opt/gymnasticon/bin # create a bin directory for helper scripts
-sudo install -m 755 /opt/gymnasticon/app/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon-wrapper.sh /opt/gymnasticon/bin/gymnasticon # reuse the wrapper so users can run `gymnasticon` manually
-sudo install -m 644 /opt/gymnasticon/app/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon.json /etc/gymnasticon.json # seed the default config on manual installs for parity with the image
-sudo ln -sf /etc/gymnasticon.json /opt/gymnasticon/app/gymnasticon.json # expose the config inside the repo tree for documentation consistency
-sudo ln -sf /etc/gymnasticon.json /opt/gymnasticon/gymnasticon.json # provide the legacy /opt/gymnasticon/gymnasticon.json convenience path
+sudo install -m 755 "$APP_DIR/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon-wrapper.sh" /opt/gymnasticon/bin/gymnasticon # reuse the wrapper so users can run `gymnasticon` manually
+sudo install -m 644 "$APP_DIR/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon.json" /etc/gymnasticon.json # seed the default config on manual installs for parity with the image
+sudo ln -sf /etc/gymnasticon.json "$APP_DIR/gymnasticon.json" # expose the config inside the repo tree for documentation consistency
 sudo install -d -m 755 /lib/firmware/brcm # make sure the firmware directory exists even on minimal images
-if [ -f /opt/gymnasticon/app/deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd ]; then
-    sudo install -m 644 /opt/gymnasticon/app/deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd /lib/firmware/brcm/ # preload the Broadcom BCM20702 patch so CSR-based USB Bluetooth dongles work without Internet
+if [ -f "$APP_DIR/deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd" ]; then
+    sudo install -m 644 "$APP_DIR/deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd" /lib/firmware/brcm/ # preload the Broadcom BCM20702 patch so CSR-based USB Bluetooth dongles work without Internet
 fi
-sudo install -m 644 /opt/gymnasticon/app/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/btusb.conf /etc/modprobe.d/btusb.conf # force-reset and disable autosuspend for btusb to reduce patch failures on some dongles
+sudo install -m 644 "$APP_DIR/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/btusb.conf" /etc/modprobe.d/btusb.conf # force-reset and disable autosuspend for btusb to reduce patch failures on some dongles
 
 # Configure systemd service
 sudo tee /etc/systemd/system/gymnasticon.service > /dev/null <<'SERVICE'
@@ -202,8 +214,8 @@ Requires=bluetooth.service
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/gymnasticon/app
-ExecStart=/opt/gymnasticon/bin/gymnasticon --config /etc/gymnasticon.json
+WorkingDirectory=/opt/gymnasticon
+ExecStart=/usr/bin/node /opt/gymnasticon/src/app/cli.js --config /etc/gymnasticon.json
 Restart=always
 RestartSec=10
 
