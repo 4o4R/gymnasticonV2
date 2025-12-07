@@ -17,6 +17,7 @@ export const defaults = {
   // flywheel bike options
   flywheelAddress: undefined,    // optional MAC filter for Flywheel discovery
   flywheelName: 'Flywheel 1',    // default BLE name when no MAC filter is provided
+  
 
   // peloton bike options
   pelotonPath: '/dev/ttyUSB0',   // serial device path for Peloton consoles
