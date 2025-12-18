@@ -28,16 +28,29 @@ export class BluetoothConnectionManager {
   }
 
   async attemptConnection(connection) {
+    let timeoutId = null; // Keep a handle so we can cancel the timeout once the connection finishes.
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Connection timeout')), 
-        this.connectionTimeout);
+      timeoutId = setTimeout(() => reject(new Error('Connection timeout')), this.connectionTimeout);
     });
 
-    await Promise.race([
-      connection.peripheral.connectAsync(),
-      timeoutPromise
-    ]);
-    
-    connection.connected = true;
+    try {
+      // Race the connection against a timer; whichever resolves first wins.
+      await Promise.race([
+        connection.peripheral.connectAsync(),
+        timeoutPromise
+      ]);
+      connection.connected = true;
+    } catch (error) {
+      // If the timeout fired, proactively disconnect so we do not leave a late, half-open connection behind.
+      if (error?.message === 'Connection timeout' && connection.peripheral?.disconnectAsync) {
+        await connection.peripheral.disconnectAsync().catch(() => {});
+      }
+      throw error;
+    } finally {
+      // Always clear the timer so it cannot reject later and cause an unhandled rejection.
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
   }
 }
