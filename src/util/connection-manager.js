@@ -7,6 +7,7 @@ export class BluetoothConnectionManager {
   }
 
   async connect(peripheral) {
+    // Track connection state so we can retry consistently across attempts.
     const connection = {
       peripheral,
       connected: false,
@@ -20,6 +21,7 @@ export class BluetoothConnectionManager {
         await this.attemptConnection(connection);
         return true;
       } catch (error) {
+        // Back off briefly before retrying to avoid hammering the BLE stack.
         connection.retryCount++;
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
@@ -28,6 +30,7 @@ export class BluetoothConnectionManager {
   }
 
   async attemptConnection(connection) {
+    // The connection attempt must be time-bounded so we do not hang forever.
     let timeoutId = null; // Keep a handle so we can cancel the timeout once the connection finishes.
     const timeoutPromise = new Promise((_, reject) => {
       timeoutId = setTimeout(() => reject(new Error('Connection timeout')), this.connectionTimeout);
@@ -39,6 +42,7 @@ export class BluetoothConnectionManager {
         connection.peripheral.connectAsync(),
         timeoutPromise
       ]);
+      // If we get here, the connectAsync call won the race.
       connection.connected = true;
     } catch (error) {
       // If the timeout fired, proactively disconnect so we do not leave a late, half-open connection behind.
