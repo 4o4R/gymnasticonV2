@@ -9,8 +9,6 @@
  * - Simulation capabilities for testing
  */
 
-import {once} from 'events';
-
 // Core server components
 import {GymnasticonServer} from '../servers/ble/index.js';
 import {AntServer} from '../servers/ant/index.js';
@@ -21,6 +19,8 @@ import {HeartRateClient} from '../hr/heart-rate-client.js';
 import {MetricsProcessor} from '../util/metrics-processor.js';
 import {HealthMonitor} from '../util/health-monitor.js';
 import {BluetoothConnectionManager} from '../util/connection-manager.js';
+import {initializeBluetooth} from '../util/noble-wrapper.js';
+import {normalizeAdapterId} from '../util/adapter-id.js';
 
 // Utility modules
 import {Simulation} from './simulation.js'; // Simulation helper for bot mode and testing.
@@ -115,6 +115,8 @@ export class App {
     this.simulation.on('pedal', this.onPedalStroke.bind(this));
 
     // Heart-rate capture: enable automatically only when we know two adapters are present.
+    // Teaching note: keep a bound handler so we can reuse it when rebuilding the HR client.
+    this.onHeartRateBound = this.onHeartRate.bind(this);
     let heartRatePreference = null; // null => auto, true => force, false => disable.
     if (typeof opts.heartRateEnabled === 'boolean') {
       heartRatePreference = opts.heartRateEnabled;
@@ -133,7 +135,7 @@ export class App {
         serviceUuid: opts.heartRateServiceUuid,
         connectionManager: this.connectionManager,
       });
-      this.hrClient.on('heartRate', this.onHeartRate.bind(this));
+      this.hrClient.on('heartRate', this.onHeartRateBound);
     } else {
       this.hrClient = null;
       if (heartRatePreference === false) {
@@ -166,8 +168,20 @@ export class App {
     this.pendingRestartReason = null;
     
     // Modern Bluetooth configuration
-    process.env['NOBLE_HCI_DEVICE_ID'] = opts.bikeAdapter;
-    process.env['BLENO_HCI_DEVICE_ID'] = opts.serverAdapter;
+    // Teaching note: noble/bleno want a numeric HCI index in the env vars,
+    // so convert "hci0" style names before setting them.
+    const nobleAdapterId = normalizeAdapterId(opts.bikeAdapter);
+    if (nobleAdapterId === undefined) {
+      this.logger.log('[gym-app] unable to normalize bike adapter ID:', opts.bikeAdapter);
+    } else {
+      process.env['NOBLE_HCI_DEVICE_ID'] = nobleAdapterId;
+    }
+    const blenoAdapterId = normalizeAdapterId(opts.serverAdapter);
+    if (blenoAdapterId === undefined) {
+      this.logger.log('[gym-app] unable to normalize server adapter ID:', opts.serverAdapter);
+    } else {
+      process.env['BLENO_HCI_DEVICE_ID'] = blenoAdapterId;
+    }
     process.env['BLENO_MAX_CONNECTIONS'] = '3';
     process.env['NOBLE_EXTENDED_SCAN'] = '1';
     process.env['NOBLE_MULTI_ROLE'] = '1';
@@ -258,6 +272,91 @@ export class App {
     }
   }
 
+  async ensureBluetoothPoweredOn() {
+    // Teaching note: noble can get stuck in "unknown" state if the adapter id is
+    // invalid or the HCI socket did not initialize, so we retry with timeouts.
+    const maxAttempts = 3;
+    const timeoutMs = 15000;
+    const retryDelayMs = 2000;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const state = this.noble?.state ?? 'unknown';
+      if (state === 'poweredOn') {
+        return;
+      }
+      this.logger.log(`[gym-app] waiting for Bluetooth adapter to become poweredOn (attempt ${attempt}/${maxAttempts}, current state: ${state})`);
+      try {
+        const nextState = await this.waitForNobleStateChange(timeoutMs);
+        if (nextState === 'poweredOn') {
+          return;
+        }
+        this.logger.log(`[gym-app] Bluetooth adapter state is ${nextState}; reinitializing noble`);
+      } catch (error) {
+        this.logger.log(`[gym-app] Bluetooth adapter state timeout after ${timeoutMs}ms; reinitializing noble`);
+      }
+      await this.reinitializeNoble(`attempt-${attempt}`);
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+
+    throw new Error('Bluetooth adapter never reached poweredOn');
+  }
+
+  async waitForNobleStateChange(timeoutMs) {
+    // Teaching note: build our own timeout wrapper so we can remove listeners
+    // if the stateChange event never fires.
+    if (!this.noble?.on) {
+      throw new Error('noble instance unavailable');
+    }
+    return new Promise((resolve, reject) => {
+      const onChange = (nextState) => {
+        cleanup();
+        resolve(nextState);
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error('Bluetooth adapter state timeout'));
+      }, timeoutMs);
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.noble.removeListener('stateChange', onChange);
+      };
+      this.noble.on('stateChange', onChange);
+    });
+  }
+
+  async reinitializeNoble(reason) {
+    // Teaching note: force a fresh noble instance so the HCI socket is reopened.
+    this.logger.log(`[gym-app] reinitializing noble (${reason})`);
+    const { noble } = await initializeBluetooth(this.opts.bikeAdapter, { forceNewInstance: true });
+    this.noble = noble;
+    this.opts.noble = noble;
+    // Teaching note: rebuild the connection manager so heart-rate scans use the new noble.
+    this.connectionManager = new BluetoothConnectionManager(this.noble, {
+      timeout: this.opts.connectionTimeout,
+      maxRetries: this.opts.connectionRetries,
+    });
+    await this.rebuildHeartRateClient();
+  }
+
+  async rebuildHeartRateClient() {
+    // Teaching note: only rebuild when HR is enabled and uses the bike adapter.
+    if (!this.heartRateAutoPreference) {
+      return;
+    }
+    const wantsDedicatedAdapter = Boolean(this.heartRateAdapter && this.heartRateAdapter !== this.opts.bikeAdapter);
+    const nextNoble = wantsDedicatedAdapter ? this.heartRateNoble : this.noble;
+    this.heartRateNoble = nextNoble;
+    if (this.hrClient) {
+      await this.hrClient.disconnect().catch(() => {});
+    }
+    this.hrClient = new HeartRateClient(nextNoble, {
+      deviceName: this.opts.heartRateDevice,
+      serviceUuid: this.opts.heartRateServiceUuid,
+      connectionManager: this.connectionManager,
+    });
+    this.hrClient.on('heartRate', this.onHeartRateBound);
+  }
+
   handleError(error) {
     this.logger.error('Fatal error:', error);
     this.cleanup();
@@ -314,23 +413,9 @@ export class App {
       process.on('SIGINT', this.onSigInt);
       process.on('exit', this.onExit);
 
-      let state = this.noble?.state;
+      const state = this.noble?.state;
       this.logger.log(`[gym-app] checking Bluetooth adapter state: ${state ?? 'unknown'}`);
-      if (state !== 'poweredOn') {
-        this.logger.log('[gym-app] waiting for Bluetooth adapter to become poweredOn...');
-        this.noble?.once('stateChange', (nextState) => {
-          this.logger.log(`[gym-app] noble stateChange event: ${nextState}`);
-        });
-        setTimeout(() => {
-          if (this.noble?.state !== 'poweredOn') {
-            this.logger.log('[gym-app] still waiting for poweredOn after 10s; current state:', this.noble?.state);
-          }
-        }, 10000);
-        [state] = await once(this.noble, 'stateChange');
-      }
-      if (state !== 'poweredOn') {
-        throw new Error(`Bluetooth adapter state: ${state}`);
-      }
+      await this.ensureBluetoothPoweredOn();
       this.logger.log('[gym-app] Bluetooth adapter ready (poweredOn)');
 
       const retryDelayMs = Math.max(1000, Number(this.opts.connectionRetryDelay ?? sharedDefaults.connectionRetryDelay ?? 5000)); // Guarantee at least a one-second delay between attempts even if the config requests 0.

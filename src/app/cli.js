@@ -30,6 +30,7 @@ import { hideBin } from 'yargs/helpers';  // Removes Node.js binary path from ar
 import { options as cliOptions } from './cli-options.js'; // Command line option definitions
 import { detectAdapters } from '../util/adapter-detect.js'; // Auto-detect Bluetooth and ANT+ adapters when the user does not specify them
 import { initializeBluetooth } from '../util/noble-wrapper.js'; // Bluetooth initialization (runs after we set adapter env vars)
+import { normalizeAdapterId } from '../util/adapter-id.js'; // Normalize hci0 -> 0 for noble/bleno env vars
 
 /**
  * Convert a kebab-case CLI option name into the camelCase property that yargs
@@ -165,9 +166,16 @@ const main = async () => {
     // ----------------------------------------
     // If a specific Bluetooth adapter is specified for the bike connection
     if (argv.bikeAdapter) {
-        // Set the Noble (BLE client) adapter ID
-        // Noble is used to connect to the exercise bike
-        process.env.NOBLE_HCI_DEVICE_ID = argv.bikeAdapter;
+        // Teaching note: noble expects a numeric HCI index (0, 1, ...), so we
+        // normalize "hci0" style names before exporting the environment var.
+        const nobleAdapterId = normalizeAdapterId(argv.bikeAdapter);
+        if (nobleAdapterId === undefined) {
+            console.warn('[gym-cli] Unable to normalize bike adapter ID:', argv.bikeAdapter);
+        } else {
+            // Set the Noble (BLE client) adapter ID
+            // Noble is used to connect to the exercise bike
+            process.env.NOBLE_HCI_DEVICE_ID = nobleAdapterId;
+        }
         
         // Enable multiple concurrent BLE roles (central and peripheral)
         // This allows us to connect to the bike while also advertising to apps
@@ -179,9 +187,16 @@ const main = async () => {
 
     // If a specific Bluetooth adapter is specified for the server (connects to apps)
     if (argv.serverAdapter) {
-        // Set the Bleno (BLE peripheral) adapter ID
-        // Bleno is used to advertise to and connect with fitness apps
-        process.env.BLENO_HCI_DEVICE_ID = argv.serverAdapter;
+        // Teaching note: bleno also expects a numeric HCI index in the env var,
+        // so normalize "hci1" -> "1" to avoid "unknown" adapter state.
+        const blenoAdapterId = normalizeAdapterId(argv.serverAdapter);
+        if (blenoAdapterId === undefined) {
+            console.warn('[gym-cli] Unable to normalize server adapter ID:', argv.serverAdapter);
+        } else {
+            // Set the Bleno (BLE peripheral) adapter ID
+            // Bleno is used to advertise to and connect with fitness apps
+            process.env.BLENO_HCI_DEVICE_ID = blenoAdapterId;
+        }
         
         // Set maximum number of simultaneous connections if not already set
         // This allows multiple apps to connect at once (e.g., Zwift + heart rate app)

@@ -1,6 +1,7 @@
 import {EventEmitter} from 'events';
 import {createRequire} from 'module';
 import {loadDependency, toDefaultExport} from './optional-deps.js';
+import {normalizeAdapterId} from './adapter-id.js';
 
 const requireFromWrapper = createRequire(import.meta.url);
 const NOBLE_REQUEST = '@abandonware/noble';
@@ -8,7 +9,12 @@ const NOBLE_REQUEST = '@abandonware/noble';
 export const initializeBluetooth = async (adapter = 'hci0', options = {}) => {
   const {forceNewInstance = false} = options; // Allow callers to request a dedicated noble instance.
   const previousAdapter = process.env.NOBLE_HCI_DEVICE_ID;
-  process.env.NOBLE_HCI_DEVICE_ID = adapter; // Point noble at the requested adapter while we load it.
+  // Teaching note: noble expects a numeric adapter index in the env var, so
+  // normalize "hci0" to "0" before loading the module.
+  const adapterId = normalizeAdapterId(adapter);
+  if (adapterId !== undefined) {
+    process.env.NOBLE_HCI_DEVICE_ID = adapterId; // Point noble at the requested adapter while we load it.
+  }
 
   if (forceNewInstance) {
     try {
