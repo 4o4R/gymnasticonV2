@@ -8,6 +8,7 @@ import {ConfigManager} from '../config/index.js';
 import {MetricsProcessor} from '../util/metrics-processor.js';
 import {HealthMonitor} from '../util/health-monitor.js';
 import {BluetoothConnectionManager} from '../util/connection-manager.js';
+import {detectAdapters} from '../util/adapter-detect.js';
 
 const DEFAULT_CONFIG_PATH = '/etc/gymnasticon.json'; // Matches deploy/gymnasticon.service expectations.
 
@@ -90,6 +91,25 @@ export class GymnasticonApp {
     mergedOptions.metricsProcessor = this.metricsProcessor;
     mergedOptions.healthMonitor = this.healthMonitor;
     mergedOptions.connectionManager = this.connectionManager;
+    // Teaching note: configs can get stale if hardware changes (for example,
+    // moving from dual-adapter to single-adapter). We validate adapters here
+    // so Gymnasticon keeps running without manual edits.
+    // Teaching note: detectAdapters() is Linux-centric, but it fails safely on
+    // unsupported platforms, so this check is a no-op during desktop dev.
+    const detection = detectAdapters();
+    const detectedAdapters = detection.adapters || [];
+    if (detectedAdapters.length) {
+      // Teaching note: if the configured adapter is missing, fall back to the
+      // detected default so BLE advertising and scanning still come up.
+      if (!detectedAdapters.includes(mergedOptions.bikeAdapter)) {
+        console.warn(`[GymnasticonApp] bike adapter ${mergedOptions.bikeAdapter} not found; falling back to ${detection.bikeAdapter}`);
+        mergedOptions.bikeAdapter = detection.bikeAdapter;
+      }
+      if (!detectedAdapters.includes(mergedOptions.serverAdapter)) {
+        console.warn(`[GymnasticonApp] server adapter ${mergedOptions.serverAdapter} not found; falling back to ${detection.serverAdapter}`);
+        mergedOptions.serverAdapter = detection.serverAdapter;
+      }
+    }
     console.log('[gym-cli] Effective bike options:', JSON.stringify({
       bike: mergedOptions.bike,
       defaultBike: mergedOptions.defaultBike,

@@ -12,6 +12,9 @@ export class BleServer extends EventEmitter {
     this.services = services;
     this.uuids = services.map(s => s.uuid);
     this.state = 'stopped';
+    // Teaching note: track active connections so we only call bleno.disconnect()
+    // when someone is actually connected (this reduces spurious HCI warnings).
+    this.connectionCount = 0;
 
     this.bleno.on('accept', this.onAccept.bind(this));
     this.bleno.on('disconnect', this.onDisconnect.bind(this));
@@ -29,6 +32,7 @@ export class BleServer extends EventEmitter {
     }
 
     this.state = 'starting';
+    this.connectionCount = 0; // Teaching note: reset connection tracking on each start.
 
     if (this.bleno.state !== 'poweredOn') {
       const [state] = await once(this.bleno, 'stateChange');
@@ -48,15 +52,25 @@ export class BleServer extends EventEmitter {
     if (this.state === 'stopped') return;
 
     await this.bleno.stopAdvertisingAsync();
-    this.bleno.disconnect();
+    // Teaching note: avoid disconnect calls when no centrals are connected to
+    // prevent "unknown handle" warnings on some BlueZ stacks.
+    if (this.connectionCount > 0) {
+      this.bleno.disconnect();
+    }
     this.state = 'stopped';
   }
 
   onAccept(address) {
+    // Teaching note: increment connection tracking so stop() can decide whether
+    // it is safe/necessary to call bleno.disconnect().
+    this.connectionCount += 1;
     this.emit('connect', address);
   }
 
   onDisconnect(address) {
+    // Teaching note: decrement connection tracking but never let it go negative
+    // in case of duplicate disconnect events.
+    this.connectionCount = Math.max(0, this.connectionCount - 1);
     this.emit('disconnect', address);
   }
 }
