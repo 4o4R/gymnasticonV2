@@ -21,6 +21,7 @@ import {HealthMonitor} from '../util/health-monitor.js';
 import {BluetoothConnectionManager} from '../util/connection-manager.js';
 import {initializeBluetooth} from '../util/noble-wrapper.js';
 import {normalizeAdapterId} from '../util/adapter-id.js';
+import {detectAdapters} from '../util/adapter-detect.js';
 
 // Utility modules
 import {Simulation} from './simulation.js'; // Simulation helper for bot mode and testing.
@@ -170,18 +171,8 @@ export class App {
     // Modern Bluetooth configuration
     // Teaching note: noble/bleno want a numeric HCI index in the env vars,
     // so convert "hci0" style names before setting them.
-    const nobleAdapterId = normalizeAdapterId(opts.bikeAdapter);
-    if (nobleAdapterId === undefined) {
-      this.logger.log('[gym-app] unable to normalize bike adapter ID:', opts.bikeAdapter);
-    } else {
-      process.env['NOBLE_HCI_DEVICE_ID'] = nobleAdapterId;
-    }
-    const blenoAdapterId = normalizeAdapterId(opts.serverAdapter);
-    if (blenoAdapterId === undefined) {
-      this.logger.log('[gym-app] unable to normalize server adapter ID:', opts.serverAdapter);
-    } else {
-      process.env['BLENO_HCI_DEVICE_ID'] = blenoAdapterId;
-    }
+    this.setBikeAdapter(opts.bikeAdapter, 'startup');
+    this.setServerAdapter(opts.serverAdapter, 'startup');
     process.env['BLENO_MAX_CONNECTIONS'] = '3';
     process.env['NOBLE_EXTENDED_SCAN'] = '1';
     process.env['NOBLE_MULTI_ROLE'] = '1';
@@ -206,6 +197,63 @@ export class App {
     await this.server.start();
     this.serverStarted = true;
     this.logger.log('[gym-app] BLE server advertising');
+  }
+
+  setBikeAdapter(adapter, reason = 'unspecified') {
+    // Teaching note: normalize adapter names so "hci0" becomes "0", which
+    // noble understands when it parses the environment variable.
+    const adapterId = normalizeAdapterId(adapter);
+    if (adapterId === undefined) {
+      this.logger.log('[gym-app] unable to normalize bike adapter ID:', adapter);
+      return false;
+    }
+    this.opts.bikeAdapter = adapter;
+    process.env['NOBLE_HCI_DEVICE_ID'] = adapterId;
+    this.logger.log(`[gym-app] bike adapter set to ${adapter} (id=${adapterId}) [${reason}]`);
+    return true;
+  }
+
+  setServerAdapter(adapter, reason = 'unspecified') {
+    // Teaching note: bleno uses a separate env var but the same numeric HCI index.
+    const adapterId = normalizeAdapterId(adapter);
+    if (adapterId === undefined) {
+      this.logger.log('[gym-app] unable to normalize server adapter ID:', adapter);
+      return false;
+    }
+    this.opts.serverAdapter = adapter;
+    process.env['BLENO_HCI_DEVICE_ID'] = adapterId;
+    this.logger.log(`[gym-app] server adapter set to ${adapter} (id=${adapterId}) [${reason}]`);
+    return true;
+  }
+
+  attachNobleDiagnostics() {
+    // Teaching note: log noble warnings/errors once per instance so we can
+    // see why the adapter stays in "unknown" state.
+    if (!this.noble || this.noble.__gymnasticonDiagnosticsAttached) {
+      return;
+    }
+    this.noble.__gymnasticonDiagnosticsAttached = true;
+    this.noble.on('warning', (message) => {
+      this.logger.log('[gym-app] noble warning:', message);
+    });
+    this.noble.on('error', (error) => {
+      this.logger.error('[gym-app] noble error:', error);
+    });
+    this.noble.on('stateChange', (nextState) => {
+      this.logger.log(`[gym-app] noble stateChange event: ${nextState}`);
+    });
+  }
+
+  getFallbackAdapters() {
+    // Teaching note: we only attempt fallback adapters on Linux where the
+    // sysfs discovery is available.
+    try {
+      const detection = detectAdapters();
+      const adapters = detection.adapters || [];
+      return adapters.filter((name) => name && name !== this.opts.bikeAdapter);
+    } catch (_error) {
+      return [];
+    }
   }
 
   async stopServerAdvertising(reason = 'unspecified') {
@@ -278,8 +326,11 @@ export class App {
     const maxAttempts = 3;
     const timeoutMs = 15000;
     const retryDelayMs = 2000;
+    const fallbackAdapters = this.getFallbackAdapters();
+    let fallbackIndex = 0;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      this.attachNobleDiagnostics(); // Teaching note: always log noble state changes and warnings.
       const state = this.noble?.state ?? 'unknown';
       if (state === 'poweredOn') {
         return;
@@ -294,7 +345,17 @@ export class App {
       } catch (error) {
         this.logger.log(`[gym-app] Bluetooth adapter state timeout after ${timeoutMs}ms; reinitializing noble`);
       }
-      await this.reinitializeNoble(`attempt-${attempt}`);
+      const fallback = fallbackAdapters[fallbackIndex];
+      if (fallback) {
+        fallbackIndex += 1;
+        // Teaching note: if the primary adapter does not power on, try another
+        // detected adapter before giving up.
+        this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} failed to power on; trying ${fallback}`);
+        this.setBikeAdapter(fallback, 'fallback');
+        await this.reinitializeNoble(`fallback-${attempt}`);
+      } else {
+        await this.reinitializeNoble(`attempt-${attempt}`);
+      }
       await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }
 
@@ -330,6 +391,7 @@ export class App {
     const { noble } = await initializeBluetooth(this.opts.bikeAdapter, { forceNewInstance: true });
     this.noble = noble;
     this.opts.noble = noble;
+    this.attachNobleDiagnostics(); // Teaching note: reattach diagnostics to the new instance.
     // Teaching note: rebuild the connection manager so heart-rate scans use the new noble.
     this.connectionManager = new BluetoothConnectionManager(this.noble, {
       timeout: this.opts.connectionTimeout,
@@ -415,6 +477,7 @@ export class App {
 
       const state = this.noble?.state;
       this.logger.log(`[gym-app] checking Bluetooth adapter state: ${state ?? 'unknown'}`);
+      this.attachNobleDiagnostics(); // Teaching note: log noble warnings/errors right away.
       await this.ensureBluetoothPoweredOn();
       this.logger.log('[gym-app] Bluetooth adapter ready (poweredOn)');
 
