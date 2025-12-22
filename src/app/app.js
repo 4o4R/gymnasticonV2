@@ -84,7 +84,6 @@ export class App {
     this.crank = { timestamp: 0, revolutions: 0 }; // BLE-friendly crank snapshot (16-bit revolutions + seconds timestamp).
     this.wheel = { timestamp: 0, revolutions: 0 }; // BLE-friendly wheel snapshot (32-bit revolutions + seconds timestamp).
 
-    this.server = new GymnasticonServer(this.bleno, opts.serverName);
     const antRequested = typeof opts.antEnabled === 'boolean' ? opts.antEnabled : Boolean(opts.antAuto ?? defaults.antAuto); // Respect explicit antEnabled, otherwise fall back to auto preference.
     this.antEnabled = antRequested; // Store the resolved ANT+ enable switch for later checks.
     if (this.antEnabled) { // Only create ANT+ resources when needed to avoid probing hardware unnecessarily.
@@ -147,6 +146,11 @@ export class App {
         this.logger.log('Heart-rate rebroadcast disabled (auto mode requires two adapters or supported hardware)');
       }
     }
+    // Teaching note: only include the HR GATT service when we expect to rebroadcast HR.
+    this.server = new GymnasticonServer(this.bleno, opts.serverName, {
+      includeHeartRate: this.heartRateAutoPreference,
+    });
+
     if (this.healthMonitor) {
       this.healthMonitor.on('stale', this.onHealthMetricStale.bind(this));
     }

@@ -1,8 +1,8 @@
 import {CyclingPowerService} from './services/cycling-power/index.js'; // Import the CPS implementation so we can notify power changes.
 import {CyclingSpeedAndCadenceService} from './services/cycling-speed-and-cadence/index.js'; // Import CSC service for wheel/crank updates.
-import {HeartRateService} from './services/heart-rate/index.js'; // Import HR service to forward heart rate metrics.
 import {BleServer} from '../../util/ble-server.js'; // Base helper that wires our bleno services together.
 import {once} from 'events'; // Used to await bleno state changes before advertising.
+import {HeartRateService} from './services/heart-rate/index.js'; // Import HR service to forward heart rate metrics.
 
 export const DEFAULT_NAME = 'GymnasticonV2';
 
@@ -96,33 +96,29 @@ function buildAdvertisingPayload(name, options, uuids) {
   return { advertisementData, scanData };
 }
 
-export function createServices() { // Factory that builds the standard Gymnasticon service list.
-  return [
+export function createServices({ includeHeartRate = true } = {}) { // Factory that builds the standard Gymnasticon service list.
+  const services = [
     new CyclingPowerService(), // Cycling Power Service (UUID 1818).
     new CyclingSpeedAndCadenceService(), // Cycling Speed and Cadence Service (UUID 1816).
-    new HeartRateService(), // Heart Rate Service (UUID 180d).
   ];
+  if (includeHeartRate) { // Teaching note: only include HR when we intend to rebroadcast it.
+    services.push(new HeartRateService()); // Heart Rate Service (UUID 180d).
+  }
+  return services;
 }
 
 export class GymnasticonServer extends BleServer {
-  constructor(bleno, name = DEFAULT_NAME) {
-    const services = createServices(); // Instantiate services before handing them to the base BleServer.
+  constructor(bleno, name = DEFAULT_NAME, options = {}) {
+    const services = createServices({ includeHeartRate: options.includeHeartRate }); // Instantiate services before handing them to the base BleServer.
     super(bleno, name, services);
 
     this.cpsService = services.find(service => service.uuid === '1818'); // Cache the CPS instance for quick lookups.
     this.cscService = services.find(service => service.uuid === '1816'); // Cache the CSC instance so we can update features dynamically.
     this.hrService = services.find(service => service.uuid === '180d'); // Cache the HR service to forward sensor data efficiently.
     this.cscCapabilities = { supportWheel: false, supportCrank: true }; // Track which optional CSC fields we currently advertise.
-
-    this.advertisingOptions = {
-      connectable: true,
-      scannable: true,
-      includeTxPower: true,
-      // Teaching note: omit manufacturer data because the BLE spec expects a
-      // 2-byte company ID; malformed payloads can cause some scanners to ignore
-      // the advertisement entirely (which looks like "no sensors found").
-      serviceUuids: ['1818', '1816', '180d'],
-    };
+    // Teaching note: rely on bleno's standard startAdvertising path so we match
+    // the proven behavior in the original ptx2 project.
+    this.advertisingOptions = null;
   }
 
   updateHeartRate(hr) { // Push heart rate notifications to subscribed clients.
