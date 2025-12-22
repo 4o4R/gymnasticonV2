@@ -64,7 +64,13 @@ export class KeiserBikeClient extends EventEmitter {
     this.statsTimeout = null;
     this.bikeTimeout = null;
     this.peripheral = null;
+    // Teaching note: cache stable identifiers so we can keep matching even if
+    // the adapter reports an "unknown" address in later advertisements.
+    this.peripheralId = null;
+    this.peripheralAddress = null;
+    this.peripheralName = null;
     this.fixDropout = null;
+    this.ignoredPackets = 0; // Teaching note: small counter to avoid log spam when we ignore packets.
   }
   /**
    * Bike behaves like a BLE beacon. Simulate connect by looking up MAC address
@@ -89,6 +95,10 @@ export class KeiserBikeClient extends EventEmitter {
     }
 
     this.peripheral = peripheral;
+    // Teaching note: save identifiers we will use to match future discover events.
+    this.peripheralId = peripheral?.id || null;
+    this.peripheralAddress = normalizeAddress(peripheral?.address);
+    this.peripheralName = peripheral?.advertisement?.localName || null;
 
     let statsTimeoutSeconds = KEISER_STATS_TIMEOUT_OLD;
     try {
@@ -149,7 +159,13 @@ export class KeiserBikeClient extends EventEmitter {
    * @private
    */
   onReceive(peripheral) {
-    if (!this.peripheral || peripheral.address !== this.peripheral.address) {
+    if (!this.peripheral || !this.isMatchingPeripheral(peripheral)) {
+      // Teaching note: only log a few ignored packets so we can debug address
+      // changes without flooding the journal.
+      this.ignoredPackets += 1;
+      if (this.ignoredPackets <= 3) {
+        debuglog(`ignored keiser packet (id=${peripheral?.id} address=${peripheral?.address} name=${peripheral?.advertisement?.localName})`);
+      }
       return;
     }
 
@@ -234,7 +250,11 @@ export class KeiserBikeClient extends EventEmitter {
 
     const address = this.address;
     this.peripheral = null;
+    this.peripheralId = null;
+    this.peripheralAddress = null;
+    this.peripheralName = null;
     this.fixDropout = null;
+    this.ignoredPackets = 0;
 
     this.state = 'disconnected';
     this.emit('disconnect', {address});
@@ -262,6 +282,38 @@ export class KeiserBikeClient extends EventEmitter {
     } catch (err) {
       debuglog('Unable to restart BLE scan', err);
     }
+  }
+
+  isMatchingPeripheral(peripheral) {
+    if (!peripheral) {
+      return false;
+    }
+    // Teaching note: prefer the stable noble id when available.
+    if (this.peripheralId && peripheral.id === this.peripheralId) {
+      return true;
+    }
+    // Teaching note: fall back to normalized MAC address comparison.
+    const address = normalizeAddress(peripheral.address);
+    if (this.peripheralAddress && address && address === this.peripheralAddress) {
+      return true;
+    }
+    // Teaching note: some adapters report "unknown" addresses; if the local name
+    // still matches and the payload looks like Keiser data, accept it.
+    const nameMatches = this.peripheralName && peripheral?.advertisement?.localName === this.peripheralName;
+    const manufacturer = peripheral?.advertisement?.manufacturerData;
+    const hasKeiserMagic = Buffer.isBuffer(manufacturer) && manufacturer.slice(0, KEISER_VALUE_MAGIC.length).equals(KEISER_VALUE_MAGIC);
+    return Boolean(nameMatches && hasKeiserMagic);
+  }
+}
+
+function normalizeAddress(address) {
+  if (!address) {
+    return null;
+  }
+  try {
+    return macAddress(address).toLowerCase();
+  } catch (_error) {
+    return String(address).toLowerCase();
   }
 }
 
