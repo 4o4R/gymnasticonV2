@@ -5,7 +5,10 @@ import {macAddress} from '../util/mac-address.js';
 import {createDropoutFilter} from '../util/dropout-filter.js';
 
 export const KEISER_LOCALNAME = "M3";
-const KEISER_VALUE_MAGIC = Buffer.from([0x02, 0x01]); // identifies Keiser data message
+// Teaching note: Keiser has shipped two different "magic" prefixes over time.
+// Old firmware uses 0x02 0x01, newer firmware has been seen with 0x03.
+const KEISER_VALUE_MAGIC_OLD = Buffer.from([0x02, 0x01]); // legacy Keiser data message header
+const KEISER_VALUE_MAGIC_NEW = Buffer.from([0x03]); // newer Keiser data message header
 const KEISER_VALUE_IDX_POWER = 10; // 16-bit power (watts) data offset within packet
 const KEISER_VALUE_IDX_CADENCE = 6; // 16-bit cadence (1/10 rpm) data offset within packet
 const KEISER_VALUE_IDX_REALTIME = 4; // Indicates whether the data present is realtime (0, or 128 to 227)
@@ -16,6 +19,22 @@ const KEISER_STATS_TIMEOUT_OLD = 30.0; // Old Bike: If no stats received within 
 const KEISER_STATS_TIMEOUT_NEW = 20.0; // New Bike: If no stats received within 20 sec, reset power and cadence to 0
 const KEISER_BIKE_TIMEOUT = 60.0; // Consider bike disconnected if no stats have been received for 60 sec / 1 minutes
 import {loadDependency, toDefaultExport} from '../util/optional-deps.js';
+
+function isValidKeiserData(data) {
+  // Teaching note: we accept both known magic prefixes because Keiser has
+  // shipped at least two wire formats in the wild.
+  if (!Buffer.isBuffer(data)) {
+    return false;
+  }
+  // Teaching note: we need at least 4 bytes to read version bytes safely.
+  if (data.length < 4) {
+    return false;
+  }
+  return (
+    data.indexOf(KEISER_VALUE_MAGIC_OLD) === 0 ||
+    data.indexOf(KEISER_VALUE_MAGIC_NEW) === 0
+  );
+}
 
 const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta);
 const debuglog = toDefaultExport(debugModule)('gym:bikes:keiser');
@@ -32,14 +51,11 @@ export function matchesKeiserName(peripheral) {
 
   // Some Keiser consoles stop sending the local name after the very first advertisement (especially once another central has cached it).
   // When that happens our old matcher never fired, so autodetect would fall back to the default bike and the service kept looping.
-  // Keiser's manufacturer data always begins with the magic 0x02 0x01 header that `parse()` and `bikeVersion()` already rely on,
-  // so we can treat that signature as a secondary detection path.
+  // Keiser's manufacturer data always begins with a known magic header, so we
+  // can treat that signature as a secondary detection path.
   const manufacturer = advertisement.manufacturerData;
-  if (Buffer.isBuffer(manufacturer) && manufacturer.length >= KEISER_VALUE_MAGIC.length) {
-    const prefix = manufacturer.slice(0, KEISER_VALUE_MAGIC.length); // Only compare the header bytes so the rest of the payload can change freely.
-    if (prefix.equals(KEISER_VALUE_MAGIC)) {
-      return true; // The manufacturer payload looks like a Keiser beacon even though the local name is missing.
-    }
+  if (isValidKeiserData(manufacturer)) {
+    return true; // The manufacturer payload looks like a Keiser beacon even though the local name is missing.
   }
 
   return false; // Nothing matched; let autodetect keep scanning.
@@ -104,6 +120,8 @@ export class KeiserBikeClient extends EventEmitter {
     // later packets even if the address rotates or the name disappears.
     const initialManufacturer = peripheral?.advertisement?.manufacturerData;
     if (Buffer.isBuffer(initialManufacturer) && initialManufacturer.length >= 4) {
+      // Teaching note: include the magic + version bytes so we can match
+      // rotating addresses without relying on the local name.
       this.peripheralSignature = initialManufacturer.slice(0, 4).toString('hex');
     } else {
       this.peripheralSignature = null;
@@ -310,7 +328,7 @@ export class KeiserBikeClient extends EventEmitter {
     // Teaching note: some adapters report "unknown" addresses; if the local name
     // still matches and the payload looks like Keiser data, accept it.
     const manufacturer = peripheral?.advertisement?.manufacturerData;
-    const hasKeiserMagic = Buffer.isBuffer(manufacturer) && manufacturer.slice(0, KEISER_VALUE_MAGIC.length).equals(KEISER_VALUE_MAGIC);
+    const hasKeiserMagic = isValidKeiserData(manufacturer);
     if (!hasKeiserMagic) {
       return false;
     }
@@ -355,17 +373,18 @@ function normalizeAddress(address) {
 export function bikeVersion(data) {
   let version = "Unknown";
   let timeout = KEISER_STATS_TIMEOUT_OLD;
-  if (data.indexOf(KEISER_VALUE_MAGIC) === 0) {
-    const major = data.readUInt8(KEISER_VALUE_IDX_VER_MAJOR);
-    const minor = data.readUInt8(KEISER_VALUE_IDX_VER_MINOR);
-    version = major.toString(16) + "." + minor.toString(16);
-    if ((major === 6) && (minor >= parseInt(KEISER_STATS_NEWVER_MINOR, 16))) {
-      timeout = KEISER_STATS_TIMEOUT_NEW;
-    }
-    debuglog(`Keiser M3 bike version: ${version} (Stats timeout: ${timeout} sec.)`);
-    return { version, timeout };
+  // Teaching note: validate the magic header before reading version bytes.
+  if (!isValidKeiserData(data)) {
+    throw new Error('unable to parse bike version data');
   }
-  throw new Error('unable to parse bike version data');
+  const major = data.readUInt8(KEISER_VALUE_IDX_VER_MAJOR);
+  const minor = data.readUInt8(KEISER_VALUE_IDX_VER_MINOR);
+  version = major.toString(16) + "." + minor.toString(16);
+  if ((major === 6) && (minor >= parseInt(KEISER_STATS_NEWVER_MINOR, 16))) {
+    timeout = KEISER_STATS_TIMEOUT_NEW;
+  }
+  debuglog(`Keiser M3 bike version: ${version} (Stats timeout: ${timeout} sec.)`);
+  return { version, timeout };
 }
 
 /**
@@ -378,14 +397,20 @@ export function bikeVersion(data) {
  * @returns {object} message.payload - message payload
  */
 export function parse(data) {
-  if (data.indexOf(KEISER_VALUE_MAGIC) === 0) {
-    const realtime = data.readUInt8(KEISER_VALUE_IDX_REALTIME);
-    if (realtime === 0 || (realtime > 128 && realtime < 255)) {
-      // Realtime data received
-      const power = data.readUInt16LE(KEISER_VALUE_IDX_POWER);
-      const cadence = Math.round(data.readUInt16LE(KEISER_VALUE_IDX_CADENCE) / 10);
-      return {type: 'stats', payload: {power, cadence}};
-    }
+  // Teaching note: validate the header and ensure we have enough bytes to read
+  // power + cadence values without throwing.
+  if (!isValidKeiserData(data)) {
+    throw new Error('unable to parse message');
+  }
+  if (data.length < KEISER_VALUE_IDX_POWER + 2) {
+    throw new Error('unable to parse message');
+  }
+  const realtime = data.readUInt8(KEISER_VALUE_IDX_REALTIME);
+  if (realtime === 0 || (realtime > 128 && realtime < 255)) {
+    // Realtime data received
+    const power = data.readUInt16LE(KEISER_VALUE_IDX_POWER);
+    const cadence = Math.round(data.readUInt16LE(KEISER_VALUE_IDX_CADENCE) / 10);
+    return {type: 'stats', payload: {power, cadence}};
   }
   throw new Error('unable to parse message');
 }
