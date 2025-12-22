@@ -69,6 +69,7 @@ export class KeiserBikeClient extends EventEmitter {
     this.peripheralId = null;
     this.peripheralAddress = null;
     this.peripheralName = null;
+    this.peripheralSignature = null; // Teaching note: capture a small signature from the payload to match rotating addresses.
     this.fixDropout = null;
     this.ignoredPackets = 0; // Teaching note: small counter to avoid log spam when we ignore packets.
   }
@@ -99,6 +100,14 @@ export class KeiserBikeClient extends EventEmitter {
     this.peripheralId = peripheral?.id || null;
     this.peripheralAddress = normalizeAddress(peripheral?.address);
     this.peripheralName = peripheral?.advertisement?.localName || null;
+    // Teaching note: store the first 4 bytes (magic + version) so we can match
+    // later packets even if the address rotates or the name disappears.
+    const initialManufacturer = peripheral?.advertisement?.manufacturerData;
+    if (Buffer.isBuffer(initialManufacturer) && initialManufacturer.length >= 4) {
+      this.peripheralSignature = initialManufacturer.slice(0, 4).toString('hex');
+    } else {
+      this.peripheralSignature = null;
+    }
 
     let statsTimeoutSeconds = KEISER_STATS_TIMEOUT_OLD;
     try {
@@ -253,6 +262,7 @@ export class KeiserBikeClient extends EventEmitter {
     this.peripheralId = null;
     this.peripheralAddress = null;
     this.peripheralName = null;
+    this.peripheralSignature = null;
     this.fixDropout = null;
     this.ignoredPackets = 0;
 
@@ -299,10 +309,26 @@ export class KeiserBikeClient extends EventEmitter {
     }
     // Teaching note: some adapters report "unknown" addresses; if the local name
     // still matches and the payload looks like Keiser data, accept it.
-    const nameMatches = this.peripheralName && peripheral?.advertisement?.localName === this.peripheralName;
     const manufacturer = peripheral?.advertisement?.manufacturerData;
     const hasKeiserMagic = Buffer.isBuffer(manufacturer) && manufacturer.slice(0, KEISER_VALUE_MAGIC.length).equals(KEISER_VALUE_MAGIC);
-    return Boolean(nameMatches && hasKeiserMagic);
+    if (!hasKeiserMagic) {
+      return false;
+    }
+    const nameMatches = this.peripheralName && peripheral?.advertisement?.localName === this.peripheralName;
+    if (nameMatches) {
+      return true;
+    }
+    // Teaching note: if the address rotates or the name disappears, fall back
+    // to the signature match (magic + version bytes).
+    if (this.peripheralSignature && Buffer.isBuffer(manufacturer) && manufacturer.length >= 4) {
+      const signature = manufacturer.slice(0, 4).toString('hex');
+      if (signature === this.peripheralSignature) {
+        return true;
+      }
+    }
+    // Teaching note: last-resort acceptance when name is missing but payload
+    // matches Keiser format; this avoids dropping stats entirely.
+    return !peripheral?.advertisement?.localName;
   }
 }
 
