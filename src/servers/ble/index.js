@@ -118,7 +118,9 @@ export class GymnasticonServer extends BleServer {
       connectable: true,
       scannable: true,
       includeTxPower: true,
-      manufacturerData: Buffer.from([0x01]),
+      // Teaching note: omit manufacturer data because the BLE spec expects a
+      // 2-byte company ID; malformed payloads can cause some scanners to ignore
+      // the advertisement entirely (which looks like "no sensors found").
       serviceUuids: ['1818', '1816', '180d'],
     };
   }
