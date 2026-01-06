@@ -399,12 +399,14 @@ export class App {
     if (!this.noble) {
       return;
     }
-    // Teaching note: noble uses an internal `_state`/`state` gate for scanning.
-    // We update both, then emit a stateChange so any listeners stay consistent.
-    this.noble.state = 'poweredOn';
+    // Teaching note: noble exposes `state` as a getter-only property, so
+    // assigning to it throws. The internal `_state` is what startScanning()
+    // actually checks, so we update `_state` directly instead.
     if ('_state' in this.noble) {
       this.noble._state = 'poweredOn';
     }
+    // Teaching note: emit the stateChange event so any listeners stay in sync
+    // with the forced state (e.g., logs or adapter watchers).
     if (typeof this.noble.emit === 'function') {
       this.noble.emit('stateChange', 'poweredOn');
     }
