@@ -10,6 +10,7 @@
  */
 
 // Core server components
+import {execSync} from 'child_process'; // Spawn lightweight system probes (hciconfig) when noble never reports a state.
 import {GymnasticonServer} from '../servers/ble/index.js';
 import {AntServer} from '../servers/ant/index.js';
 
@@ -342,6 +343,13 @@ export class App {
       if (state === 'poweredOn') {
         return;
       }
+      // Teaching note: some BlueZ stacks never emit a noble state change even
+      // though the adapter is up. When that happens, trust hciconfig and keep
+      // going instead of restarting the whole service forever.
+      if (state === 'unknown' && this.isAdapterUp(this.opts.bikeAdapter)) {
+        this.logger.log('[gym-app] adapter appears UP via hciconfig; proceeding despite noble state=unknown');
+        return;
+      }
       this.logger.log(`[gym-app] waiting for Bluetooth adapter to become poweredOn (attempt ${attempt}/${maxAttempts}, current state: ${state})`);
       try {
         const nextState = await this.waitForNobleStateChange(timeoutMs);
@@ -367,6 +375,21 @@ export class App {
     }
 
     throw new Error('Bluetooth adapter never reached poweredOn');
+  }
+
+  isAdapterUp(adapterName) {
+    // Teaching note: noble sometimes never updates state on some kernels, but
+    // hciconfig still reports the true adapter status.
+    if (!adapterName) {
+      return false;
+    }
+    try {
+      const output = execSync(`hciconfig ${adapterName}`, { stdio: ['ignore', 'pipe', 'ignore'] })
+        .toString();
+      return /UP RUNNING/.test(output);
+    } catch (_error) {
+      return false;
+    }
   }
 
   async waitForNobleStateChange(timeoutMs) {
