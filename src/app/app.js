@@ -370,13 +370,18 @@ export class App {
   }
 
   async waitForNobleStateChange(timeoutMs) {
-    // Teaching note: build our own timeout wrapper so we can remove listeners
-    // if the stateChange event never fires.
+    // Teaching note: wait specifically for a *usable* adapter state. Some
+    // stacks emit transient "poweredOff" before settling into "poweredOn",
+    // so we ignore intermediate states until we see a final answer or time out.
     if (!this.noble?.on) {
       throw new Error('noble instance unavailable');
     }
+    const terminalStates = new Set(['poweredOn', 'unsupported', 'unauthorized']);
     return new Promise((resolve, reject) => {
       const onChange = (nextState) => {
+        if (!terminalStates.has(nextState)) {
+          return; // keep waiting; the adapter may still be powering up
+        }
         cleanup();
         resolve(nextState);
       };
