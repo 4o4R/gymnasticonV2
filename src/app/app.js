@@ -123,9 +123,14 @@ export class App {
     } else if (opts.heartRateDevice) {
       heartRatePreference = true; // requesting a specific device implies they want HR.
     }
-    const autoAllowed = Boolean(opts.multiAdapter); // Only dual-radio setups get HR by default.
-    this.heartRateAutoPreference = heartRatePreference === null ? autoAllowed : (heartRatePreference && autoAllowed);
+    const autoAllowed = Boolean(opts.multiAdapter); // Only dual-radio setups auto-enable HR by default.
+    // Teaching note: if the user *explicitly* asked for HR, honor it even on
+    // single-adapter setups (the README calls this out as a supported override).
+    this.heartRateAutoPreference = heartRatePreference === null ? autoAllowed : heartRatePreference;
     if (this.heartRateAutoPreference) {
+      if (heartRatePreference === true && !autoAllowed) {
+        this.logger.log('Heart-rate rebroadcast forced on single adapter; expect BLE contention');
+      }
       const hrNoble = this.heartRateNoble;
       if (hrNoble !== this.noble) {
         this.logger.log(`Heart-rate client using dedicated adapter ${this.heartRateAdapter}`);
@@ -140,8 +145,6 @@ export class App {
       this.hrClient = null;
       if (heartRatePreference === false) {
         this.logger.log('Heart-rate rebroadcast disabled per configuration');
-      } else if (heartRatePreference === true) {
-        this.logger.log('Heart-rate rebroadcast disabled (hardware limitations detected)');
       } else {
         this.logger.log('Heart-rate rebroadcast disabled (auto mode requires two adapters or supported hardware)');
       }

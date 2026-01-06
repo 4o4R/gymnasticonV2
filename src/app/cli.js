@@ -27,6 +27,7 @@ import { hideBin } from 'yargs/helpers';  // Removes Node.js binary path from ar
 
 // Local Application Imports
 // ------------------------
+import fs from 'fs/promises'; // Read config early so adapter env vars match persisted settings.
 import { options as cliOptions } from './cli-options.js'; // Command line option definitions
 import { detectAdapters } from '../util/adapter-detect.js'; // Auto-detect Bluetooth and ANT+ adapters when the user does not specify them
 import { initializeBluetooth } from '../util/noble-wrapper.js'; // Bluetooth initialization (runs after we set adapter env vars)
@@ -38,6 +39,33 @@ import { normalizeAdapterId } from '../util/adapter-id.js'; // Normalize hci0 ->
  * `heartRateEnabled`.
  */
 const toCamelCase = (flagName) => flagName.replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase());
+
+/**
+ * Normalize config keys so "bike-adapter" becomes "bikeAdapter", matching yargs.
+ */
+const normalizeConfigKeys = (config = {}) => {
+    const normalized = {};
+    for (const [key, value] of Object.entries(config)) {
+        normalized[toCamelCase(key)] = value;
+    }
+    return normalized;
+};
+
+/**
+ * Best-effort config loader used before BLE init so adapter env vars are correct.
+ */
+const loadConfigFile = async (configPath) => {
+    try {
+        const raw = await fs.readFile(configPath, 'utf8');
+        return normalizeConfigKeys(JSON.parse(raw));
+    } catch (error) {
+        // Teaching note: missing config is fine; we just fall back to CLI defaults.
+        if (error?.code === 'ENOENT') {
+            return {};
+        }
+        throw error;
+    }
+};
 
 /**
  * Scan the raw argv tokens (before yargs parsing) and record which long-form
@@ -117,6 +145,24 @@ const main = async () => {
         // Parse the arguments
         .parse();
 
+    const configPath = argv.configPath || argv.config || '/etc/gymnasticon.json'; // Support both legacy --config and explicit --config-path.
+    console.log('[gym-cli] Using config path:', configPath);
+    const configOverrides = await loadConfigFile(configPath); // Teaching note: read config now so BLE env vars match the file.
+
+    // Teaching note: only apply config defaults when the user did NOT explicitly pass the flag.
+    if (!providedOptions.has('bikeAdapter') && configOverrides.bikeAdapter) {
+        argv.bikeAdapter = configOverrides.bikeAdapter;
+    }
+    if (!providedOptions.has('serverAdapter') && configOverrides.serverAdapter) {
+        argv.serverAdapter = configOverrides.serverAdapter;
+    }
+    if (!providedOptions.has('heartRateAdapter') && configOverrides.heartRateAdapter) {
+        argv.heartRateAdapter = configOverrides.heartRateAdapter;
+    }
+    if (!providedOptions.has('heartRateEnabled') && configOverrides.heartRateEnabled !== undefined) {
+        argv.heartRateEnabled = configOverrides.heartRateEnabled;
+    }
+
     const discovery = detectAdapters(); // Gather available adapters and ANT+ presence for sensible defaults.
     if (!argv.bikeAdapter) { // If the user did not specify a bike adapter, fall back to the detected value.
         argv.bikeAdapter = discovery.bikeAdapter;
@@ -153,14 +199,12 @@ const main = async () => {
     if (argv.serverAdapter) adapterPool.add(argv.serverAdapter);
     const hasMultiAdapter = discovery.multiAdapter || adapterPool.size >= 2; // Treat either detected dual-HCI or explicit dual overrides as “multi”.
     argv.multiAdapter = hasMultiAdapter; // Pass through to the App so runtime decisions stay consistent with the CLI.
-    if (!hasMultiAdapter) { // On single-radio setups with older BlueZ, avoid flapping scans/ads by disabling HR bridge automatically.
-        argv.heartRateEnabled = false;
-    } else if (argv.heartRateEnabled === undefined) { // Only auto-enable HR when we are confident two adapters exist.
-        argv.heartRateEnabled = true;
+    if (argv.heartRateEnabled === undefined) { // Teaching note: only auto-pick when the user/config didn't decide.
+        // On single-radio setups we disable by default to avoid flapping scans/ads.
+        argv.heartRateEnabled = hasMultiAdapter;
+    } else if (!hasMultiAdapter && argv.heartRateEnabled) {
+        console.warn('[gym-cli] Heart-rate bridge forced on with a single adapter; expect BLE contention.');
     }
-
-    const configPath = argv.configPath || argv.config || '/etc/gymnasticon.json'; // Support both legacy --config and explicit --config-path.
-    console.log('[gym-cli] Using config path:', configPath);
 
     // Configure Bluetooth Adapters and Settings
     // ----------------------------------------
