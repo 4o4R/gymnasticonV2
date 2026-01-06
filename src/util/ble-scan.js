@@ -13,20 +13,44 @@ import {macAddress} from './mac-address.js';
  * @param {Noble} noble - a Noble instance.
  * @param {string[]} serviceUuids - find devices advertising these GATT service uuids
  * @param {FilterFunction} filter - find devices matching this filter
- * @returns {Peripheral} the matching peripheral
+ * @param {object} options - scan options
+ * @param {boolean} [options.allowDuplicates=true] - allow duplicate discovery events
+ * @param {number} [options.timeoutMs=60000] - maximum time to scan in milliseconds
+ * @returns {Peripheral} the matching peripheral, or null if timeout exceeded
  */
 export async function scan(noble, serviceUuids, filter = () => true, options = {}) { // Scan for the first peripheral that satisfies the filter.
   const allowDuplicates = options.allowDuplicates ?? true; // Noble accepts an allowDuplicates flag when starting a scan.
+  const timeoutMs = options.timeoutMs ?? 60000; // Default 60 second timeout to prevent infinite hangs
   let peripheral; // Track the matched peripheral so we can stop scanning once found.
   const results = on(noble, 'discover'); // Convert noble discover events into an async iterator.
   await noble.startScanningAsync(serviceUuids, allowDuplicates); // Kick off the scan using the caller's duplicate preference.
-  for await (const [result] of results) {
-    if (filter(result)) {
-      peripheral = result;
-      break;
+  
+  try {
+    // Race between finding a match and timeout
+    await Promise.race([
+      (async () => {
+        for await (const [result] of results) {
+          if (filter(result)) {
+            peripheral = result;
+            return; // Found match, exit the loop
+          }
+        }
+      })(),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error(`BLE scan timeout after ${timeoutMs}ms`)), timeoutMs)
+      )
+    ]);
+  } catch (err) {
+    // If timeout or other error, we'll return null below and let the caller retry
+    if (err.message && err.message.includes('timeout')) {
+      // Timeout is expected behavior, not a fatal error
+      peripheral = null;
+    } else {
+      throw err; // Re-throw unexpected errors
     }
+  } finally {
+    await noble.stopScanningAsync();
   }
-  await noble.stopScanningAsync();
   return peripheral;
 }
 
