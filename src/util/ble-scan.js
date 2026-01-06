@@ -22,6 +22,7 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
   const allowDuplicates = options.allowDuplicates ?? true; // Noble accepts an allowDuplicates flag when starting a scan.
   const timeoutMs = options.timeoutMs ?? 60000; // Default 60 second timeout to prevent infinite hangs
   let peripheral; // Track the matched peripheral so we can stop scanning once found.
+  let discoveryCount = 0; // Track how many devices we see
   const results = on(noble, 'discover'); // Convert noble discover events into an async iterator.
   
   console.log(`[ble-scan] Starting BLE scan (timeout: ${timeoutMs}ms, allowDuplicates: ${allowDuplicates})`);
@@ -32,9 +33,18 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
     await Promise.race([
       (async () => {
         for await (const [result] of results) {
+          discoveryCount++;
+          const name = result?.advertisement?.localName || '(no name)';
+          const addr = result?.address || 'unknown';
+          
+          // Log every discovery so we can see what's out there
+          if (discoveryCount % 10 === 1) { // Log every 10th to avoid spam
+            console.log(`[ble-scan] Discovery #${discoveryCount}: ${name} [${addr}]`);
+          }
+          
           if (filter(result)) {
             peripheral = result;
-            console.log(`[ble-scan] Found matching device: ${result?.address || 'unknown'}`);
+            console.log(`[ble-scan] ✓ MATCH FOUND after ${discoveryCount} discoveries: ${name} [${addr}]`);
             return; // Found match, exit the loop
           }
         }
@@ -47,7 +57,7 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
     // If timeout or other error, we'll return null below and let the caller retry
     if (err.message && err.message.includes('timeout')) {
       // Timeout is expected behavior, not a fatal error
-      console.log(`[ble-scan] Scan timed out after ${timeoutMs}ms - no matching device found`);
+      console.log(`[ble-scan] ✗ Scan timed out after ${timeoutMs}ms (saw ${discoveryCount} devices total, none matched filter)`);
       peripheral = null;
     } else {
       throw err; // Re-throw unexpected errors

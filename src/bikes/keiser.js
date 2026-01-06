@@ -46,6 +46,7 @@ export function matchesKeiserName(peripheral) {
   const name = advertisement.localName ?? ''; // Local names only appear occasionally; treat missing names as blank strings.
 
   if (KEISER_NAME_PATTERN.test(name)) { // Classic path: the Keiser console advertises as "M3i#123" (or similar). Quick bail-out keeps happy-path fast.
+    console.log(`[keiser-match] ✓ Matched by name: "${name}"`);
     return true;
   }
 
@@ -55,6 +56,7 @@ export function matchesKeiserName(peripheral) {
   // can treat that signature as a secondary detection path.
   const manufacturer = advertisement.manufacturerData;
   if (isValidKeiserData(manufacturer)) {
+    console.log(`[keiser-match] ✓ Matched by manufacturer data magic: "${name || '(no name)'}"`);
     return true; // The manufacturer payload looks like a Keiser beacon even though the local name is missing.
   }
 
