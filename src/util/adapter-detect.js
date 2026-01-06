@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 
 const BLUETOOTH_SYSFS = '/sys/class/bluetooth';
+const HCI_VERSION_REGEX = /HCI Version:\s*([0-9.]+)/i;
 
 function discoverAdapters() {
   if (!fs.existsSync(BLUETOOTH_SYSFS)) {
@@ -83,4 +84,38 @@ export function detectAdapters() {
   }
 
   return summary;
+}
+
+export function getHciVersion(adapterName) {
+  // Teaching note: `hciconfig -a` prints the controller's HCI version, which
+  // is a quick proxy for BLE feature support (extended scan needs 5.0+).
+  if (!adapterName) {
+    return null;
+  }
+  try {
+    const output = execSync(`hciconfig -a ${adapterName}`, { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString();
+    const match = output.match(HCI_VERSION_REGEX);
+    if (!match) {
+      return null;
+    }
+    const version = Number.parseFloat(match[1]);
+    return Number.isFinite(version) ? version : null;
+  } catch (_error) {
+    return null; // If hciconfig is missing or fails, treat version as unknown.
+  }
+}
+
+export function supportsExtendedScan(adapterName) {
+  // Teaching note: Extended scanning is a Bluetooth 5.0+ feature, so only
+  // enable it when the controller advertises HCI >= 5.0.
+  const version = getHciVersion(adapterName);
+  if (version === null) {
+    return { supported: false, version: null, reason: 'unknown-version' };
+  }
+  return {
+    supported: version >= 5.0,
+    version,
+    reason: version >= 5.0 ? 'hci-5-plus' : 'hci-legacy'
+  };
 }

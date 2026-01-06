@@ -22,7 +22,7 @@ import {HealthMonitor} from '../util/health-monitor.js';
 import {BluetoothConnectionManager} from '../util/connection-manager.js';
 import {initializeBluetooth} from '../util/noble-wrapper.js';
 import {normalizeAdapterId} from '../util/adapter-id.js';
-import {detectAdapters} from '../util/adapter-detect.js';
+import {detectAdapters, supportsExtendedScan} from '../util/adapter-detect.js';
 
 // Utility modules
 import {Simulation} from './simulation.js'; // Simulation helper for bot mode and testing.
@@ -182,12 +182,11 @@ export class App {
     this.setBikeAdapter(opts.bikeAdapter, 'startup');
     this.setServerAdapter(opts.serverAdapter, 'startup');
     process.env['BLENO_MAX_CONNECTIONS'] = '3';
-    process.env['NOBLE_EXTENDED_SCAN'] = '1';
-    process.env['NOBLE_MULTI_ROLE'] = '1';
-    
-    if (opts.bikeAdapter === opts.serverAdapter) {
-      process.env['NOBLE_MULTI_ROLE'] = '1';
-    }
+
+    // Teaching note: multi-role is only required when one adapter must both
+    // scan and advertise. With two adapters, leaving this unset avoids older
+    // kernel quirks.
+    this.configureMultiRole();
 
     // Enhanced error handling
     this.errorHandler = this.handleError.bind(this);
@@ -217,6 +216,12 @@ export class App {
     }
     this.opts.bikeAdapter = adapter;
     process.env['NOBLE_HCI_DEVICE_ID'] = adapterId;
+    // Teaching note: configure extended scan before noble is (re)initialized,
+    // because the env var is read when the module loads.
+    this.configureExtendedScan(adapter);
+    // Teaching note: changing the bike adapter can affect whether we need
+    // multi-role (single vs dual adapter), so recompute it here too.
+    this.configureMultiRole();
     this.logger.log(`[gym-app] bike adapter set to ${adapter} (id=${adapterId}) [${reason}]`);
     return true;
   }
@@ -230,8 +235,40 @@ export class App {
     }
     this.opts.serverAdapter = adapter;
     process.env['BLENO_HCI_DEVICE_ID'] = adapterId;
+    // Teaching note: changing the server adapter can flip us between single
+    // and dual adapter mode, so recompute multi-role here as well.
+    this.configureMultiRole();
     this.logger.log(`[gym-app] server adapter set to ${adapter} (id=${adapterId}) [${reason}]`);
     return true;
+  }
+
+  configureMultiRole() {
+    // Teaching note: only enable multi-role when one adapter must both scan
+    // (central) and advertise (peripheral). Dual-adapter setups do not need it.
+    const sameAdapter = Boolean(
+      this.opts.bikeAdapter &&
+      this.opts.serverAdapter &&
+      this.opts.bikeAdapter === this.opts.serverAdapter
+    );
+    if (sameAdapter) {
+      process.env['NOBLE_MULTI_ROLE'] = '1';
+    } else {
+      delete process.env['NOBLE_MULTI_ROLE'];
+    }
+    this.logger.log(`[gym-app] multi-role ${sameAdapter ? 'enabled' : 'disabled'} (bike=${this.opts.bikeAdapter} server=${this.opts.serverAdapter})`);
+  }
+
+  configureExtendedScan(adapter) {
+    // Teaching note: Extended scan needs Bluetooth 5.0+ controllers. On older
+    // radios, enabling it can suppress discover events, so we disable it.
+    const extendedScan = supportsExtendedScan(adapter);
+    if (extendedScan.supported) {
+      process.env['NOBLE_EXTENDED_SCAN'] = '1';
+    } else {
+      delete process.env['NOBLE_EXTENDED_SCAN'];
+    }
+    const versionLabel = extendedScan.version ? ` (HCI ${extendedScan.version})` : '';
+    this.logger.log(`[gym-app] extended scan ${extendedScan.supported ? 'enabled' : 'disabled'} for ${adapter}${versionLabel}`);
   }
 
   attachNobleDiagnostics() {

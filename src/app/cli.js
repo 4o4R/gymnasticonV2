@@ -29,7 +29,7 @@ import { hideBin } from 'yargs/helpers';  // Removes Node.js binary path from ar
 // ------------------------
 import fs from 'fs/promises'; // Read config early so adapter env vars match persisted settings.
 import { options as cliOptions } from './cli-options.js'; // Command line option definitions
-import { detectAdapters } from '../util/adapter-detect.js'; // Auto-detect Bluetooth and ANT+ adapters when the user does not specify them
+import { detectAdapters, supportsExtendedScan } from '../util/adapter-detect.js'; // Auto-detect Bluetooth and ANT+ adapters when the user does not specify them
 import { initializeBluetooth } from '../util/noble-wrapper.js'; // Bluetooth initialization (runs after we set adapter env vars)
 import { normalizeAdapterId } from '../util/adapter-id.js'; // Normalize hci0 -> 0 for noble/bleno env vars
 
@@ -221,12 +221,6 @@ const main = async () => {
             process.env.NOBLE_HCI_DEVICE_ID = nobleAdapterId;
         }
         
-        // Enable multiple concurrent BLE roles (central and peripheral)
-        // This allows us to connect to the bike while also advertising to apps
-        process.env.NOBLE_MULTI_ROLE = '1';
-        
-        // Enable extended BLE scanning for better device discovery
-        process.env.NOBLE_EXTENDED_SCAN = '1';
     }
 
     // If a specific Bluetooth adapter is specified for the server (connects to apps)
@@ -247,6 +241,30 @@ const main = async () => {
         if (!process.env.BLENO_MAX_CONNECTIONS) {
             process.env.BLENO_MAX_CONNECTIONS = '3';
         }
+    }
+
+    // Teaching note: multi-role is only needed when one adapter handles both
+    // scanning (bike) and advertising (server). With two adapters, leaving it
+    // off avoids unnecessary HCI quirks on older stacks.
+    const usesSingleAdapter = Boolean(argv.bikeAdapter && argv.serverAdapter && argv.bikeAdapter === argv.serverAdapter);
+    if (usesSingleAdapter) {
+        process.env.NOBLE_MULTI_ROLE = '1';
+    } else {
+        delete process.env.NOBLE_MULTI_ROLE;
+    }
+
+    // Teaching note: extended scanning requires Bluetooth 5.0+ controllers.
+    // On 4.1/4.2 radios (common on Pi Zero 2 W), forcing it can suppress
+    // discover events entirely, so we disable it when unsupported.
+    const extendedScan = supportsExtendedScan(argv.bikeAdapter);
+    if (extendedScan.supported) {
+        process.env.NOBLE_EXTENDED_SCAN = '1';
+    } else {
+        delete process.env.NOBLE_EXTENDED_SCAN;
+    }
+    if (argv.bikeAdapter) {
+        const versionLabel = extendedScan.version ? ` (HCI ${extendedScan.version})` : '';
+        console.log(`[gym-cli] extended scan ${extendedScan.supported ? 'enabled' : 'disabled'} for ${argv.bikeAdapter}${versionLabel}`);
     }
 
     // Initialize Bluetooth Stack
