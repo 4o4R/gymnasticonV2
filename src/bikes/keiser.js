@@ -102,22 +102,21 @@ export class KeiserBikeClient extends EventEmitter {
 
     const filter = matchesKeiserName;
     
-    try {
-      debuglog('Starting Keiser bike scan with 60 second timeout');
-      const peripheral = await scan(this.noble, null, filter, {
-        allowDuplicates: true,
-        active: true,
-        timeoutMs: 60000  // 60 second timeout
-      });
+    debuglog('Starting Keiser bike scan with 60 second timeout');
+    const peripheral = await scan(this.noble, null, filter, {
+      allowDuplicates: true,
+      active: true,
+      timeoutMs: 60000  // 60 second timeout
+    });
 
-      if (!peripheral) {
-        this.state = 'disconnected';
-        debuglog('Keiser bike not found after scan timeout - bike may not be powered on or in range');
-        throw new Error('Unable to find Keiser bike - check bike power and BLE signal');
-      }
+    if (!peripheral) {
+      this.state = 'disconnected';
+      debuglog('Keiser bike not found after scan timeout - bike may not be powered on or in range');
+      throw new Error('Unable to find Keiser bike - check bike power and BLE signal');
+    }
 
-      debuglog(`Found Keiser bike: address=${peripheral.address} name=${peripheral?.advertisement?.localName}`);
-      this.peripheral = peripheral;
+    debuglog(`Found Keiser bike: address=${peripheral.address} name=${peripheral?.advertisement?.localName}`);
+    this.peripheral = peripheral;
     // Teaching note: save identifiers we will use to match future discover events.
     this.peripheralId = peripheral?.id || null;
     this.peripheralAddress = normalizeAddress(peripheral?.address);
