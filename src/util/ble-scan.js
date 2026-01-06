@@ -23,6 +23,8 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
   const timeoutMs = options.timeoutMs ?? 60000; // Default 60 second timeout to prevent infinite hangs
   let peripheral; // Track the matched peripheral so we can stop scanning once found.
   const results = on(noble, 'discover'); // Convert noble discover events into an async iterator.
+  
+  console.log(`[ble-scan] Starting BLE scan (timeout: ${timeoutMs}ms, allowDuplicates: ${allowDuplicates})`);
   await noble.startScanningAsync(serviceUuids, allowDuplicates); // Kick off the scan using the caller's duplicate preference.
   
   try {
@@ -32,6 +34,7 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
         for await (const [result] of results) {
           if (filter(result)) {
             peripheral = result;
+            console.log(`[ble-scan] Found matching device: ${result?.address || 'unknown'}`);
             return; // Found match, exit the loop
           }
         }
@@ -44,6 +47,7 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
     // If timeout or other error, we'll return null below and let the caller retry
     if (err.message && err.message.includes('timeout')) {
       // Timeout is expected behavior, not a fatal error
+      console.log(`[ble-scan] Scan timed out after ${timeoutMs}ms - no matching device found`);
       peripheral = null;
     } else {
       throw err; // Re-throw unexpected errors
