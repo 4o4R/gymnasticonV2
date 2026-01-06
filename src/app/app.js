@@ -347,7 +347,10 @@ export class App {
       // though the adapter is up. When that happens, trust hciconfig and keep
       // going instead of restarting the whole service forever.
       if (state === 'unknown' && this.isAdapterUp(this.opts.bikeAdapter)) {
-        this.logger.log('[gym-app] adapter appears UP via hciconfig; proceeding despite noble state=unknown');
+        // Teaching note: noble gates startScanningAsync() on its internal state.
+        // If BlueZ never emits a stateChange but hciconfig shows the adapter
+        // is UP, we force the state to poweredOn so scans can start.
+        this.forceNoblePoweredOn('hciconfig');
         return;
       }
       this.logger.log(`[gym-app] waiting for Bluetooth adapter to become poweredOn (attempt ${attempt}/${maxAttempts}, current state: ${state})`);
@@ -390,6 +393,22 @@ export class App {
     } catch (_error) {
       return false;
     }
+  }
+
+  forceNoblePoweredOn(reason) {
+    if (!this.noble) {
+      return;
+    }
+    // Teaching note: noble uses an internal `_state`/`state` gate for scanning.
+    // We update both, then emit a stateChange so any listeners stay consistent.
+    this.noble.state = 'poweredOn';
+    if ('_state' in this.noble) {
+      this.noble._state = 'poweredOn';
+    }
+    if (typeof this.noble.emit === 'function') {
+      this.noble.emit('stateChange', 'poweredOn');
+    }
+    this.logger.log(`[gym-app] forcing noble state to poweredOn (${reason})`);
   }
 
   async waitForNobleStateChange(timeoutMs) {
