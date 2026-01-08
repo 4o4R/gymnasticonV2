@@ -127,6 +127,17 @@ install_node_default() {
     sudo apt-get install -y nodejs # install the distro-specific Node.js 14 build (includes npm)
 }
 
+ensure_npm() {
+    # Teaching note: Debian Bookworm splits npm into its own package, so a plain
+    # `apt-get install nodejs` may *not* include npm. We install it explicitly
+    # when missing so later `sudo npm ...` steps succeed.
+    if command -v npm >/dev/null 2>&1; then
+        return # npm already available; nothing to do
+    fi
+    echo "npm not found; installing the Debian npm package so install steps can continue." # log for transparency
+    sudo apt-get install -y npm
+}
+
 unblock_bluetooth() {
     if command -v rfkill >/dev/null 2>&1; then # only attempt unblocking when rfkill exists
         sudo rfkill unblock bluetooth || true # clear soft blocks so hciconfig up does not fail with RF-kill errors
@@ -140,6 +151,7 @@ if [ "${ARCH}" = "armv6l" ]; then
 else
     install_node_default # newer Pis or other architectures use the NodeSource repository
 fi
+ensure_npm # guarantee npm exists before we run any npm-based steps below
 
 # Ensure node-gyp is compatible with Python 3.11 on Bookworm (npm v6 ships node-gyp v5 which fails with 'rU')
 sudo npm install -g node-gyp@9 --unsafe-perm >/dev/null 2>&1 || sudo npm install -g node-gyp@9 --unsafe-perm # install a Python 3.11-safe node-gyp globally
