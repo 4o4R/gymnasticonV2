@@ -61,13 +61,19 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
       }
     };
     
+    console.log(`[ble-scan] Attaching discover event listener...`);
     noble.on('discover', onDiscover);
+    console.log(`[ble-scan] Starting scan with noble.startScanningAsync(serviceUuids=${JSON.stringify(serviceUuids)}, allowDuplicates=${allowDuplicates})...`);
     timeoutHandle = setTimeout(onTimeout, timeoutMs);
     
-    noble.startScanningAsync(serviceUuids, allowDuplicates).catch((err) => {
-      console.error(`[ble-scan] Error starting scan: ${err.message}`);
-      cleanup().then(() => resolve(null));
-    });
+    noble.startScanningAsync(serviceUuids, allowDuplicates)
+      .then(() => {
+        console.log(`[ble-scan] Scanning started successfully`);
+      })
+      .catch((err) => {
+        console.error(`[ble-scan] Error starting scan: ${err.message}`);
+        cleanup().then(() => resolve(null));
+      });
   });
 }
 

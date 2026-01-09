@@ -60,6 +60,11 @@ export function matchesKeiserName(peripheral) {
     return true; // The manufacturer payload looks like a Keiser beacon even though the local name is missing.
   }
 
+  // Log first few rejections to help debug missing bikes
+  if (Math.random() < 0.05) { // Log ~5% of devices to avoid spam
+    console.log(`[keiser-match] ✗ Device rejected: name="${name}", hasMfg=${!!manufacturer}, addr=${peripheral?.address || 'unknown'}`);
+  }
+
   return false; // Nothing matched; let autodetect keep scanning.
 }
 
