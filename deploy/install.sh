@@ -156,7 +156,10 @@ ensure_npm # guarantee npm exists before we run any npm-based steps below
 # Ensure node-gyp is compatible with Python 3.11 on Bookworm (npm v6 ships node-gyp v5 which fails with 'rU')
 sudo npm install -g node-gyp@9 --unsafe-perm >/dev/null 2>&1 || sudo npm install -g node-gyp@9 --unsafe-perm # install a Python 3.11-safe node-gyp globally
 NODE_GYP_BIN="$(sudo npm root -g)/node-gyp/bin/node-gyp.js" # resolve the installed node-gyp path regardless of whether npm's prefix is /usr or /usr/local
-sudo npm config set node_gyp "${NODE_GYP_BIN}" # force npm to use the modern node-gyp during installs (works around bundled node-gyp v5)
+# Do NOT persist node_gyp into npm config.
+# Some npm versions reject "node_gyp" as a valid config key and error with:
+#   "npm ERR! node_gyp is not a valid npm option"
+# Instead, pass it as an environment variable at install time.
 sudo npm config set python /usr/bin/python3 # explicitly point npm/node-gyp at Python 3 so it never falls back to missing python2
 
 # Ensure Bluetooth services are enabled and adapters powered before starting Gymnasticon
@@ -206,7 +209,11 @@ APP_DIR="/opt/gymnasticon"
 sudo mkdir -p "$APP_DIR" # ensure the parent prefix exists before cloning
 sudo git clone https://github.com/4o4R/gymnasticonV2.git "$APP_DIR"
 cd "$APP_DIR"
-sudo env CXXFLAGS="-std=gnu++14" npm install --omit=dev --unsafe-perm --cache /tmp/npm-cache # install production dependencies directly inside the repo (allow scripts under sudo and avoid cache permission issues)
+sudo env \
+    CXXFLAGS="-std=gnu++14" \
+    npm_config_node_gyp="${NODE_GYP_BIN}" \
+    npm_config_python="/usr/bin/python3" \
+    npm install --omit=dev --unsafe-perm --cache /tmp/npm-cache # install production dependencies directly inside the repo (allow scripts under sudo and avoid cache permission issues)
 sudo install -d -m 755 /opt/gymnasticon/bin # create a bin directory for helper scripts
 sudo install -m 755 "$APP_DIR/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon-wrapper.sh" /opt/gymnasticon/bin/gymnasticon # reuse the wrapper so users can run `gymnasticon` manually
 sudo install -m 644 "$APP_DIR/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon.json" /etc/gymnasticon.json # seed the default config on manual installs for parity with the image

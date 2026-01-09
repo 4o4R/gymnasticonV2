@@ -113,10 +113,12 @@ Manual setup is useful for non-Raspberry Pi Linux hosts, development workstation
 sudo git clone https://github.com/4o4R/gymnasticonV2.git /opt/gymnasticon
 cd /opt/gymnasticon
 
-# Bookworm/Bullseye tip (Python 3.12/3.11): use modern node-gyp + Python 3.11 to avoid gyp "invalid mode: 'rU'" errors
+# Bookworm/Bullseye tip (Python 3.12/3.11): use modern node-gyp + Python 3 to avoid gyp "invalid mode: 'rU'" errors
+# Some npm versions reject "node_gyp" as a config key ("node_gyp is not a valid npm option"),
+# so prefer environment variables over persistent npm config.
 NODE_GYP_BIN="$(npm root -g)/node-gyp/bin/node-gyp.js"
-npm config set node_gyp "$NODE_GYP_BIN"
-npm config set python /usr/bin/python3.11
+export npm_config_node_gyp="$NODE_GYP_BIN"
+export npm_config_python=/usr/bin/python3.11
 
 # ARMv6 boards need this before npm install
 export CXXFLAGS=-std=gnu++14

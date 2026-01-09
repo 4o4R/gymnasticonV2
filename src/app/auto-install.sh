@@ -129,7 +129,7 @@ fi
 # npm v6 (bundled with Node 14) ships node-gyp v5, which fails on Python 3.11 (Bookworm) due to the deprecated 'rU' mode.
 sudo npm install -g node-gyp@9 --unsafe-perm >/dev/null 2>&1 || sudo npm install -g node-gyp@9 --unsafe-perm
 NODE_GYP_BIN="$(sudo npm root -g)/node-gyp/bin/node-gyp.js"
-sudo npm config set node_gyp "${NODE_GYP_BIN}"
+# Do not persist node_gyp into npm config (some npm versions reject it).
 sudo npm config set python /usr/bin/python3
 
 # Grant the Node binary CAP_NET_RAW so noble/bleno can access BLE sockets as
@@ -145,7 +145,11 @@ cd /opt/gymnasticon
 # Explain why we pass the CXX standard flag: serialport/noble bindings target
 # gnu++14 for Pi Zero builds and will fail to compile without this override.
 echo -e "${YELLOW}Installing npm dependencies (omit dev) with Pi-friendly flags...${NC}"
-sudo env CXXFLAGS="-std=gnu++14" npm install --omit=dev
+sudo env \
+  CXXFLAGS="-std=gnu++14" \
+  npm_config_node_gyp="${NODE_GYP_BIN}" \
+  npm_config_python="/usr/bin/python3" \
+  npm install --omit=dev
 
 # ── Stage 3: Register the service so Gymnasticon auto-starts on boot ──────────
 echo -e "${YELLOW}Configuring systemd service...${NC}"
