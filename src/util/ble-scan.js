@@ -1,3 +1,4 @@
+import {on} from 'events';
 import {macAddress} from './mac-address.js';
 
 /**
@@ -8,7 +9,7 @@ import {macAddress} from './mac-address.js';
  */
 
 /**
- * Scan for first matching BLE device using event listeners (compatible with noble).
+ * Scan for first matching BLE device.
  * @param {Noble} noble - a Noble instance.
  * @param {string[]} serviceUuids - find devices advertising these GATT service uuids
  * @param {FilterFunction} filter - find devices matching this filter
@@ -20,64 +21,51 @@ import {macAddress} from './mac-address.js';
 export async function scan(noble, serviceUuids, filter = () => true, options = {}) {
   const allowDuplicates = options.allowDuplicates ?? true;
   const timeoutMs = options.timeoutMs ?? 60000;
-  let peripheral = null;
+  let peripheral;
   let discoveryCount = 0;
-  let timeoutHandle = null;
   
   console.log(`[ble-scan] Starting BLE scan (timeout: ${timeoutMs}ms, allowDuplicates: ${allowDuplicates})`);
   
-  return new Promise(async (resolve, reject) => {
-    // Handler for discovery events
-    const onDiscover = (result) => {
-      discoveryCount++;
-      const name = result?.advertisement?.localName || '(no name)';
-      const addr = result?.address || 'unknown';
-      
-      // Log every 10th discovery to avoid spam
-      if (discoveryCount % 10 === 1) {
-        console.log(`[ble-scan] Discovery #${discoveryCount}: ${name} [${addr}]`);
-      }
-      
-      if (filter(result)) {
-        peripheral = result;
-        console.log(`[ble-scan] ✓ MATCH FOUND after ${discoveryCount} discoveries: ${name} [${addr}]`);
-        cleanup();
-        resolve(peripheral);
-      }
-    };
-    
-    // Cleanup function
-    const cleanup = async () => {
-      if (timeoutHandle) {
-        clearTimeout(timeoutHandle);
-        timeoutHandle = null;
-      }
-      noble.removeListener('discover', onDiscover);
-      try {
-        await noble.stopScanningAsync();
-      } catch (err) {
-        // Ignore stop errors
-      }
-    };
-    
-    // Set timeout
-    timeoutHandle = setTimeout(async () => {
-      console.log(`[ble-scan] ✗ Scan timed out after ${timeoutMs}ms (saw ${discoveryCount} devices total, none matched filter)`);
-      await cleanup();
-      resolve(null);
-    }, timeoutMs);
-    
-    try {
-      // Attach listener BEFORE starting scan so we catch early discoveries
-      noble.on('discover', onDiscover);
-      
-      // Start scanning
-      await noble.startScanningAsync(serviceUuids, allowDuplicates);
-    } catch (err) {
-      await cleanup();
-      reject(err);
+  const results = on(noble, 'discover');
+  await noble.startScanningAsync(serviceUuids, allowDuplicates);
+  
+  try {
+    // Use Promise.race to add a timeout
+    await Promise.race([
+      (async () => {
+        for await (const [result] of results) {
+          discoveryCount++;
+          const name = result?.advertisement?.localName || '(no name)';
+          const addr = result?.address || 'unknown';
+          
+          // Log every 10th discovery to avoid spam
+          if (discoveryCount % 10 === 1) {
+            console.log(`[ble-scan] Discovery #${discoveryCount}: ${name} [${addr}]`);
+          }
+          
+          if (filter(result)) {
+            peripheral = result;
+            console.log(`[ble-scan] ✓ MATCH FOUND after ${discoveryCount} discoveries: ${name} [${addr}]`);
+            return;
+          }
+        }
+      })(),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error(`timeout`)), timeoutMs)
+      )
+    ]);
+  } catch (err) {
+    if (err.message && err.message.includes('timeout')) {
+      console.log(`[ble-scan] ✗ Scan timed out after ${timeoutMs}ms (saw ${discoveryCount} devices, none matched filter)`);
+      peripheral = null;
+    } else {
+      throw err;
     }
-  });
+  } finally {
+    await noble.stopScanningAsync();
+  }
+  
+  return peripheral;
 }
 
 /**
