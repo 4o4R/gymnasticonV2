@@ -20,11 +20,13 @@ import {macAddress} from './mac-address.js';
 export async function scan(noble, serviceUuids, filter = () => true, options = {}) {
   const allowDuplicates = options.allowDuplicates ?? true;
   const timeoutMs = options.timeoutMs ?? 60000;
+  const hasTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0;
   let peripheral;
   let discoveryCount = 0;
   let timeoutHandle;
-  
-  console.log(`[ble-scan] Starting BLE scan (timeout: ${timeoutMs}ms, allowDuplicates: ${allowDuplicates})`);
+
+  const timeoutLabel = hasTimeout ? `${timeoutMs}ms` : 'disabled';
+  console.log(`[ble-scan] Starting BLE scan (timeout: ${timeoutLabel}, allowDuplicates: ${allowDuplicates})`);
   
   return new Promise((resolve, reject) => {
     const onDiscover = (result) => {
@@ -64,7 +66,9 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
     console.log(`[ble-scan] Attaching discover event listener...`);
     noble.on('discover', onDiscover);
     console.log(`[ble-scan] Starting scan with noble.startScanningAsync(serviceUuids=${JSON.stringify(serviceUuids)}, allowDuplicates=${allowDuplicates})...`);
-    timeoutHandle = setTimeout(onTimeout, timeoutMs);
+    if (hasTimeout) {
+      timeoutHandle = setTimeout(onTimeout, timeoutMs);
+    }
     
     noble.startScanningAsync(serviceUuids, allowDuplicates)
       .then(() => {

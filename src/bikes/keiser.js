@@ -1,6 +1,6 @@
 import {EventEmitter} from 'events';
 import {Timer} from '../util/timer.js';
-import {scan, createNameFilter} from '../util/ble-scan.js';
+import {scan} from '../util/ble-scan.js';
 import {macAddress} from '../util/mac-address.js';
 import {createDropoutFilter} from '../util/dropout-filter.js';
 
@@ -36,10 +36,42 @@ function isValidKeiserData(data) {
   );
 }
 
+function extractKeiserPayloadFromData(data) {
+  if (!Buffer.isBuffer(data)) {
+    return null;
+  }
+  if (isValidKeiserData(data)) {
+    return data;
+  }
+  // Some firmwares prepend a 2-byte company id before the Keiser payload.
+  if (data.length >= 6 && isValidKeiserData(data.slice(2))) {
+    return data.slice(2);
+  }
+  return null;
+}
+
+function extractKeiserPayload(advertisement) {
+  if (!advertisement) {
+    return null;
+  }
+  const manufacturer = extractKeiserPayloadFromData(advertisement.manufacturerData);
+  if (manufacturer) {
+    return manufacturer;
+  }
+  const serviceData = advertisement.serviceData || [];
+  for (const entry of serviceData) {
+    const candidate = extractKeiserPayloadFromData(entry?.data);
+    if (candidate) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta);
 const debuglog = toDefaultExport(debugModule)('gym:bikes:keiser');
 
-const KEISER_NAME_PATTERN = /^m3/i; // Many M-Series bikes append letters/numbers, so match on the prefix.
+const KEISER_NAME_PATTERN = /m3/i; // Match M-Series names even when a prefix (e.g., "Keiser ") is present.
 
 export function matchesKeiserName(peripheral) {
   const advertisement = peripheral?.advertisement ?? {}; // Stash a local ref so the code below stays readable for new contributors.
@@ -54,15 +86,15 @@ export function matchesKeiserName(peripheral) {
   // When that happens our old matcher never fired, so autodetect would fall back to the default bike and the service kept looping.
   // Keiser's manufacturer data always begins with a known magic header, so we
   // can treat that signature as a secondary detection path.
-  const manufacturer = advertisement.manufacturerData;
-  if (isValidKeiserData(manufacturer)) {
-    console.log(`[keiser-match] ✓ Matched by manufacturer data magic: "${name || '(no name)'}"`);
+  const payload = extractKeiserPayload(advertisement);
+  if (payload) {
+    console.log(`[keiser-match] ✓ Matched by Keiser payload magic: "${name || '(no name)'}"`);
     return true; // The manufacturer payload looks like a Keiser beacon even though the local name is missing.
   }
 
   // Log first few rejections to help debug missing bikes
   if (Math.random() < 0.05) { // Log ~5% of devices to avoid spam
-    console.log(`[keiser-match] ✗ Device rejected: name="${name}", hasMfg=${!!manufacturer}, addr=${peripheral?.address || 'unknown'}`);
+    console.log(`[keiser-match] ✗ Device rejected: name="${name}", hasPayload=${!!payload}, addr=${peripheral?.address || 'unknown'}`);
   }
 
   return false; // Nothing matched; let autodetect keep scanning.
@@ -109,17 +141,17 @@ export class KeiserBikeClient extends EventEmitter {
 
     const filter = matchesKeiserName;
     
-    console.log('[keiser] Starting Keiser bike scan (timeout: 60s)...');
-    debuglog('Starting Keiser bike scan with 60 second timeout');
+    console.log('[keiser] Starting Keiser bike scan (timeout: disabled)...');
+    debuglog('Starting Keiser bike scan with no timeout');
     const peripheral = await scan(this.noble, null, filter, {
       allowDuplicates: true,
       active: true,
-      timeoutMs: 60000  // 60 second timeout
+      timeoutMs: 0  // wait indefinitely until the bike advertises
     });
 
     if (!peripheral) {
       this.state = 'disconnected';
-      console.log('[keiser] ERROR: Bike not found after 60 second scan timeout');
+    console.log('[keiser] ERROR: Bike not found (scan failed or interrupted)');
       console.log('[keiser] Check: Is M3i powered on? Is it in BLE range? Does console show "M3i" or "M3"?');
       debuglog('Keiser bike not found after scan timeout - bike may not be powered on or in range');
       throw new Error('Unable to find Keiser bike - check bike power and BLE signal');
@@ -134,20 +166,20 @@ export class KeiserBikeClient extends EventEmitter {
     this.peripheralName = peripheral?.advertisement?.localName || null;
     // Teaching note: store the first 4 bytes (magic + version) so we can match
     // later packets even if the address rotates or the name disappears.
-    const initialManufacturer = peripheral?.advertisement?.manufacturerData;
-    if (Buffer.isBuffer(initialManufacturer) && initialManufacturer.length >= 4) {
+    const initialPayload = extractKeiserPayload(peripheral?.advertisement);
+    if (Buffer.isBuffer(initialPayload) && initialPayload.length >= 4) {
       // Teaching note: include the magic + version bytes so we can match
       // rotating addresses without relying on the local name.
-      this.peripheralSignature = initialManufacturer.slice(0, 4).toString('hex');
+      this.peripheralSignature = initialPayload.slice(0, 4).toString('hex');
     } else {
       this.peripheralSignature = null;
     }
 
     let statsTimeoutSeconds = KEISER_STATS_TIMEOUT_OLD;
     try {
-      const manufacturerData = peripheral.advertisement?.manufacturerData;
-      if (manufacturerData) {
-        const {timeout} = bikeVersion(manufacturerData);
+      const payload = extractKeiserPayload(peripheral.advertisement);
+      if (payload) {
+        const {timeout} = bikeVersion(payload);
         statsTimeoutSeconds = timeout;
       } else {
         debuglog('Keiser bike manufacturer data unavailable; using default stats timeout');
@@ -217,17 +249,17 @@ export class KeiserBikeClient extends EventEmitter {
     }
 
     try {
-      const manufacturerData = peripheral.advertisement?.manufacturerData;
-      if (!manufacturerData) {
+      const payload = extractKeiserPayload(peripheral.advertisement);
+      if (!payload) {
         return;
       }
 
-      const {type, payload} = parse(manufacturerData);
+      const {type, payload: statsPayload} = parse(payload);
       if (type !== 'stats') {
         return;
       }
 
-      const fixed = this.fixDropout(payload);
+      const fixed = this.fixDropout(statsPayload);
       this.emit(type, fixed);
       if (this.statsTimeout) this.statsTimeout.reset();
       if (this.bikeTimeout) this.bikeTimeout.reset();
@@ -343,8 +375,8 @@ export class KeiserBikeClient extends EventEmitter {
     }
     // Teaching note: some adapters report "unknown" addresses; if the local name
     // still matches and the payload looks like Keiser data, accept it.
-    const manufacturer = peripheral?.advertisement?.manufacturerData;
-    const hasKeiserMagic = isValidKeiserData(manufacturer);
+    const payload = extractKeiserPayload(peripheral?.advertisement);
+    const hasKeiserMagic = Boolean(payload);
     if (!hasKeiserMagic) {
       return false;
     }
@@ -354,8 +386,8 @@ export class KeiserBikeClient extends EventEmitter {
     }
     // Teaching note: if the address rotates or the name disappears, fall back
     // to the signature match (magic + version bytes).
-    if (this.peripheralSignature && Buffer.isBuffer(manufacturer) && manufacturer.length >= 4) {
-      const signature = manufacturer.slice(0, 4).toString('hex');
+    if (this.peripheralSignature && Buffer.isBuffer(payload) && payload.length >= 4) {
+      const signature = payload.slice(0, 4).toString('hex');
       if (signature === this.peripheralSignature) {
         return true;
       }
