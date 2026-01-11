@@ -65,19 +65,21 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
     
     console.log(`[ble-scan] Attaching discover event listener...`);
     noble.on('discover', onDiscover);
-    console.log(`[ble-scan] Starting scan with noble.startScanningAsync(serviceUuids=${JSON.stringify(serviceUuids)}, allowDuplicates=${allowDuplicates})...`);
+    
     if (hasTimeout) {
       timeoutHandle = setTimeout(onTimeout, timeoutMs);
     }
     
-    // Await startScanningAsync to match original ptx2/gymnasticon behavior
+    console.log(`[ble-scan] Calling noble.startScanningAsync (NOT awaiting - it may hang on some noble versions)...`);
+    // Don't await startScanningAsync - on some Pi/noble combinations it hangs forever.
+    // The discover events will flow regardless. Just fire it and move on.
     noble.startScanningAsync(serviceUuids, allowDuplicates)
       .then(() => {
-        console.log(`[ble-scan] Scanning started successfully`);
+        console.log(`[ble-scan] startScanningAsync resolved`);
       })
       .catch((err) => {
-        console.error(`[ble-scan] Error starting scan: ${err.message}`);
-        cleanup().then(() => resolve(null));
+        console.error(`[ble-scan] startScanningAsync error: ${err.message}`);
+        // Don't resolve yet - might still get discover events
       });
   });
 }
