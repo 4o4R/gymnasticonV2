@@ -129,8 +129,7 @@ fi
 # npm v6 (bundled with Node 14) ships node-gyp v5, which fails on Python 3.11 (Bookworm) due to the deprecated 'rU' mode.
 sudo npm install -g node-gyp@9 --unsafe-perm >/dev/null 2>&1 || sudo npm install -g node-gyp@9 --unsafe-perm
 NODE_GYP_BIN="$(sudo npm root -g)/node-gyp/bin/node-gyp.js"
-# Do not persist node_gyp into npm config (some npm versions reject it).
-sudo npm config set python /usr/bin/python3
+# Do not persist node_gyp/python into npm config (some npm versions reject them).
 
 # Grant the Node binary CAP_NET_RAW so noble/bleno can access BLE sockets as
 # a non-root user.  This mirrors the behavior described in the README.

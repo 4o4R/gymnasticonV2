@@ -160,7 +160,6 @@ NODE_GYP_BIN="$(sudo npm root -g)/node-gyp/bin/node-gyp.js" # resolve the instal
 # Some npm versions reject "node_gyp" as a valid config key and error with:
 #   "npm ERR! node_gyp is not a valid npm option"
 # Instead, pass it as an environment variable at install time.
-sudo npm config set python /usr/bin/python3 # explicitly point npm/node-gyp at Python 3 so it never falls back to missing python2
 
 # Ensure Bluetooth services are enabled and adapters powered before starting Gymnasticon
 sudo systemctl enable bluetooth # Persistently enable the BlueZ Bluetooth service
