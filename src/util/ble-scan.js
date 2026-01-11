@@ -70,6 +70,8 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
       timeoutHandle = setTimeout(onTimeout, timeoutMs);
     }
     
+    // Don't await startScanningAsync - it sometimes hangs on Pi.
+    // Just call it and trust the 'discover' event will fire if the adapter is working.
     noble.startScanningAsync(serviceUuids, allowDuplicates)
       .then(() => {
         console.log(`[ble-scan] Scanning started successfully`);
@@ -78,6 +80,11 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
         console.error(`[ble-scan] Error starting scan: ${err.message}`);
         cleanup().then(() => resolve(null));
       });
+    
+    // Give the adapter a moment to start scanning, then start listening for discoveries
+    setTimeout(() => {
+      console.log(`[ble-scan] Listening for discover events...`);
+    }, 100);
   });
 }
 
