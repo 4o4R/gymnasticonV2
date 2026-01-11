@@ -28,23 +28,30 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
   const timeoutLabel = hasTimeout ? `${timeoutMs}ms` : 'disabled';
   console.log(`[ble-scan] Starting BLE scan (timeout: ${timeoutLabel}, allowDuplicates: ${allowDuplicates})`);
   
-  // Use on() async iterator like original ptx2 code
-  const results = on(noble, 'discover');
-  
   // Fire startScanningAsync but don't await it - it may hang on some Pi/noble combinations
   console.log(`[ble-scan] Calling noble.startScanningAsync(...)`);
-  noble.startScanningAsync(serviceUuids, allowDuplicates)
+  const scanStartPromise = noble.startScanningAsync(serviceUuids, allowDuplicates)
     .then(() => console.log(`[ble-scan] startScanningAsync resolved`))
     .catch((err) => console.error(`[ble-scan] startScanningAsync error: ${err.message}`));
+  
+  // Give the adapter a tiny moment to start scanning before setting up the iterator
+  await new Promise(resolve => setTimeout(resolve, 50));
+  
+  console.log(`[ble-scan] Setting up discover event listener...`);
+  const results = on(noble, 'discover');
+  console.log(`[ble-scan] Discover iterator created, waiting for events...`);
   
   try {
     // Race between finding a match and timeout
     await Promise.race([
       (async () => {
+        console.log(`[ble-scan] Starting async iteration...`);
         for await (const [result] of results) {
           discoveryCount++;
           const name = result?.advertisement?.localName || '(no name)';
           const addr = result?.address || 'unknown';
+          
+          console.log(`[ble-scan] Got discover event #${discoveryCount}: ${name} [${addr}]`);
           
           if (discoveryCount % 10 === 1) {
             console.log(`[ble-scan] Discovery #${discoveryCount}: ${name} [${addr}]`);
