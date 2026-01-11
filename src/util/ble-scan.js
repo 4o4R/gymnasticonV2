@@ -1,3 +1,4 @@
+import {on} from 'events';
 import {macAddress} from './mac-address.js';
 
 /**
@@ -23,65 +24,64 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
   const hasTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0;
   let peripheral;
   let discoveryCount = 0;
-  let timeoutHandle;
 
   const timeoutLabel = hasTimeout ? `${timeoutMs}ms` : 'disabled';
   console.log(`[ble-scan] Starting BLE scan (timeout: ${timeoutLabel}, allowDuplicates: ${allowDuplicates})`);
   
-  return new Promise((resolve, reject) => {
-    const onDiscover = (result) => {
-      discoveryCount++;
-      const name = result?.advertisement?.localName || '(no name)';
-      const addr = result?.address || 'unknown';
-      
-      // Log every 10th discovery to avoid spam
-      if (discoveryCount % 10 === 1) {
-        console.log(`[ble-scan] Discovery #${discoveryCount}: ${name} [${addr}]`);
-      }
-      
-      if (filter(result)) {
-        peripheral = result;
-        console.log(`[ble-scan] ✓ MATCH FOUND after ${discoveryCount} discoveries: ${name} [${addr}]`);
-        cleanup();
-        resolve(peripheral);
-      }
-    };
-    
-    const onTimeout = async () => {
-      console.log(`[ble-scan] ✗ Scan timed out after ${timeoutMs}ms (saw ${discoveryCount} devices, none matched filter)`);
-      cleanup();
-      resolve(null);
-    };
-    
-    const cleanup = async () => {
-      noble.removeListener('discover', onDiscover);
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      try {
-        await noble.stopScanningAsync();
-      } catch (err) {
-        console.error(`[ble-scan] Error stopping scan: ${err.message}`);
-      }
-    };
-    
-    console.log(`[ble-scan] Attaching discover event listener...`);
-    noble.on('discover', onDiscover);
-    
-    if (hasTimeout) {
-      timeoutHandle = setTimeout(onTimeout, timeoutMs);
-    }
-    
-    console.log(`[ble-scan] Calling noble.startScanningAsync (NOT awaiting - it may hang on some noble versions)...`);
-    // Don't await startScanningAsync - on some Pi/noble combinations it hangs forever.
-    // The discover events will flow regardless. Just fire it and move on.
-    noble.startScanningAsync(serviceUuids, allowDuplicates)
-      .then(() => {
-        console.log(`[ble-scan] startScanningAsync resolved`);
+  // Use on() async iterator like original ptx2 code
+  const results = on(noble, 'discover');
+  
+  // Fire startScanningAsync but don't await it - it may hang on some Pi/noble combinations
+  console.log(`[ble-scan] Calling noble.startScanningAsync(...)`);
+  noble.startScanningAsync(serviceUuids, allowDuplicates)
+    .then(() => console.log(`[ble-scan] startScanningAsync resolved`))
+    .catch((err) => console.error(`[ble-scan] startScanningAsync error: ${err.message}`));
+  
+  try {
+    // Race between finding a match and timeout
+    await Promise.race([
+      (async () => {
+        for await (const [result] of results) {
+          discoveryCount++;
+          const name = result?.advertisement?.localName || '(no name)';
+          const addr = result?.address || 'unknown';
+          
+          if (discoveryCount % 10 === 1) {
+            console.log(`[ble-scan] Discovery #${discoveryCount}: ${name} [${addr}]`);
+          }
+          
+          if (filter(result)) {
+            peripheral = result;
+            console.log(`[ble-scan] ✓ MATCH FOUND after ${discoveryCount} discoveries: ${name} [${addr}]`);
+            return;
+          }
+        }
+      })(),
+      new Promise((_, reject) => {
+        if (hasTimeout) {
+          setTimeout(() => reject(new Error('timeout')), timeoutMs);
+        } else {
+          // If no timeout, never reject - scan indefinitely
+          setInterval(() => {}, 1000);
+        }
       })
-      .catch((err) => {
-        console.error(`[ble-scan] startScanningAsync error: ${err.message}`);
-        // Don't resolve yet - might still get discover events
-      });
-  });
+    ]);
+  } catch (err) {
+    if (err.message === 'timeout') {
+      console.log(`[ble-scan] ✗ Scan timed out after ${timeoutMs}ms (saw ${discoveryCount} devices)`);
+      peripheral = null;
+    } else {
+      throw err;
+    }
+  } finally {
+    try {
+      await noble.stopScanningAsync();
+    } catch (err) {
+      console.error(`[ble-scan] Error stopping scan: ${err.message}`);
+    }
+  }
+  
+  return peripheral;
 }
 
 /**
