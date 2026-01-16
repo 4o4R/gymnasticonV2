@@ -22,6 +22,9 @@ import {macAddress} from './mac-address.js';
  * @param {Noble} noble - instance of noble BLE library (from @abandonware/noble)
  * @param {string[]} serviceUuids - optional: only find devices advertising specific GATT services
  * @param {FilterFunction} filter - callback to identify the bike we're looking for
+ * @param {object} [options] - optional scan configuration
+ * @param {boolean} [options.allowDuplicates=true] - whether to emit duplicate advertisements
+ * @param {boolean} [options.active=true] - whether to use active scanning
  * @returns {Peripheral} the matching device peripheral, or null if not found
  * @throws {Error} if scanning fails
  * 
@@ -29,7 +32,7 @@ import {macAddress} from './mac-address.js';
  * If your bike is not turned on or not in range, this function will hang indefinitely.
  * This is by design - the app layer handles timeouts via the Timer class.
  */
-export async function scan(noble, serviceUuids, filter = () => true) {
+export async function scan(noble, serviceUuids, filter = () => true, options = {}) {
   // Where we'll store the device we find, or null if nothing matches
   let peripheral;
   
@@ -39,10 +42,12 @@ export async function scan(noble, serviceUuids, filter = () => true) {
   // Each time noble emits 'discover', we get a new item in this async loop
   const results = on(noble, 'discover');
   
+  // Set up scan parameters (allowDuplicates defaults to true if not specified)
+  const allowDuplicates = options.allowDuplicates !== false;
+  console.log(`[ble-scan] Starting adapter scan (allowDuplicates=${allowDuplicates})...`);
+  
   // Tell the Bluetooth adapter to start advertising scans
-  // The 'true' parameter means allow duplicate advertisements (so we see the same bike multiple times)
-  console.log(`[ble-scan] Starting adapter scan (allowDuplicates=true)...`);
-  await noble.startScanningAsync(serviceUuids, true);
+  await noble.startScanningAsync(serviceUuids, allowDuplicates);
   
   // Loop: for each device that broadcasts near us
   console.log(`[ble-scan] Listening for discover events...`);
