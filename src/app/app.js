@@ -386,7 +386,7 @@ export class App {
     // Teaching note: noble can get stuck in "unknown" state if the adapter id is
     // invalid or the HCI socket did not initialize, so we retry with timeouts.
     const maxAttempts = 3;
-    const timeoutMs = 15000;
+    const timeoutMs = 3000;  // Short timeout - if stateChange doesn't fire, adapter may not report state
     const retryDelayMs = 2000;
     const fallbackAdapters = this.getFallbackAdapters();
     let fallbackIndex = 0;
@@ -397,6 +397,15 @@ export class App {
       if (state === 'poweredOn') {
         return;
       }
+      
+      // Teaching note: If adapter is UP at OS level but noble won't report it,
+      // this is a known issue with some Pi/BlueZ combinations. Try to proceed anyway.
+      if (this.isAdapterUp(this.opts.bikeAdapter)) {
+        this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP (verified via hciconfig); noble state is ${state}`);
+        this.logger.log(`[gym-app] proceeding despite noble state mismatch (some Pi/BlueZ combinations have this issue)`);
+        return;
+      }
+      
       this.logger.log(`[gym-app] waiting for Bluetooth adapter to become poweredOn (attempt ${attempt}/${maxAttempts}, current state: ${state})`);
       try {
         const nextState = await this.waitForNobleStateChange(timeoutMs);
@@ -405,14 +414,23 @@ export class App {
         }
         this.logger.log(`[gym-app] Bluetooth adapter state is ${nextState}; reinitializing noble`);
       } catch (error) {
-        this.logger.log(`[gym-app] Bluetooth adapter state timeout after ${timeoutMs}ms; reinitializing noble`);
+        this.logger.log(`[gym-app] Bluetooth adapter state timeout after ${timeoutMs}ms; checking if adapter is up...`);
+        
+        // If adapter is actually up at OS level, don't reinitialize - try to scan anyway
+        if (this.isAdapterUp(this.opts.bikeAdapter)) {
+          this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP (hciconfig confirms); proceeding despite noble state being ${state}`);
+          return;
+        }
+        
+        this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is not responding; reinitializing noble`);
       }
+      
       const fallback = fallbackAdapters[fallbackIndex];
       if (fallback) {
         fallbackIndex += 1;
         // Teaching note: if the primary adapter does not power on, try another
         // detected adapter before giving up.
-        this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} failed to power on; trying ${fallback}`);
+        this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} failed; trying ${fallback}`);
         this.setBikeAdapter(fallback, 'fallback');
         await this.reinitializeNoble(`fallback-${attempt}`);
       } else {
