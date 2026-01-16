@@ -35,42 +35,68 @@ import {macAddress} from './mac-address.js';
 export async function scan(noble, serviceUuids, filter = () => true, options = {}) {
   // Where we'll store the device we find, or null if nothing matches
   let peripheral;
+  let discoveredDevices = new Map(); // Track seen devices to avoid duplicates in logging
   
   console.log(`[ble-scan] Starting BLE scan...`);
+  
+  // Set up scan parameters (allowDuplicates defaults to true if not specified)
+  const allowDuplicates = options.allowDuplicates !== false;
+  console.log(`[ble-scan] Starting adapter scan (allowDuplicates=${allowDuplicates})...`);
+  console.log(`[ble-scan] noble state BEFORE scan: ${noble.state}, scanning: ${noble.scanning}`);
+  
+  // Set up a fallback listener to detect if discover events are being emitted
+  let eventCount = 0;
+  const fallbackListener = (peripheral) => {
+    eventCount++;
+    if (eventCount === 1) {
+      console.log(`[ble-scan] ✓ DISCOVER EVENTS ARE FIRING! First event received.`);
+    }
+  };
+  noble.on('discover', fallbackListener);
   
   // Use 'on()' from the events module to create an async iterator
   // Each time noble emits 'discover', we get a new item in this async loop
   const results = on(noble, 'discover');
   
-  // Set up scan parameters (allowDuplicates defaults to true if not specified)
-  const allowDuplicates = options.allowDuplicates !== false;
-  console.log(`[ble-scan] Starting adapter scan (allowDuplicates=${allowDuplicates})...`);
-  console.log(`[ble-scan] noble state: ${noble.state}, scanning: ${noble.scanning}`);
-  
   // Tell the Bluetooth adapter to start advertising scans
   try {
     await noble.startScanningAsync(serviceUuids, allowDuplicates);
-    console.log(`[ble-scan] startScanningAsync completed successfully`);
+    console.log(`[ble-scan] ✓ startScanningAsync completed (no error thrown)`);
+    console.log(`[ble-scan] noble state AFTER startScanningAsync: ${noble.state}, scanning: ${noble.scanning}`);
   } catch (err) {
-    console.error(`[ble-scan] ERROR in startScanningAsync: ${err.message}`);
+    console.error(`[ble-scan] ✗ ERROR in startScanningAsync: ${err.message}`);
+    noble.removeListener('discover', fallbackListener);
     throw err;
   }
   
+  // Wait 100ms to see if any discover events fire
+  await new Promise(r => setTimeout(r, 100));
+  if (eventCount === 0) {
+    console.warn(`[ble-scan] ⚠ WARNING: No discover events received after 100ms! Noble may not be emitting events.`);
+  }
+  
   // Loop: for each device that broadcasts near us
-  console.log(`[ble-scan] Listening for discover events...`);
+  console.log(`[ble-scan] Waiting for discover events (timeout=30s)...`);
   let deviceCount = 0;
-  for await (const [result] of results) {
-    deviceCount++;
-    if (deviceCount <= 5) {
-      console.log(`[ble-scan] Discovered device ${deviceCount}: ${result?.advertisement?.localName || '(no name)'} [${result?.address}]`);
+  
+  try {
+    for await (const [result] of results) {
+      // Store device by address to track what we've seen
+      if (!discoveredDevices.has(result?.address)) {
+        discoveredDevices.set(result?.address, result?.advertisement?.localName);
+        console.log(`[ble-scan] Discovered: ${result?.advertisement?.localName || '(no name)'} [${result?.address}]`);
+      }
+      
+      // Check if this device is the one we want (bike name, address, etc)
+      if (filter(result)) {
+        // Found it! Store the device object and exit the loop
+        peripheral = result;
+        console.log(`[ble-scan] ✓✓✓ MATCH FOUND! Device: ${result?.advertisement?.localName} [${result?.address}]`);
+        break;
+      }
     }
-    // Check if this device is the one we want (bike name, address, etc)
-    if (filter(result)) {
-      // Found it! Store the device object and exit the loop
-      peripheral = result;
-      console.log(`[ble-scan] ✓ MATCH FOUND! Device: ${result?.advertisement?.localName} [${result?.address}]`);
-      break;
-    }
+  } finally {
+    noble.removeListener('discover', fallbackListener);
   }
   
   // Stop scanning the Bluetooth adapter (important to save power)
