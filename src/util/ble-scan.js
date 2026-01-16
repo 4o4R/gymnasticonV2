@@ -52,7 +52,9 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
       console.log(`[ble-scan] ✓ DISCOVER EVENTS ARE FIRING! First event received.`);
     }
   };
+  console.log(`[ble-scan] Current listeners on 'discover': ${noble.listenerCount('discover')}`);
   noble.on('discover', fallbackListener);
+  console.log(`[ble-scan] After adding fallback, listeners on 'discover': ${noble.listenerCount('discover')}`);
   
   // Use 'on()' from the events module to create an async iterator
   // Each time noble emits 'discover', we get a new item in this async loop
@@ -65,6 +67,16 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
   noble.startScanningAsync(serviceUuids, allowDuplicates)
     .then(() => console.log(`[ble-scan] ✓ startScanningAsync completed`))
     .catch((err) => console.error(`[ble-scan] ✗ startScanningAsync error: ${err.message}`));
+  
+  // Give the scan a moment to start emitting events
+  await new Promise(r => setTimeout(r, 100));
+  
+  // Check if we're receiving discover events at all
+  if (eventCount === 0) {
+    console.warn(`[ble-scan] ⚠ WARNING: No discover events after 100ms. Noble may not be emitting events properly.`);
+    console.warn(`[ble-scan]   noble.state=${noble.state}, noble.scanning=${noble.scanning}`);
+    console.warn(`[ble-scan]   Try: sudo hcitool -i hci0 lescan  (should show your devices)`);
+  }
   
   // Loop: for each device that broadcasts near us
   console.log(`[ble-scan] Waiting for discover events (timeout=30s)...`);
