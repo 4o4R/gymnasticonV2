@@ -45,18 +45,30 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
   // Set up scan parameters (allowDuplicates defaults to true if not specified)
   const allowDuplicates = options.allowDuplicates !== false;
   console.log(`[ble-scan] Starting adapter scan (allowDuplicates=${allowDuplicates})...`);
+  console.log(`[ble-scan] noble state: ${noble.state}, scanning: ${noble.scanning}`);
   
   // Tell the Bluetooth adapter to start advertising scans
-  await noble.startScanningAsync(serviceUuids, allowDuplicates);
+  try {
+    await noble.startScanningAsync(serviceUuids, allowDuplicates);
+    console.log(`[ble-scan] startScanningAsync completed successfully`);
+  } catch (err) {
+    console.error(`[ble-scan] ERROR in startScanningAsync: ${err.message}`);
+    throw err;
+  }
   
   // Loop: for each device that broadcasts near us
   console.log(`[ble-scan] Listening for discover events...`);
+  let deviceCount = 0;
   for await (const [result] of results) {
+    deviceCount++;
+    if (deviceCount <= 5) {
+      console.log(`[ble-scan] Discovered device ${deviceCount}: ${result?.advertisement?.localName || '(no name)'} [${result?.address}]`);
+    }
     // Check if this device is the one we want (bike name, address, etc)
     if (filter(result)) {
       // Found it! Store the device object and exit the loop
       peripheral = result;
-      console.log(`[ble-scan] Found matching device: ${result?.advertisement?.localName} [${result?.address}]`);
+      console.log(`[ble-scan] ✓ MATCH FOUND! Device: ${result?.advertisement?.localName} [${result?.address}]`);
       break;
     }
   }
