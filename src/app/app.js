@@ -403,8 +403,10 @@ export class App {
       if (state === 'unknown' && this.isAdapterUp(this.opts.bikeAdapter)) {
         // Teaching note: noble gates startScanningAsync() on its internal state.
         // If BlueZ never emits a stateChange but hciconfig shows the adapter
-        // is UP, we force the state to poweredOn so scans can start.
-        this.forceNoblePoweredOn('hciconfig');
+        // is UP, we reinitialize noble to get a fresh HCI connection with proper
+        // HCI layer initialization, then we'll re-check the state.
+        this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP but noble state stuck at unknown; reinitializing noble to fix HCI layer`);
+        await this.reinitializeNoble('stuck-unknown-state');
         return;
       }
       this.logger.log(`[gym-app] waiting for Bluetooth adapter to become poweredOn (attempt ${attempt}/${maxAttempts}, current state: ${state})`);
@@ -447,24 +449,6 @@ export class App {
     } catch (_error) {
       return false;
     }
-  }
-
-  forceNoblePoweredOn(reason) {
-    if (!this.noble) {
-      return;
-    }
-    // Teaching note: noble exposes `state` as a getter-only property, so
-    // assigning to it throws. The internal `_state` is what startScanning()
-    // actually checks, so we update `_state` directly instead.
-    if ('_state' in this.noble) {
-      this.noble._state = 'poweredOn';
-    }
-    // Teaching note: emit the stateChange event so any listeners stay in sync
-    // with the forced state (e.g., logs or adapter watchers).
-    if (typeof this.noble.emit === 'function') {
-      this.noble.emit('stateChange', 'poweredOn');
-    }
-    this.logger.log(`[gym-app] forcing noble state to poweredOn (${reason})`);
   }
 
   async waitForNobleStateChange(timeoutMs) {
