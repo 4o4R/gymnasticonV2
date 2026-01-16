@@ -1,4 +1,3 @@
-import {on} from 'events';
 import {macAddress} from './mac-address.js';
 
 /**
@@ -9,12 +8,12 @@ import {macAddress} from './mac-address.js';
  */
 
 /**
- * Scan for a single BLE device matching a filter.
- * This is the exact original ptx2 implementation with added comments.
+ * Scan for a single BLE device matching a filter using callback-based event listeners.
+ * This version works reliably on Pi/noble combinations that don't emit discover events with async iterators.
  * 
  * How it works:
- * 1. Set up a listener for 'discover' events from noble
- * 2. Start scanning the BLE adapter
+ * 1. Attach a listener for 'discover' events from noble
+ * 2. Start scanning the BLE adapter (without awaiting)
  * 3. As devices broadcast their advertisements, check each one with the filter
  * 4. Return the first device that matches the filter
  * 5. Stop scanning when done
@@ -24,90 +23,75 @@ import {macAddress} from './mac-address.js';
  * @param {FilterFunction} filter - callback to identify the bike we're looking for
  * @param {object} [options] - optional scan configuration
  * @param {boolean} [options.allowDuplicates=true] - whether to emit duplicate advertisements
- * @param {boolean} [options.active=true] - whether to use active scanning
  * @returns {Peripheral} the matching device peripheral, or null if not found
- * @throws {Error} if scanning fails
- * 
- * IMPORTANT: This function WILL NOT TIMEOUT. It will scan forever until a match is found.
- * If your bike is not turned on or not in range, this function will hang indefinitely.
- * This is by design - the app layer handles timeouts via the Timer class.
  */
 export async function scan(noble, serviceUuids, filter = () => true, options = {}) {
-  // Where we'll store the device we find, or null if nothing matches
-  let peripheral;
-  let discoveredDevices = new Map(); // Track seen devices to avoid duplicates in logging
-  
-  console.log(`[ble-scan] Starting BLE scan...`);
-  
-  // Set up scan parameters (allowDuplicates defaults to true if not specified)
   const allowDuplicates = options.allowDuplicates !== false;
-  console.log(`[ble-scan] Starting adapter scan (allowDuplicates=${allowDuplicates})...`);
-  console.log(`[ble-scan] noble state BEFORE scan: ${noble.state}, scanning: ${noble.scanning}`);
-  
-  // Set up a fallback listener to detect if discover events are being emitted
-  let eventCount = 0;
-  const fallbackListener = (peripheral) => {
-    eventCount++;
-    if (eventCount === 1) {
-      console.log(`[ble-scan] ✓ DISCOVER EVENTS ARE FIRING! First event received.`);
-    }
-  };
-  console.log(`[ble-scan] Current listeners on 'discover': ${noble.listenerCount('discover')}`);
-  noble.on('discover', fallbackListener);
-  console.log(`[ble-scan] After adding fallback, listeners on 'discover': ${noble.listenerCount('discover')}`);
-  
-  // Use 'on()' from the events module to create an async iterator
-  // Each time noble emits 'discover', we get a new item in this async loop
-  const results = on(noble, 'discover');
-  
-  // Tell the Bluetooth adapter to start advertising scans
-  // NOTE: Do NOT await this - on some Pi/noble combinations it hangs indefinitely
-  // Fire it asynchronously and let it complete in the background
-  console.log(`[ble-scan] Starting noble.startScanningAsync (not awaited)...`);
-  noble.startScanningAsync(serviceUuids, allowDuplicates)
-    .then(() => console.log(`[ble-scan] ✓ startScanningAsync completed`))
-    .catch((err) => console.error(`[ble-scan] ✗ startScanningAsync error: ${err.message}`));
-  
-  // Give the scan a moment to start emitting events
-  await new Promise(r => setTimeout(r, 100));
-  
-  // Check if we're receiving discover events at all
-  if (eventCount === 0) {
-    console.warn(`[ble-scan] ⚠ WARNING: No discover events after 100ms. Noble may not be emitting events properly.`);
-    console.warn(`[ble-scan]   noble.state=${noble.state}, noble.scanning=${noble.scanning}`);
-    console.warn(`[ble-scan]   Try: sudo hcitool -i hci0 lescan  (should show your devices)`);
-  }
-  
-  // Loop: for each device that broadcasts near us
-  console.log(`[ble-scan] Waiting for discover events (timeout=30s)...`);
-  let deviceCount = 0;
-  
-  try {
-    for await (const [result] of results) {
-      // Store device by address to track what we've seen
-      if (!discoveredDevices.has(result?.address)) {
-        discoveredDevices.set(result?.address, result?.advertisement?.localName);
-        console.log(`[ble-scan] Discovered: ${result?.advertisement?.localName || '(no name)'} [${result?.address}]`);
+  let peripheral = null;
+  let discoveryCount = 0;
+
+  console.log(`[ble-scan] Starting BLE scan (allowDuplicates: ${allowDuplicates})`);
+
+  return new Promise(async (resolve, reject) => {
+    // Handler for discovery events
+    const onDiscover = (result) => {
+      discoveryCount++;
+      const name = result?.advertisement?.localName || '(no name)';
+      const addr = result?.address || 'unknown';
+
+      // Log every 10th discovery to avoid spam
+      if (discoveryCount === 1) {
+        console.log(`[ble-scan] ✓ Discover events ARE firing! First device: ${name} [${addr}]`);
+      } else if (discoveryCount % 10 === 1) {
+        console.log(`[ble-scan] Discovery #${discoveryCount}: ${name} [${addr}]`);
+      }
+
+      if (filter(result)) {
+        peripheral = result;
+        console.log(`[ble-scan] ✓✓✓ MATCH FOUND after ${discoveryCount} discoveries: ${name} [${addr}]`);
+        cleanup();
+        resolve(peripheral);
+      }
+    };
+
+    // Cleanup function
+    const cleanup = async () => {
+      noble.removeListener('discover', onDiscover);
+      try {
+        console.log(`[ble-scan] Stopping adapter scan...`);
+        await noble.stopScanningAsync();
+      } catch (err) {
+        // Ignore stop errors
+      }
+    };
+
+    try {
+      // Attach listener BEFORE starting scan so we catch early discoveries
+      console.log(`[ble-scan] Attaching discover event listener...`);
+      noble.on('discover', onDiscover);
+
+      // Start scanning (don't await - it may hang on some Pi/noble combinations)
+      console.log(`[ble-scan] Starting noble.startScanningAsync (not awaited)...`);
+      noble.startScanningAsync(serviceUuids, allowDuplicates)
+        .then(() => console.log(`[ble-scan] ✓ startScanningAsync completed`))
+        .catch((err) => console.error(`[ble-scan] ✗ startScanningAsync error: ${err.message}`));
+
+      // Give scan a moment to start emitting events
+      await new Promise(r => setTimeout(r, 100));
+      
+      if (discoveryCount === 0) {
+        console.warn(`[ble-scan] ⚠ WARNING: No discover events after 100ms. Noble may not be emitting events.`);
+        console.warn(`[ble-scan]   noble.state=${noble.state}, noble.scanning=${noble.scanning}`);
       }
       
-      // Check if this device is the one we want (bike name, address, etc)
-      if (filter(result)) {
-        // Found it! Store the device object and exit the loop
-        peripheral = result;
-        console.log(`[ble-scan] ✓✓✓ MATCH FOUND! Device: ${result?.advertisement?.localName} [${result?.address}]`);
-        break;
-      }
+      // Wait indefinitely for a match (app layer handles timeouts)
+      console.log(`[ble-scan] Waiting for discover events...`);
+      // Note: if no match is found, this promise never resolves and relies on app timeout
+    } catch (err) {
+      await cleanup();
+      reject(err);
     }
-  } finally {
-    noble.removeListener('discover', fallbackListener);
-  }
-  
-  // Stop scanning the Bluetooth adapter (important to save power)
-  console.log(`[ble-scan] Stopping adapter scan...`);
-  await noble.stopScanningAsync();
-  
-  // Return the device we found, or null if loop exited without finding anything
-  return peripheral;
+  });
 }
 
 
