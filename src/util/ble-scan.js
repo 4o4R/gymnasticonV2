@@ -59,21 +59,12 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
   const results = on(noble, 'discover');
   
   // Tell the Bluetooth adapter to start advertising scans
-  try {
-    await noble.startScanningAsync(serviceUuids, allowDuplicates);
-    console.log(`[ble-scan] ✓ startScanningAsync completed (no error thrown)`);
-    console.log(`[ble-scan] noble state AFTER startScanningAsync: ${noble.state}, scanning: ${noble.scanning}`);
-  } catch (err) {
-    console.error(`[ble-scan] ✗ ERROR in startScanningAsync: ${err.message}`);
-    noble.removeListener('discover', fallbackListener);
-    throw err;
-  }
-  
-  // Wait 100ms to see if any discover events fire
-  await new Promise(r => setTimeout(r, 100));
-  if (eventCount === 0) {
-    console.warn(`[ble-scan] ⚠ WARNING: No discover events received after 100ms! Noble may not be emitting events.`);
-  }
+  // NOTE: Do NOT await this - on some Pi/noble combinations it hangs indefinitely
+  // Fire it asynchronously and let it complete in the background
+  console.log(`[ble-scan] Starting noble.startScanningAsync (not awaited)...`);
+  noble.startScanningAsync(serviceUuids, allowDuplicates)
+    .then(() => console.log(`[ble-scan] ✓ startScanningAsync completed`))
+    .catch((err) => console.error(`[ble-scan] ✗ startScanningAsync error: ${err.message}`));
   
   // Loop: for each device that broadcasts near us
   console.log(`[ble-scan] Waiting for discover events (timeout=30s)...`);
