@@ -2,5 +2,9 @@
     "githubPullRequests.ignoredPullRequestBranches": [
         "master"
     ],
-    "chatgpt.openOnStartup": true
+    "chatgpt.openOnStartup": true,
+    "chat.tools.terminal.autoApprove": {
+        "Test-Path": true,
+        "git push": true
+    }
 }
