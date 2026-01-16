@@ -398,15 +398,13 @@ export class App {
         return;
       }
       // Teaching note: some BlueZ stacks never emit a noble state change even
-      // though the adapter is up. When that happens, trust hciconfig and keep
-      // going instead of restarting the whole service forever.
+      // though the adapter is up. When that happens, noble will fail to scan.
+      // The BLE scan layer will detect this and fall back to hcitool.
       if (state === 'unknown' && this.isAdapterUp(this.opts.bikeAdapter)) {
-        // Teaching note: noble gates startScanningAsync() on its internal state.
-        // If BlueZ never emits a stateChange but hciconfig shows the adapter
-        // is UP, we reinitialize noble to get a fresh HCI connection with proper
-        // HCI layer initialization, then we'll re-check the state.
-        this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP but noble state stuck at unknown; reinitializing noble to fix HCI layer`);
-        await this.reinitializeNoble('stuck-unknown-state');
+        // Teaching note: don't try to reinitialize noble here - the BLE scan
+        // will detect noble.scanning===undefined and fall back to hcitool,
+        // which works reliably on this hardware.
+        this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP but noble state is unknown; proceeding (will use hcitool fallback if needed)`);
         return;
       }
       this.logger.log(`[gym-app] waiting for Bluetooth adapter to become poweredOn (attempt ${attempt}/${maxAttempts}, current state: ${state})`);

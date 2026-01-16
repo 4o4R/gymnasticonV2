@@ -109,9 +109,8 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
             // Ignore
           }
 
-          // Start hcitool fallback
-          await scanWithHcitool(filter, resolve, reject, cleanupHcitool);
-          return;
+          // Start hcitool fallback and wait for it
+          return scanWithHcitool(filter, resolve, reject, cleanupHcitool);
         }
       }
       
@@ -129,7 +128,7 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
  * Fallback BLE scan using hcitool lescan subprocess.
  * Used when noble fails to emit discover events.
  */
-async function scanWithHcitool(filter, resolve, reject, cleanup) {
+function scanWithHcitool(filter, resolve, reject, cleanup) {
   console.log(`[ble-scan] Starting hcitool lescan fallback...`);
   
   return new Promise((resolveHci, rejectHci) => {
@@ -182,6 +181,7 @@ async function scanWithHcitool(filter, resolve, reject, cleanup) {
             cleanup(hcitoolProcess);
             resolve(fakePeripheral);
             resolveHci();
+            return;
           }
         }
 
@@ -201,7 +201,6 @@ async function scanWithHcitool(filter, resolve, reject, cleanup) {
           console.error(`[ble-scan] hcitool process error: ${err.message}`);
           cleanup(hcitoolProcess);
           rejectHci(err);
-          reject(err);
         }
       });
 
@@ -217,7 +216,6 @@ async function scanWithHcitool(filter, resolve, reject, cleanup) {
       console.error(`[ble-scan] Failed to start hcitool: ${err.message}`);
       cleanup(hcitoolProcess);
       rejectHci(err);
-      reject(err);
     }
   });
 }
