@@ -2,123 +2,128 @@ import {on} from 'events';
 import {macAddress} from './mac-address.js';
 
 /**
- * Returns true if the given peripheral matches.
+ * Callback function that determines if a BLE device is the one we're looking for.
  * @callback FilterFunction
- * @param {Peripheral} peripheral - a noble Peripheral instance.
- * @returns {boolean} true if peripheral is a match, otherwise false
+ * @param {Peripheral} peripheral - a noble Peripheral instance with address, advertisement, etc
+ * @returns {boolean} true if this is the bike we want, false otherwise
  */
 
 /**
- * Scan for first matching BLE device.
- * @param {Noble} noble - a Noble instance.
- * @param {string[]} serviceUuids - find devices advertising these GATT service uuids
- * @param {FilterFunction} filter - find devices matching this filter
- * @param {object} options - scan options
- * @param {boolean} [options.allowDuplicates=true] - allow duplicate discovery events
- * @param {number} [options.timeoutMs=60000] - maximum time to scan in milliseconds
- * @returns {Peripheral} the matching peripheral, or null if timeout exceeded
+ * Scan for a single BLE device matching a filter.
+ * This is the exact original ptx2 implementation with added comments.
+ * 
+ * How it works:
+ * 1. Set up a listener for 'discover' events from noble
+ * 2. Start scanning the BLE adapter
+ * 3. As devices broadcast their advertisements, check each one with the filter
+ * 4. Return the first device that matches the filter
+ * 5. Stop scanning when done
+ *
+ * @param {Noble} noble - instance of noble BLE library (from @abandonware/noble)
+ * @param {string[]} serviceUuids - optional: only find devices advertising specific GATT services
+ * @param {FilterFunction} filter - callback to identify the bike we're looking for
+ * @returns {Peripheral} the matching device peripheral, or null if not found
+ * @throws {Error} if scanning fails
+ * 
+ * IMPORTANT: This function WILL NOT TIMEOUT. It will scan forever until a match is found.
+ * If your bike is not turned on or not in range, this function will hang indefinitely.
+ * This is by design - the app layer handles timeouts via the Timer class.
  */
-export async function scan(noble, serviceUuids, filter = () => true, options = {}) {
-  const allowDuplicates = options.allowDuplicates ?? true;
-  const timeoutMs = options.timeoutMs ?? 60000;
-  const hasTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0;
+export async function scan(noble, serviceUuids, filter = () => true) {
+  // Where we'll store the device we find, or null if nothing matches
   let peripheral;
-  let discoveryCount = 0;
-
-  const timeoutLabel = hasTimeout ? `${timeoutMs}ms` : 'disabled';
-  console.log(`[ble-scan] Starting BLE scan (timeout: ${timeoutLabel}, allowDuplicates: ${allowDuplicates})`);
   
-  // Fire startScanningAsync but don't await it - it may hang on some Pi/noble combinations
-  console.log(`[ble-scan] Calling noble.startScanningAsync(...)`);
-  const scanStartPromise = noble.startScanningAsync(serviceUuids, allowDuplicates)
-    .then(() => console.log(`[ble-scan] startScanningAsync resolved`))
-    .catch((err) => console.error(`[ble-scan] startScanningAsync error: ${err.message}`));
+  console.log(`[ble-scan] Starting BLE scan...`);
   
-  // Give the adapter a tiny moment to start scanning before setting up the iterator
-  await new Promise(resolve => setTimeout(resolve, 50));
-  
-  console.log(`[ble-scan] Setting up discover event listener...`);
+  // Use 'on()' from the events module to create an async iterator
+  // Each time noble emits 'discover', we get a new item in this async loop
   const results = on(noble, 'discover');
-  console.log(`[ble-scan] Discover iterator created, waiting for events...`);
   
-  try {
-    // Race between finding a match and timeout
-    await Promise.race([
-      (async () => {
-        console.log(`[ble-scan] Starting async iteration...`);
-        for await (const [result] of results) {
-          discoveryCount++;
-          const name = result?.advertisement?.localName || '(no name)';
-          const addr = result?.address || 'unknown';
-          
-          console.log(`[ble-scan] Got discover event #${discoveryCount}: ${name} [${addr}]`);
-          
-          if (discoveryCount % 10 === 1) {
-            console.log(`[ble-scan] Discovery #${discoveryCount}: ${name} [${addr}]`);
-          }
-          
-          if (filter(result)) {
-            peripheral = result;
-            console.log(`[ble-scan] ✓ MATCH FOUND after ${discoveryCount} discoveries: ${name} [${addr}]`);
-            return;
-          }
-        }
-      })(),
-      new Promise((_, reject) => {
-        if (hasTimeout) {
-          setTimeout(() => reject(new Error('timeout')), timeoutMs);
-        } else {
-          // If no timeout, never reject - scan indefinitely
-          setInterval(() => {}, 1000);
-        }
-      })
-    ]);
-  } catch (err) {
-    if (err.message === 'timeout') {
-      console.log(`[ble-scan] ✗ Scan timed out after ${timeoutMs}ms (saw ${discoveryCount} devices)`);
-      peripheral = null;
-    } else {
-      throw err;
-    }
-  } finally {
-    try {
-      await noble.stopScanningAsync();
-    } catch (err) {
-      console.error(`[ble-scan] Error stopping scan: ${err.message}`);
+  // Tell the Bluetooth adapter to start advertising scans
+  // The 'true' parameter means allow duplicate advertisements (so we see the same bike multiple times)
+  console.log(`[ble-scan] Starting adapter scan (allowDuplicates=true)...`);
+  await noble.startScanningAsync(serviceUuids, true);
+  
+  // Loop: for each device that broadcasts near us
+  console.log(`[ble-scan] Listening for discover events...`);
+  for await (const [result] of results) {
+    // Check if this device is the one we want (bike name, address, etc)
+    if (filter(result)) {
+      // Found it! Store the device object and exit the loop
+      peripheral = result;
+      console.log(`[ble-scan] Found matching device: ${result?.advertisement?.localName} [${result?.address}]`);
+      break;
     }
   }
   
+  // Stop scanning the Bluetooth adapter (important to save power)
+  console.log(`[ble-scan] Stopping adapter scan...`);
+  await noble.stopScanningAsync();
+  
+  // Return the device we found, or null if loop exited without finding anything
   return peripheral;
 }
 
+
 /**
- * Create a function that filters peripherals on multiple properties.
- * @param {object} properties
- * @param {string} properties.name - name
- * @param {string} properties.address - address
- * @returns {FilterFunction} - the filter function
+ * Combine multiple filter rules into one (all must pass).
+ * 
+ * Example: createFilter({ name: 'M3i', address: '11:22:33:44:55:66' })
+ * returns a function that checks BOTH the name AND address match.
+ *
+ * @param {object} properties - filter criteria
+ * @param {string} [properties.name] - if set, only match devices with this BLE advertisement name
+ * @param {string} [properties.address] - if set, only match devices with this MAC address
+ * @returns {FilterFunction} a function that returns true if device matches all specified criteria
  */
 export function createFilter({ name, address }) {
   const filters = [];
   if (name) filters.push(createNameFilter(name));
   if (address) filters.push(createAddressFilter(address));
+  
+  // Return a function that checks ALL filters pass
   return (peripheral) => filters.every(f => f(peripheral));
 }
 
 /**
- * Create a function that filters peripherals by name.
- * @param {string} name - name to match
- * @returns {FilterFunction} - the filter function
+ * Create a filter that matches devices by BLE advertisement name.
+ * 
+ * The "name" is what appears in the device's BLE advertisement packet.
+ * For a Keiser M3i bike, the name might be "M3i#000" or similar.
+ *
+ * @param {string} name - exact name to match (case-sensitive)
+ * @returns {FilterFunction} a function that returns true if device name matches exactly
  */
 export function createNameFilter(name) {
-  return (peripheral) => peripheral && peripheral.advertisement && name === peripheral.advertisement.localName
+  // Return a function that checks if a peripheral has the matching name
+  return (peripheral) => {
+    // Make sure peripheral exists and has advertisement data
+    if (!peripheral || !peripheral.advertisement) {
+      return false;
+    }
+    // Check if the local name matches exactly
+    return name === peripheral.advertisement.localName;
+  };
 }
 
 /**
- * Create a function that filters peripherals by address.
- * @param {string} address - address to match
- * @returns {FilterFunction} - the filter function
+ * Create a filter that matches devices by MAC address.
+ * 
+ * MAC addresses can be formatted different ways (with colons, hyphens, or no separators).
+ * This function normalizes both the search address and device address before comparing,
+ * so "11:22:33:44:55:66" and "11-22-33-44-55-66" are treated the same.
+ *
+ * @param {string} address - MAC address to match (format-flexible)
+ * @returns {FilterFunction} a function that returns true if device address matches
  */
 export function createAddressFilter(address) {
-  return (peripheral) => peripheral && peripheral.address && macAddress(address) == macAddress(peripheral.address)
+  // Return a function that checks if a peripheral has the matching address
+  return (peripheral) => {
+    // Make sure peripheral exists and has an address
+    if (!peripheral || !peripheral.address) {
+      return false;
+    }
+    // Compare addresses after normalizing them (handles different formats)
+    return macAddress(address) == macAddress(peripheral.address);
+  };
 }
