@@ -1,4 +1,5 @@
 import {macAddress} from './mac-address.js';
+import {spawn} from 'child_process';
 
 /**
  * Callback function that determines if a BLE device is the one we're looking for.
@@ -29,6 +30,7 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
   const allowDuplicates = options.allowDuplicates !== false;
   let peripheral = null;
   let discoveryCount = 0;
+  let useFallback = false;
 
   console.log(`[ble-scan] Starting BLE scan (allowDuplicates: ${allowDuplicates})`);
 
@@ -65,6 +67,18 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
       }
     };
 
+    // Cleanup for hcitool fallback
+    const cleanupHcitool = (process) => {
+      if (process) {
+        try {
+          process.kill();
+        } catch (err) {
+          // Ignore kill errors
+        }
+      }
+    };
+
+    // Start noble scan first (primary method)
     try {
       // Attach listener BEFORE starting scan so we catch early discoveries
       console.log(`[ble-scan] Attaching discover event listener...`);
@@ -82,6 +96,23 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
       if (discoveryCount === 0) {
         console.warn(`[ble-scan] ⚠ WARNING: No discover events after 100ms. Noble may not be emitting events.`);
         console.warn(`[ble-scan]   noble.state=${noble.state}, noble.scanning=${noble.scanning}`);
+        
+        // Noble scan failed - use hcitool fallback
+        if (noble.scanning === undefined) {
+          console.warn(`[ble-scan] ⚠ Falling back to hcitool lescan (noble.scanning never started)`);
+          useFallback = true;
+          noble.removeListener('discover', onDiscover);
+          
+          try {
+            await noble.stopScanningAsync();
+          } catch (err) {
+            // Ignore
+          }
+
+          // Start hcitool fallback
+          await scanWithHcitool(filter, resolve, reject, cleanupHcitool);
+          return;
+        }
       }
       
       // Wait indefinitely for a match (app layer handles timeouts)
@@ -89,6 +120,103 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
       // Note: if no match is found, this promise never resolves and relies on app timeout
     } catch (err) {
       await cleanup();
+      reject(err);
+    }
+  });
+}
+
+/**
+ * Fallback BLE scan using hcitool lescan subprocess.
+ * Used when noble fails to emit discover events.
+ */
+async function scanWithHcitool(filter, resolve, reject, cleanup) {
+  console.log(`[ble-scan] Starting hcitool lescan fallback...`);
+  
+  return new Promise((resolveHci, rejectHci) => {
+    let hcitoolProcess = null;
+    let seenDevices = new Set();
+    let foundMatch = false;
+
+    try {
+      // Spawn hcitool lescan process
+      hcitoolProcess = spawn('sudo', ['hcitool', '-i', 'hci0', 'lescan'], {
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      let output = '';
+
+      hcitoolProcess.stdout.on('data', (data) => {
+        output += data.toString();
+        const lines = output.split('\n');
+        
+        // Process complete lines
+        for (let i = 0; i < lines.length - 1; i++) {
+          const line = lines[i].trim();
+          if (!line || line.includes('LE Scan')) continue; // Skip header
+
+          // Parse hcitool output: "MAC ADDRESS  Device Name"
+          const parts = line.split(/\s+/);
+          if (parts.length < 2) continue;
+
+          const addr = parts[0];
+          const name = parts.slice(1).join(' ') || '(no name)';
+
+          // Skip duplicates in a short window
+          const deviceKey = `${addr}:${name}`;
+          if (seenDevices.has(deviceKey)) continue;
+          seenDevices.add(deviceKey);
+
+          console.log(`[ble-scan] hcitool found: ${name} [${addr}]`);
+
+          // Create a fake peripheral object that matches noble's format
+          const fakePeripheral = {
+            address: addr,
+            advertisement: {
+              localName: name
+            }
+          };
+
+          if (filter(fakePeripheral)) {
+            console.log(`[ble-scan] ✓ MATCH FOUND (hcitool): ${name} [${addr}]`);
+            foundMatch = true;
+            cleanup(hcitoolProcess);
+            resolve(fakePeripheral);
+            resolveHci();
+          }
+        }
+
+        // Keep last incomplete line for next data chunk
+        output = lines[lines.length - 1];
+      });
+
+      hcitoolProcess.stderr.on('data', (data) => {
+        const msg = data.toString();
+        if (!msg.includes('Set scan parameters')) {
+          console.error(`[ble-scan] hcitool error: ${msg}`);
+        }
+      });
+
+      hcitoolProcess.on('error', (err) => {
+        if (!foundMatch) {
+          console.error(`[ble-scan] hcitool process error: ${err.message}`);
+          cleanup(hcitoolProcess);
+          rejectHci(err);
+          reject(err);
+        }
+      });
+
+      hcitoolProcess.on('exit', (code) => {
+        if (!foundMatch) {
+          console.log(`[ble-scan] hcitool scan ended (code: ${code})`);
+          cleanup(hcitoolProcess);
+          // Don't reject - let app timeout handle this
+          resolveHci();
+        }
+      });
+    } catch (err) {
+      console.error(`[ble-scan] Failed to start hcitool: ${err.message}`);
+      cleanup(hcitoolProcess);
+      rejectHci(err);
       reject(err);
     }
   });
