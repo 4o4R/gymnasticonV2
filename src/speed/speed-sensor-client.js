@@ -1,13 +1,13 @@
 /**
  * Generic Speed Sensor Client
  * 
- * Connects to any Bluetooth LE device advertising the standard
- * Cycling Speed Service (UUID 0x181a) and emits speed data.
+ * Connects to any Bluetooth LE device advertising the legacy
+ * Gymnasticon speed service (UUID 0x181a) and emits speed data.
  * 
- * Works with: Wahoo Speed Sensor, Garmin Speed Sensors, any standard GATT speed device
+ * Works with: devices exposing the legacy Gymnasticon speed profile (0x181a/0x2a50)
  * 
  * Data flow:
- * Device broadcasts Cycling Speed Service (0x181a)
+ * Device broadcasts legacy Gymnasticon speed service (0x181a)
  *   → Speed Measurement characteristic (0x2a50)
  *   → Contains: wheel revolution count + event time
  *   → App calculates speed from: wheelRevolutions * wheelCircumference / timeInterval
@@ -15,24 +15,38 @@
 
 import {EventEmitter} from 'events';
 import {scan} from '../util/ble-scan.js';
-import {Timer} from '../util/timer.js';
+
+const EVENT_TIME_MAX = 0x10000;
+const WHEEL_REV_MAX = 0x100000000;
+
+function counterDelta(current, previous, maxValue) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) {
+    return 0;
+  }
+  if (current >= previous) {
+    return current - previous;
+  }
+  return (maxValue - previous) + current;
+}
 
 export class SpeedSensorClient extends EventEmitter {
   constructor(noble, options = {}) {
     super();
     this.noble = noble;
     this.logger = options.logger || console;
+    this.connectionManager = options.connectionManager;
 
     // Search parameters
     this.deviceName = options.deviceName;  // Optional: filter by name (e.g., "Wahoo Speed")
-    this.serviceUuid = '181a';  // Standard Cycling Speed Service
-    this.characteristicUuid = '2a50';  // Cycling Speed Measurement
+    this.serviceUuid = '181a';  // Legacy Gymnasticon speed service
+    this.characteristicUuid = '2a50';  // Legacy speed measurement
 
     // Connection parameters
     this.connectTimeout = options.connectTimeout || 30;  // seconds
     this.statTimeout = options.statTimeout || 5000;  // milliseconds between expected updates
-    this.maxConnectRetries = options.maxConnectRetries || 3;
-    this.retryDelay = options.retryDelay || 1000;  // ms before retry
+    this.maxConnectRetries = Number.isFinite(options.maxConnectRetries) ? options.maxConnectRetries : Infinity;
+    this.retryDelay = Number.isFinite(options.retryDelay) ? options.retryDelay : 1000;  // ms before retry
+    this.maxRetryDelay = Number.isFinite(options.maxRetryDelay) ? options.maxRetryDelay : 30000;
 
     // State tracking
     this.peripheral = null;
@@ -40,12 +54,17 @@ export class SpeedSensorClient extends EventEmitter {
     this.lastEventTime = null;
     this.wheelRevolutions = 0;
     this.isConnected = false;
+    this.connecting = false;
+    this.shouldReconnect = true;
 
     // Timers
     this.connectTimer = null;
     this.statTimer = null;
     this.retryTimer = null;
     this.retryCount = 0;
+
+    this.onSpeedDataBound = (data) => this.onSpeedData(data);
+    this.onDisconnectBound = () => this.onDisconnect();
   }
 
   /**
@@ -53,27 +72,49 @@ export class SpeedSensorClient extends EventEmitter {
    * Emits 'connected' on success, 'connect-failed' on failure.
    */
   async connect() {
+    if (this.isConnected || this.connecting) {
+      return;
+    }
+    this.connecting = true;
+    this.shouldReconnect = true;
     this.logger.log('[SpeedSensorClient] Starting speed sensor discovery...');
     
     try {
       // Phase 1: Scan for speed sensor
+      const timeoutMs = Number.isFinite(this.connectTimeout) && this.connectTimeout > 0
+        ? Math.round(this.connectTimeout * 1000)
+        : 0;
       this.peripheral = await scan(
         this.noble,
         [this.serviceUuid],
         (peripheral) => this.matchesFilter(peripheral),
-        this.connectTimeout
+        {
+          timeoutMs,
+          stopScanOnMatch: false,
+          stopScanOnTimeout: false,
+        }
       );
 
       if (!this.peripheral) {
         this.emit('connect-failed', 'Speed sensor not found');
+        this.connecting = false;
+        this.scheduleReconnect();
         return;
       }
 
-      const name = this.peripheral.advertisement.localName || 'Unknown';
+      if (typeof this.peripheral.connectAsync !== 'function') {
+        throw new Error('Speed sensor discovery returned a non-connectable peripheral');
+      }
+
+      const name = this.peripheral?.advertisement?.localName || 'Unknown';
       this.logger.log(`[SpeedSensorClient] Found speed sensor: ${name}`);
 
       // Phase 2: Connect to device
-      await this.peripheral.connectAsync();
+      if (this.connectionManager) {
+        await this.connectionManager.connect(this.peripheral);
+      } else {
+        await this.peripheral.connectAsync();
+      }
       this.logger.log('[SpeedSensorClient] Connected to peripheral');
 
       // Phase 3: Discover services and characteristics
@@ -90,23 +131,22 @@ export class SpeedSensorClient extends EventEmitter {
       this.logger.log(`[SpeedSensorClient] Discovered speed measurement characteristic`);
 
       // Phase 4: Subscribe to notifications
-      this.characteristic.on('data', (data) => this.onSpeedData(data));
+      this.characteristic.on('data', this.onSpeedDataBound);
       await this.characteristic.subscribeAsync();
       
       this.isConnected = true;
+      this.connecting = false;
+      this.retryCount = 0;
       this.emit('connected');
       this.logger.log('[SpeedSensorClient] Subscribed to speed notifications');
 
-      // Phase 5: Start watchdog timer for disconnect detection
-      this.startStatTimer();
-
       // Handle disconnection
-      this.peripheral.once('disconnect', () => {
-        this.onDisconnect();
-      });
+      this.peripheral.once('disconnect', this.onDisconnectBound);
 
     } catch (error) {
       this.logger.error(`[SpeedSensorClient] Connection failed: ${error.message}`);
+      this.connecting = false;
+      this.cleanupConnection();
       this.emit('connect-failed', error.message);
       this.scheduleReconnect();
     }
@@ -114,24 +154,28 @@ export class SpeedSensorClient extends EventEmitter {
 
   /**
    * Check if a peripheral matches our search criteria.
-   * Matches if: device advertises speed service AND (no name filter OR name matches)
+   * Matches if: device advertises speed service AND (no name filter OR name matches).
+   * If service UUIDs are missing (hcitool fallback), name matching is used when provided.
    */
   matchesFilter(peripheral) {
-    const hasService = peripheral.advertisement.serviceUuids?.some(
-      uuid => uuid.toLowerCase() === this.serviceUuid.toLowerCase()
+    const localName = peripheral?.advertisement?.localName || '';
+    const nameMatches = this.deviceName
+      ? localName.toLowerCase().includes(this.deviceName.toLowerCase())
+      : false;
+    const serviceUuids = peripheral?.advertisement?.serviceUuids;
+    const hasService = Array.isArray(serviceUuids) && serviceUuids.some(
+      uuid => uuid?.toLowerCase() === this.serviceUuid.toLowerCase()
     );
 
-    if (!hasService) return false;
-
-    if (!this.deviceName) return true;  // No name filter, accept any speed service device
-
-    const localName = peripheral.advertisement.localName || '';
-    return localName.toLowerCase().includes(this.deviceName.toLowerCase());
+    if (this.deviceName) {
+      return Array.isArray(serviceUuids) ? nameMatches && hasService : nameMatches;
+    }
+    return Boolean(hasService);
   }
 
   /**
    * Parse speed measurement data from characteristic notification.
-   * Format (GATT standard):
+   * Format (legacy Gymnasticon):
    *   Byte 0: Flags
    *   Bytes 1-4: Cumulative Wheel Revolutions (uint32, LE)
    *   Bytes 5-6: Last Wheel Event Time (uint16, LE, in 1/2048 second units)
@@ -156,12 +200,16 @@ export class SpeedSensorClient extends EventEmitter {
 
       // Calculate time since last event (handle wraparound)
       const timeUnit = 1 / 2048;  // seconds per unit
-      const timeSinceLastEvent = this.lastEventTime 
-        ? (eventTime - this.lastEventTime) * timeUnit
+      const hasPrevious = this.lastEventTime !== null;
+      const timeDelta = hasPrevious
+        ? counterDelta(eventTime, this.lastEventTime, EVENT_TIME_MAX)
         : 0;
+      const timeSinceLastEvent = timeDelta * timeUnit;
 
       // Calculate revolutions since last event
-      const revolutionsSinceLastEvent = newWheelRevolutions - this.wheelRevolutions;
+      const revolutionsSinceLastEvent = hasPrevious
+        ? counterDelta(newWheelRevolutions, this.wheelRevolutions, WHEEL_REV_MAX)
+        : 0;
 
       this.wheelRevolutions = newWheelRevolutions;
       this.lastEventTime = eventTime;
@@ -187,16 +235,16 @@ export class SpeedSensorClient extends EventEmitter {
    * If we don't receive data within statTimeout, assume device disconnected.
    */
   startStatTimer() {
-    if (this.statTimer) this.statTimer.clear();
-
-    this.statTimer = new Timer(
-      () => {
-        this.logger.warn('[SpeedSensorClient] No speed data received - assuming disconnect');
-        this.onDisconnect();
-      },
-      this.statTimeout,
-      false  // one-shot, not repeating
-    );
+    if (!Number.isFinite(this.statTimeout) || this.statTimeout <= 0) {
+      return;
+    }
+    if (this.statTimer) {
+      clearTimeout(this.statTimer);
+    }
+    this.statTimer = setTimeout(() => {
+      this.logger.warn('[SpeedSensorClient] No speed data received - assuming disconnect');
+      this.onDisconnect();
+    }, this.statTimeout);
   }
 
   /**
@@ -204,16 +252,19 @@ export class SpeedSensorClient extends EventEmitter {
    * Attempt to reconnect with exponential backoff.
    */
   onDisconnect() {
-    if (!this.isConnected) return;  // Already handled
+    if (!this.isConnected && !this.connecting) return;  // Already handled
+    if (!this.shouldReconnect) {
+      this.cleanupConnection();
+      return;
+    }
 
     this.isConnected = false;
+    this.connecting = false;
     this.logger.warn('[SpeedSensorClient] Speed sensor disconnected');
     this.emit('disconnect-detected');
 
-    if (this.statTimer) {
-      this.statTimer.clear();
-      this.statTimer = null;
-    }
+    this.clearStatTimer();
+    this.cleanupConnection();
 
     this.scheduleReconnect();
   }
@@ -222,31 +273,34 @@ export class SpeedSensorClient extends EventEmitter {
    * Schedule reconnection attempt with exponential backoff.
    */
   scheduleReconnect() {
-    if (this.retryCount >= this.maxConnectRetries) {
+    if (!this.shouldReconnect) return;
+    if (Number.isFinite(this.maxConnectRetries) && this.retryCount >= this.maxConnectRetries) {
       this.logger.error(`[SpeedSensorClient] Max reconnection attempts (${this.maxConnectRetries}) reached`);
       this.emit('connection-failed');
       return;
     }
 
-    const delay = this.retryDelay * Math.pow(2, this.retryCount);
+    const delay = Math.min(this.retryDelay * Math.pow(2, this.retryCount), this.maxRetryDelay);
     this.retryCount++;
 
-    this.logger.log(`[SpeedSensorClient] Scheduling reconnect in ${delay}ms (attempt ${this.retryCount}/${this.maxConnectRetries})`);
+    const attemptLabel = Number.isFinite(this.maxConnectRetries)
+      ? `${this.retryCount}/${this.maxConnectRetries}`
+      : `${this.retryCount}`;
+    this.logger.log(`[SpeedSensorClient] Scheduling reconnect in ${delay}ms (attempt ${attemptLabel})`);
 
-    this.retryTimer = new Timer(
-      () => this.reconnect(),
-      Math.round(delay),
-      false  // one-shot
-    );
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+    }
+    this.retryTimer = setTimeout(() => this.reconnect(), Math.round(delay));
   }
 
   /**
    * Attempt to reconnect after disconnect.
    */
   async reconnect() {
+    if (!this.shouldReconnect) return;
     try {
-      await this.disconnect();  // Clean up old connection
-      this.retryCount = 0;  // Reset retry counter on reconnect attempt
+      await this.disconnect({reconnect: true});  // Clean up old connection
       await this.connect();
     } catch (error) {
       this.logger.error(`[SpeedSensorClient] Reconnection failed: ${error.message}`);
@@ -257,9 +311,12 @@ export class SpeedSensorClient extends EventEmitter {
   /**
    * Disconnect and clean up.
    */
-  async disconnect() {
-    if (this.statTimer) this.statTimer.clear();
-    if (this.retryTimer) this.retryTimer.clear();
+  async disconnect({reconnect = false} = {}) {
+    if (!reconnect) {
+      this.shouldReconnect = false;
+    }
+    this.clearStatTimer();
+    this.clearRetryTimer();
 
     if (this.characteristic) {
       try {
@@ -277,9 +334,7 @@ export class SpeedSensorClient extends EventEmitter {
       }
     }
 
-    this.isConnected = false;
-    this.peripheral = null;
-    this.characteristic = null;
+    this.cleanupConnection();
   }
 
   /**
@@ -289,7 +344,36 @@ export class SpeedSensorClient extends EventEmitter {
     return {
       connected: this.isConnected,
       wheelRevolutions: this.wheelRevolutions,
-      deviceName: this.peripheral?.advertisement.localName || 'Unknown',
+      deviceName: this.peripheral?.advertisement?.localName || 'Unknown',
     };
+  }
+
+  clearStatTimer() {
+    if (this.statTimer) {
+      clearTimeout(this.statTimer);
+      this.statTimer = null;
+    }
+  }
+
+  clearRetryTimer() {
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+  }
+
+  cleanupConnection() {
+    this.isConnected = false;
+    this.connecting = false;
+    this.lastEventTime = null;
+    this.wheelRevolutions = 0;
+    if (this.characteristic) {
+      this.characteristic.removeListener('data', this.onSpeedDataBound);
+      this.characteristic = null;
+    }
+    if (this.peripheral) {
+      this.peripheral.removeListener('disconnect', this.onDisconnectBound);
+      this.peripheral = null;
+    }
   }
 }

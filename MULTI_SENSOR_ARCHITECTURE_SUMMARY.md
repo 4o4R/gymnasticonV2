@@ -9,10 +9,10 @@
 
 ## Overview
 
-This session completed the multi-sensor architecture implementation that enables gymnast users to connect **generic GATT sensors** (speed, cadence, heart rate) **in parallel** while maintaining bike-as-primary data source.
+This session completed the multi-sensor architecture implementation that enables gymnast users to connect **legacy Gymnasticon GATT sensors** (speed, cadence, heart rate) **in parallel** while maintaining bike-as-primary data source.
 
 ### What This Means for Users
-- **Compatible with any sensor**: Not locked into Wahoo/Garmin. Works with any GATT-compliant speed (0x181a) or cadence (0x181b) sensor
+- **Compatible with legacy sensors**: Preserves the original Gymnasticon speed/cadence UUIDs (0x181a/0x181b) for backwards compatibility
 - **3x faster startup**: Sensors connect in parallel (2 seconds) instead of sequentially (5.5 seconds)
 - **Reliable**: One sensor failure doesn't block others or the bike connection
 - **Smart metric blending**: Framework in place to use best available data when multiple sources available
@@ -21,11 +21,11 @@ This session completed the multi-sensor architecture implementation that enables
 
 ## Architecture Components
 
-### 1. Generic GATT Sensor Clients
+### 1. Legacy GATT Sensor Clients
 
 #### SpeedSensorClient (`src/speed/speed-sensor-client.js` - 248 lines)
-- **GATT Service UUID:** `0x181a` (Cycling Speed Service)
-- **Compatible with:** Wahoo, Garmin, any GATT device
+- **GATT Service UUID:** `0x181a` (legacy Gymnasticon speed service)
+- **Compatible with:** Devices exposing the legacy Gymnasticon speed profile (0x181a/0x2a50)
 - **Data Parsed:**
   - Wheel revolution count (uint32 cumulative value)
   - Event time (uint16, 1/2048 second resolution)
@@ -43,8 +43,8 @@ speedSensor.on('stats', (stats) => {
 ```
 
 #### CadenceSensorClient (`src/cadence/cadence-sensor-client.js` - 254 lines)
-- **GATT Service UUID:** `0x181b` (Cycling Cadence Service)
-- **Compatible with:** Any GATT device with cadence service
+- **GATT Service UUID:** `0x181b` (legacy Gymnasticon cadence service)
+- **Compatible with:** Devices exposing the legacy Gymnasticon cadence profile (0x181b/0x2a51)
 - **Data Parsed:**
   - Crank revolution count (uint16 cumulative value)
   - Event time (uint16, 1/1024 second resolution)
@@ -396,10 +396,10 @@ console.log(app.cadenceSensor?.getStatus());
 
 ## Technical Debt & Decisions
 
-### Why Generic GATT?
+### Why Preserve Legacy GATT?
 - Wahoo-specific clients lock users into one brand
-- GATT 0x181a/0x181b are standard Bluetooth profiles
-- Works with Garmin, 4iiii, Stages, any compliant device
+- GATT 0x181a/0x181b are legacy Gymnasticon profiles preserved for backwards compatibility
+- Standard CSC devices use 0x1816/0x2A5B (future enhancement if needed)
 - Future-proofs against brand changes
 
 ### Why Parallel Startup?
@@ -419,7 +419,7 @@ console.log(app.cadenceSensor?.getStatus());
 ## Support & Questions
 
 **Q: Will this work with my Wahoo sensor?**  
-A: Yes! Wahoo sensors expose standard GATT 0x181a service.
+A: Only if the sensor exposes the legacy Gymnasticon UUIDs. Standard CSC sensors use 0x1816/0x2A5B.
 
 **Q: What if sensor disconnect during ride?**  
 A: Exponential backoff reconnection attempts 3 times, then gives up but continues with bike data.

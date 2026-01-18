@@ -4,6 +4,8 @@
 
 The Gymnastic system currently supports concurrent operation of:
 
+Note: V2 speed/cadence clients preserve the legacy Gymnasticon UUIDs (0x181a/0x2a50 and 0x181b/0x2a51). Standard CSC (0x1816/0x2A5B) or Wahoo-specific clients are future work.
+
 1. **Bike Sensor** (mandatory)
    - Keiser M3i, Flywheel, Peloton, IC4, IC5, IC8, etc.
    - Provides: Power + Cadence
@@ -50,7 +52,7 @@ export class WahooSpeedSensor extends EventEmitter {
     this.noble = noble;
     this.deviceName = options.deviceName || 'Wahoo Speed';
     
-    // Wahoo speed sensors advertise standard Cycling Speed Service
+    // Legacy Gymnasticon speed service (kept for backwards compatibility)
     this.serviceUuid = '181a';
     
     // Timeout configuration
@@ -92,7 +94,7 @@ export class WahooSpeedSensor extends EventEmitter {
     // Discover and subscribe to speed characteristic
     const {characteristics} = await this.peripheral.discoverServicesAndCharacteristicsAsync();
     this.characteristic = characteristics.find(
-      c => c.uuid === '2a48'  // Cycling Speed Measurement characteristic
+      c => c.uuid === '2a50'  // Legacy Gymnasticon speed measurement characteristic
     );
     
     if (this.characteristic) {
@@ -115,7 +117,7 @@ export class WahooSpeedSensor extends EventEmitter {
   }
   
   parseWheelRevolutions(data) {
-    // Cycling Speed characteristic format:
+    // Legacy speed characteristic format:
     // Flags (1 byte) + Wheel Revolutions (4 bytes) + Last Event Time (2 bytes)
     if (data.length >= 7) {
       this.wheelRevolutions = data.readUInt32LE(1);
@@ -195,7 +197,7 @@ export class WahooCadenceSensor extends EventEmitter {
     this.noble = noble;
     this.deviceName = options.deviceName || 'Wahoo Cadence';
     
-    // Wahoo cadence sensors advertise standard Cycling Cadence Service
+    // Legacy Gymnasticon cadence service (kept for backwards compatibility)
     this.serviceUuid = '181b';
     
     this.peripheral = null;
@@ -228,7 +230,7 @@ export class WahooCadenceSensor extends EventEmitter {
     // Discover and subscribe to cadence characteristic
     const {characteristics} = await this.peripheral.discoverServicesAndCharacteristicsAsync();
     this.characteristic = characteristics.find(
-      c => c.uuid === '2a63'  // Cycling Cadence Measurement characteristic
+      c => c.uuid === '2a51'  // Legacy cadence measurement characteristic
     );
     
     if (this.characteristic) {
@@ -241,7 +243,7 @@ export class WahooCadenceSensor extends EventEmitter {
   }
   
   parseCrankRevolutions(data) {
-    // Cycling Cadence characteristic format:
+    // Legacy cadence characteristic format:
     // Crank Revolutions (2 bytes) + Last Event Time (2 bytes)
     if (data.length >= 4) {
       this.crankRevolutions = data.readUInt16LE(0);

@@ -201,8 +201,8 @@ V2 Flow (Parallel Startup - CRITICAL):
 // From src/app/app.js startOptionalSensors()
 await Promise.allSettled([
   this.connectHeartRateSensor(),      // Generic GATT 0x180D
-  this.connectSpeedSensor(),           // Generic GATT 0x181a (Wahoo/Garmin)
-  this.connectCadenceSensor()          // Generic GATT 0x181b (Wahoo/Garmin)
+  this.connectSpeedSensor(),           // Legacy Gymnasticon speed service (0x181a)
+  this.connectCadenceSensor()          // Legacy Gymnasticon cadence service (0x181b)
 ]);
 
 // Key: AllSettled means partial failures don't crash
@@ -212,15 +212,15 @@ await Promise.allSettled([
 ### Sensor Clients (V2)
 ```
 SpeedSensorClient (src/speed/speed-sensor-client.js)
-  - Service UUID: 0x181a (Cycling Speed Service)
-  - Characteristic: 0x2a48 (CSC Measurement)
-  - Compatible: Wahoo Cadence, Garmin Vector, any GATT-compliant
+  - Service UUID: 0x181a (legacy Gymnasticon speed service)
+  - Characteristic: 0x2a50 (legacy speed measurement)
+  - Compatible: devices using the original Gymnasticon speed profile
   - Provides: Wheel revolutions + timestamp for speed calculation
 
 CadenceSensorClient (src/cadence/cadence-sensor-client.js)
-  - Service UUID: 0x181b (Cycling Cadence Service)
-  - Characteristic: 0x2a49 (CSC Measurement)
-  - Compatible: Wahoo Speed, Garmin Vector, etc.
+  - Service UUID: 0x181b (legacy Gymnasticon cadence service)
+  - Characteristic: 0x2a51 (legacy cadence measurement)
+  - Compatible: devices using the original Gymnasticon cadence profile
   - Provides: Crank revolutions + timestamp for cadence
 
 HeartRateClient (existing)

@@ -10,8 +10,8 @@
 ### 1. Generic Speed Sensor Client
 **File:** `src/speed/speed-sensor-client.js` (408 lines)
 
-- Connects to ANY device advertising Cycling Speed Service (UUID 0x181a)
-- Works with: Wahoo Speed, Garmin Speed, or any GATT-compliant speed device
+- Connects to devices advertising the legacy Gymnasticon Speed Service (UUID 0x181a)
+- Works with: legacy Gymnasticon speed sensors (or any device exposing the 0x181a/0x2a50 profile)
 - **Key Features:**
   - Parses wheel revolution count + event time from GATT notifications
   - Calculates time delta and revolution delta between updates
@@ -29,8 +29,8 @@
 ### 2. Generic Cadence Sensor Client
 **File:** `src/cadence/cadence-sensor-client.js` (408 lines)
 
-- Connects to ANY device advertising Cycling Cadence Service (UUID 0x181b)
-- Works with: Wahoo Cadence, Garmin Cadence, or any GATT-compliant cadence device
+- Connects to devices advertising the legacy Gymnasticon Cadence Service (UUID 0x181b)
+- Works with: legacy Gymnasticon cadence sensors (or any device exposing the 0x181b/0x2a51 profile)
 - **Key Features:**
   - Parses crank revolution count + event time from GATT notifications
   - Calculates time delta and revolution delta between updates
@@ -258,14 +258,14 @@ START APP
     │   └── Emit 'heartRate' events
     │
     ├── Speed Sensor Connection (Optional)
-    │   ├── Scan for Speed Service 0x181a
+    │   ├── Scan for legacy speed service 0x181a
     │   ├── Connect and subscribe to wheel data
     │   ├── Parse revolutions + event time
     │   ├── Auto-reconnect on disconnect
     │   └── Emit 'stats' with wheel data
     │
     └── Cadence Sensor Connection (Optional)
-        ├── Scan for Cadence Service 0x181b
+        ├── Scan for legacy cadence service 0x181b
         ├── Connect and subscribe to crank data
         ├── Parse revolutions + event time + calculate RPM
         ├── Auto-reconnect on disconnect
@@ -298,7 +298,7 @@ METRIC AGGREGATION (Ready for Implementation)
 - [ ] Deploy to Raspberry Pi
 - [ ] Keiser M3i bike connects (once noble discover issue resolved)
 - [ ] Heart rate device (watch/strap) connects and emits BPM
-- [ ] Optional: Test with real Wahoo Speed/Cadence sensors if available
+- [ ] Optional: Test with sensors that expose legacy Gymnasticon UUIDs (0x181a/0x2a50, 0x181b/0x2a51)
 - [ ] Verify all data streams flowing to Zwift simultaneously
 
 ### Real-World Scenarios
@@ -381,8 +381,8 @@ metricsProcessor: {
 
 | File | Type | Lines | Purpose |
 |------|------|-------|---------|
-| `src/speed/speed-sensor-client.js` | NEW | 408 | Generic Cycling Speed Service client |
-| `src/cadence/cadence-sensor-client.js` | NEW | 408 | Generic Cycling Cadence Service client |
+| `src/speed/speed-sensor-client.js` | NEW | 408 | Legacy Gymnasticon speed service client |
+| `src/cadence/cadence-sensor-client.js` | NEW | 408 | Legacy Gymnasticon cadence service client |
 | `src/app/app.js` | MODIFIED | +300 | Multi-sensor startup + event handlers |
 | `METRIC_BLENDING_EXPLAINED.md` | NEW | 240 | Blending strategy documentation |
 | `src/test/multi-sensor-integration.mjs` | NEW | 211 | Integration test demonstrating architecture |
@@ -393,7 +393,7 @@ metricsProcessor: {
 
 ## Key Architectural Decisions
 
-### 1. Generic GATT Clients (Not Wahoo-Specific)
+### 1. Legacy Gymnasticon GATT Clients (Backwards Compatible)
 - ✅ Works with ANY device advertising standard service UUID
 - ✅ Maximum compatibility
 - ✅ Future-proof (new manufacturers, new devices)
@@ -430,7 +430,7 @@ metricsProcessor: {
 ✅ **Complete, tested, and ready for deployment**
 
 The multi-sensor architecture is implemented with:
-- Generic GATT clients for maximum compatibility
+- Legacy Gymnasticon GATT clients preserved for backwards compatibility
 - Parallel startup for 2.75x faster startup
 - Auto-reconnection with exponential backoff
 - Clean EventEmitter pattern

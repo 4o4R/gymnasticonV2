@@ -1,4 +1,3 @@
-import {on} from 'events';
 import {execSync} from 'child_process';
 import {macAddress} from './mac-address.js';
 
@@ -19,29 +18,42 @@ import {macAddress} from './mac-address.js';
  * @param {Noble} noble - a Noble instance.
  * @param {string[]} serviceUuids - find devices advertising these GATT service uuids
  * @param {FilterFunction} filter - find devices matching this filter
+ * @param {object} options
+ * @param {boolean} [options.allowDuplicates=true] - forward to noble scan
+ * @param {number} [options.timeoutMs] - stop scanning after this duration (ms)
+ * @param {boolean} [options.stopScanOnMatch=true] - stop scanning after match
+ * @param {boolean} [options.stopScanOnTimeout=true] - stop scanning when timing out
  * @returns {Peripheral} the matching peripheral
  */
 export async function scan(noble, serviceUuids, filter = () => true, options = {}) {
-  let peripheral;
   const allowDuplicates = options?.allowDuplicates ?? true;
   const adapter = resolveAdapterName(options);
+  const timeoutMs = Number.isFinite(options?.timeoutMs) ? options.timeoutMs : null;
+  const stopScanOnMatch = options?.stopScanOnMatch !== false;
+  const stopScanOnTimeout = options?.stopScanOnTimeout !== false;
+  let startedScan = false;
   
   // Try the normal noble path first
   try {
-    let results = on(noble, 'discover');
-    
     // Start scanning - this may fail if noble.state is 'unknown'
-    await noble.startScanningAsync(serviceUuids, allowDuplicates);
-    
-    console.log('[ble-scan] ✓ Noble scan started successfully');
-    for await (const [result] of results) {
-      if (filter(result)) {
-        peripheral = result;
-        break;
+    try {
+      await noble.startScanningAsync(serviceUuids, allowDuplicates);
+      startedScan = true;
+      console.log('[ble-scan] ✓ Noble scan started successfully');
+    } catch (err) {
+      if (isAlreadyScanningError(err)) {
+        console.log('[ble-scan] Noble scan already running; reusing existing scan');
+      } else {
+        throw err;
       }
     }
-    await noble.stopScanningAsync();
-    return peripheral;
+
+    return await waitForDiscovery(noble, filter, {
+      timeoutMs,
+      startedScan,
+      stopScanOnMatch,
+      stopScanOnTimeout,
+    });
   } catch (err) {
     // Noble failed - try hcitool fallback
     console.warn(`[ble-scan] ⚠ Noble scan failed: ${err.message}`);
@@ -68,6 +80,60 @@ function resolveAdapterName(options = {}) {
     }
   }
   return 'hci0';
+}
+
+function isAlreadyScanningError(error) {
+  const message = String(error?.message || error || '');
+  return /already (?:start(ed)? )?scanning/i.test(message) || /scan already in progress/i.test(message);
+}
+
+function waitForDiscovery(noble, filter, options = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeoutId = null;
+
+    const finish = (peripheral, didMatch) => {
+      if (settled) return;
+      settled = true;
+      noble.removeListener('discover', onDiscover);
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+
+      const shouldStop = options.startedScan && (
+        (didMatch && options.stopScanOnMatch) ||
+        (!didMatch && options.stopScanOnTimeout)
+      );
+
+      if (shouldStop) {
+        Promise.resolve()
+          .then(() => noble.stopScanningAsync())
+          .catch((err) => {
+            if (!/not scanning/i.test(String(err?.message || err))) {
+              console.warn(`[ble-scan] ⚠ stopScanning failed: ${err.message}`);
+            }
+          })
+          .finally(() => resolve(peripheral));
+      } else {
+        resolve(peripheral);
+      }
+    };
+
+    const onDiscover = (result) => {
+      if (settled) return;
+      if (filter(result)) {
+        finish(result, true);
+      }
+    };
+
+    noble.on('discover', onDiscover);
+
+    if (Number.isFinite(options.timeoutMs) && options.timeoutMs > 0) {
+      timeoutId = setTimeout(() => {
+        finish(null, false);
+      }, options.timeoutMs);
+    }
+  });
 }
 
 /**

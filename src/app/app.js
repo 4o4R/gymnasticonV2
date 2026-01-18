@@ -784,6 +784,7 @@ export class App {
     try {
       this.speedSensor = new SpeedSensorClient(this.noble, {
         logger: this.logger,
+        connectionManager: this.connectionManager,
         connectTimeout: this.opts.sensorConnectTimeout || 30,
         statTimeout: this.opts.sensorStatTimeout || 5000,
       });
@@ -822,6 +823,7 @@ export class App {
     try {
       this.cadenceSensor = new CadenceSensorClient(this.noble, {
         logger: this.logger,
+        connectionManager: this.connectionManager,
         connectTimeout: this.opts.sensorConnectTimeout || 30,
         statTimeout: this.opts.sensorStatTimeout || 5000,
       });

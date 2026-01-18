@@ -1,13 +1,13 @@
 /**
  * Generic Cadence Sensor Client
  * 
- * Connects to any Bluetooth LE device advertising the standard
- * Cycling Cadence Service (UUID 0x181b) and emits cadence data.
+ * Connects to any Bluetooth LE device advertising the legacy
+ * Gymnasticon cadence service (UUID 0x181b) and emits cadence data.
  * 
- * Works with: Wahoo Cadence Sensor, Garmin Cadence Sensors, any standard GATT cadence device
+ * Works with: devices exposing the legacy Gymnasticon cadence profile (0x181b/0x2a51)
  * 
  * Data flow:
- * Device broadcasts Cycling Cadence Service (0x181b)
+ * Device broadcasts legacy Gymnasticon cadence service (0x181b)
  *   → Cycling Cadence Measurement characteristic (0x2a51)
  *   → Contains: crank revolution count + event time
  *   → App calculates cadence from: crankRevolutions / timeInterval
@@ -15,24 +15,38 @@
 
 import {EventEmitter} from 'events';
 import {scan} from '../util/ble-scan.js';
-import {Timer} from '../util/timer.js';
+
+const EVENT_TIME_MAX = 0x10000;
+const CRANK_REV_MAX = 0x10000;
+
+function counterDelta(current, previous, maxValue) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) {
+    return 0;
+  }
+  if (current >= previous) {
+    return current - previous;
+  }
+  return (maxValue - previous) + current;
+}
 
 export class CadenceSensorClient extends EventEmitter {
   constructor(noble, options = {}) {
     super();
     this.noble = noble;
     this.logger = options.logger || console;
+    this.connectionManager = options.connectionManager;
 
     // Search parameters
     this.deviceName = options.deviceName;  // Optional: filter by name (e.g., "Wahoo Cadence")
-    this.serviceUuid = '181b';  // Standard Cycling Cadence Service
-    this.characteristicUuid = '2a51';  // Cycling Cadence Measurement
+    this.serviceUuid = '181b';  // Legacy Gymnasticon cadence service
+    this.characteristicUuid = '2a51';  // Legacy cadence measurement
 
     // Connection parameters
     this.connectTimeout = options.connectTimeout || 30;  // seconds
     this.statTimeout = options.statTimeout || 5000;  // milliseconds between expected updates
-    this.maxConnectRetries = options.maxConnectRetries || 3;
-    this.retryDelay = options.retryDelay || 1000;  // ms before retry
+    this.maxConnectRetries = Number.isFinite(options.maxConnectRetries) ? options.maxConnectRetries : Infinity;
+    this.retryDelay = Number.isFinite(options.retryDelay) ? options.retryDelay : 1000;  // ms before retry
+    this.maxRetryDelay = Number.isFinite(options.maxRetryDelay) ? options.maxRetryDelay : 30000;
 
     // State tracking
     this.peripheral = null;
@@ -40,12 +54,17 @@ export class CadenceSensorClient extends EventEmitter {
     this.lastEventTime = null;
     this.crankRevolutions = 0;
     this.isConnected = false;
+    this.connecting = false;
+    this.shouldReconnect = true;
 
     // Timers
     this.connectTimer = null;
     this.statTimer = null;
     this.retryTimer = null;
     this.retryCount = 0;
+
+    this.onCadenceDataBound = (data) => this.onCadenceData(data);
+    this.onDisconnectBound = () => this.onDisconnect();
   }
 
   /**
@@ -53,27 +72,49 @@ export class CadenceSensorClient extends EventEmitter {
    * Emits 'connected' on success, 'connect-failed' on failure.
    */
   async connect() {
+    if (this.isConnected || this.connecting) {
+      return;
+    }
+    this.connecting = true;
+    this.shouldReconnect = true;
     this.logger.log('[CadenceSensorClient] Starting cadence sensor discovery...');
     
     try {
       // Phase 1: Scan for cadence sensor
+      const timeoutMs = Number.isFinite(this.connectTimeout) && this.connectTimeout > 0
+        ? Math.round(this.connectTimeout * 1000)
+        : 0;
       this.peripheral = await scan(
         this.noble,
         [this.serviceUuid],
         (peripheral) => this.matchesFilter(peripheral),
-        this.connectTimeout
+        {
+          timeoutMs,
+          stopScanOnMatch: false,
+          stopScanOnTimeout: false,
+        }
       );
 
       if (!this.peripheral) {
         this.emit('connect-failed', 'Cadence sensor not found');
+        this.connecting = false;
+        this.scheduleReconnect();
         return;
       }
 
-      const name = this.peripheral.advertisement.localName || 'Unknown';
+      if (typeof this.peripheral.connectAsync !== 'function') {
+        throw new Error('Cadence sensor discovery returned a non-connectable peripheral');
+      }
+
+      const name = this.peripheral?.advertisement?.localName || 'Unknown';
       this.logger.log(`[CadenceSensorClient] Found cadence sensor: ${name}`);
 
       // Phase 2: Connect to device
-      await this.peripheral.connectAsync();
+      if (this.connectionManager) {
+        await this.connectionManager.connect(this.peripheral);
+      } else {
+        await this.peripheral.connectAsync();
+      }
       this.logger.log('[CadenceSensorClient] Connected to peripheral');
 
       // Phase 3: Discover services and characteristics
@@ -90,23 +131,22 @@ export class CadenceSensorClient extends EventEmitter {
       this.logger.log(`[CadenceSensorClient] Discovered cadence measurement characteristic`);
 
       // Phase 4: Subscribe to notifications
-      this.characteristic.on('data', (data) => this.onCadenceData(data));
+      this.characteristic.on('data', this.onCadenceDataBound);
       await this.characteristic.subscribeAsync();
       
       this.isConnected = true;
+      this.connecting = false;
+      this.retryCount = 0;
       this.emit('connected');
       this.logger.log('[CadenceSensorClient] Subscribed to cadence notifications');
 
-      // Phase 5: Start watchdog timer for disconnect detection
-      this.startStatTimer();
-
       // Handle disconnection
-      this.peripheral.once('disconnect', () => {
-        this.onDisconnect();
-      });
+      this.peripheral.once('disconnect', this.onDisconnectBound);
 
     } catch (error) {
       this.logger.error(`[CadenceSensorClient] Connection failed: ${error.message}`);
+      this.connecting = false;
+      this.cleanupConnection();
       this.emit('connect-failed', error.message);
       this.scheduleReconnect();
     }
@@ -114,24 +154,28 @@ export class CadenceSensorClient extends EventEmitter {
 
   /**
    * Check if a peripheral matches our search criteria.
-   * Matches if: device advertises cadence service AND (no name filter OR name matches)
+   * Matches if: device advertises cadence service AND (no name filter OR name matches).
+   * If service UUIDs are missing (hcitool fallback), name matching is used when provided.
    */
   matchesFilter(peripheral) {
-    const hasService = peripheral.advertisement.serviceUuids?.some(
-      uuid => uuid.toLowerCase() === this.serviceUuid.toLowerCase()
+    const localName = peripheral?.advertisement?.localName || '';
+    const nameMatches = this.deviceName
+      ? localName.toLowerCase().includes(this.deviceName.toLowerCase())
+      : false;
+    const serviceUuids = peripheral?.advertisement?.serviceUuids;
+    const hasService = Array.isArray(serviceUuids) && serviceUuids.some(
+      uuid => uuid?.toLowerCase() === this.serviceUuid.toLowerCase()
     );
 
-    if (!hasService) return false;
-
-    if (!this.deviceName) return true;  // No name filter, accept any cadence service device
-
-    const localName = peripheral.advertisement.localName || '';
-    return localName.toLowerCase().includes(this.deviceName.toLowerCase());
+    if (this.deviceName) {
+      return Array.isArray(serviceUuids) ? nameMatches && hasService : nameMatches;
+    }
+    return Boolean(hasService);
   }
 
   /**
    * Parse cadence measurement data from characteristic notification.
-   * Format (GATT standard):
+   * Format (legacy Gymnasticon):
    *   Byte 0: Flags
    *   Bytes 1-2: Cumulative Crank Revolutions (uint16, LE)
    *   Bytes 3-4: Last Crank Event Time (uint16, LE, in 1/1024 second units)
@@ -144,7 +188,7 @@ export class CadenceSensorClient extends EventEmitter {
       }
 
       const flags = data[0];
-      const hasCrankRevolutions = !!(flags & 0x01);
+      const hasCrankRevolutions = Boolean((flags & 0x02) || (flags & 0x01));
 
       if (!hasCrankRevolutions) {
         this.logger.warn('[CadenceSensorClient] Cadence data has no crank revolution count');
@@ -156,12 +200,16 @@ export class CadenceSensorClient extends EventEmitter {
 
       // Calculate time since last event (handle wraparound)
       const timeUnit = 1 / 1024;  // seconds per unit
-      const timeSinceLastEvent = this.lastEventTime 
-        ? (eventTime - this.lastEventTime) * timeUnit
+      const hasPrevious = this.lastEventTime !== null;
+      const timeDelta = hasPrevious
+        ? counterDelta(eventTime, this.lastEventTime, EVENT_TIME_MAX)
         : 0;
+      const timeSinceLastEvent = timeDelta * timeUnit;
 
       // Calculate revolutions since last event
-      const revolutionsSinceLastEvent = newCrankRevolutions - this.crankRevolutions;
+      const revolutionsSinceLastEvent = hasPrevious
+        ? counterDelta(newCrankRevolutions, this.crankRevolutions, CRANK_REV_MAX)
+        : 0;
 
       this.crankRevolutions = newCrankRevolutions;
       this.lastEventTime = eventTime;
@@ -194,16 +242,16 @@ export class CadenceSensorClient extends EventEmitter {
    * If we don't receive data within statTimeout, assume device disconnected.
    */
   startStatTimer() {
-    if (this.statTimer) this.statTimer.clear();
-
-    this.statTimer = new Timer(
-      () => {
-        this.logger.warn('[CadenceSensorClient] No cadence data received - assuming disconnect');
-        this.onDisconnect();
-      },
-      this.statTimeout,
-      false  // one-shot, not repeating
-    );
+    if (!Number.isFinite(this.statTimeout) || this.statTimeout <= 0) {
+      return;
+    }
+    if (this.statTimer) {
+      clearTimeout(this.statTimer);
+    }
+    this.statTimer = setTimeout(() => {
+      this.logger.warn('[CadenceSensorClient] No cadence data received - assuming disconnect');
+      this.onDisconnect();
+    }, this.statTimeout);
   }
 
   /**
@@ -211,16 +259,19 @@ export class CadenceSensorClient extends EventEmitter {
    * Attempt to reconnect with exponential backoff.
    */
   onDisconnect() {
-    if (!this.isConnected) return;  // Already handled
+    if (!this.isConnected && !this.connecting) return;  // Already handled
+    if (!this.shouldReconnect) {
+      this.cleanupConnection();
+      return;
+    }
 
     this.isConnected = false;
+    this.connecting = false;
     this.logger.warn('[CadenceSensorClient] Cadence sensor disconnected');
     this.emit('disconnect-detected');
 
-    if (this.statTimer) {
-      this.statTimer.clear();
-      this.statTimer = null;
-    }
+    this.clearStatTimer();
+    this.cleanupConnection();
 
     this.scheduleReconnect();
   }
@@ -229,31 +280,34 @@ export class CadenceSensorClient extends EventEmitter {
    * Schedule reconnection attempt with exponential backoff.
    */
   scheduleReconnect() {
-    if (this.retryCount >= this.maxConnectRetries) {
+    if (!this.shouldReconnect) return;
+    if (Number.isFinite(this.maxConnectRetries) && this.retryCount >= this.maxConnectRetries) {
       this.logger.error(`[CadenceSensorClient] Max reconnection attempts (${this.maxConnectRetries}) reached`);
       this.emit('connection-failed');
       return;
     }
 
-    const delay = this.retryDelay * Math.pow(2, this.retryCount);
+    const delay = Math.min(this.retryDelay * Math.pow(2, this.retryCount), this.maxRetryDelay);
     this.retryCount++;
 
-    this.logger.log(`[CadenceSensorClient] Scheduling reconnect in ${delay}ms (attempt ${this.retryCount}/${this.maxConnectRetries})`);
+    const attemptLabel = Number.isFinite(this.maxConnectRetries)
+      ? `${this.retryCount}/${this.maxConnectRetries}`
+      : `${this.retryCount}`;
+    this.logger.log(`[CadenceSensorClient] Scheduling reconnect in ${delay}ms (attempt ${attemptLabel})`);
 
-    this.retryTimer = new Timer(
-      () => this.reconnect(),
-      Math.round(delay),
-      false  // one-shot
-    );
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+    }
+    this.retryTimer = setTimeout(() => this.reconnect(), Math.round(delay));
   }
 
   /**
    * Attempt to reconnect after disconnect.
    */
   async reconnect() {
+    if (!this.shouldReconnect) return;
     try {
-      await this.disconnect();  // Clean up old connection
-      this.retryCount = 0;  // Reset retry counter on reconnect attempt
+      await this.disconnect({reconnect: true});  // Clean up old connection
       await this.connect();
     } catch (error) {
       this.logger.error(`[CadenceSensorClient] Reconnection failed: ${error.message}`);
@@ -264,9 +318,12 @@ export class CadenceSensorClient extends EventEmitter {
   /**
    * Disconnect and clean up.
    */
-  async disconnect() {
-    if (this.statTimer) this.statTimer.clear();
-    if (this.retryTimer) this.retryTimer.clear();
+  async disconnect({reconnect = false} = {}) {
+    if (!reconnect) {
+      this.shouldReconnect = false;
+    }
+    this.clearStatTimer();
+    this.clearRetryTimer();
 
     if (this.characteristic) {
       try {
@@ -284,9 +341,7 @@ export class CadenceSensorClient extends EventEmitter {
       }
     }
 
-    this.isConnected = false;
-    this.peripheral = null;
-    this.characteristic = null;
+    this.cleanupConnection();
   }
 
   /**
@@ -296,7 +351,36 @@ export class CadenceSensorClient extends EventEmitter {
     return {
       connected: this.isConnected,
       crankRevolutions: this.crankRevolutions,
-      deviceName: this.peripheral?.advertisement.localName || 'Unknown',
+      deviceName: this.peripheral?.advertisement?.localName || 'Unknown',
     };
+  }
+
+  clearStatTimer() {
+    if (this.statTimer) {
+      clearTimeout(this.statTimer);
+      this.statTimer = null;
+    }
+  }
+
+  clearRetryTimer() {
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+  }
+
+  cleanupConnection() {
+    this.isConnected = false;
+    this.connecting = false;
+    this.lastEventTime = null;
+    this.crankRevolutions = 0;
+    if (this.characteristic) {
+      this.characteristic.removeListener('data', this.onCadenceDataBound);
+      this.characteristic = null;
+    }
+    if (this.peripheral) {
+      this.peripheral.removeListener('disconnect', this.onDisconnectBound);
+      this.peripheral = null;
+    }
   }
 }

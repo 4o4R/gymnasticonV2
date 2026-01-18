@@ -248,7 +248,7 @@ The framework is architected to add:
 export class SpeedSensorClient extends EventEmitter {
   constructor(noble, options = {}) {
     this.deviceName = options.deviceName;
-    this.serviceUuid = '181a';  // Cycling Speed Service
+    this.serviceUuid = '181a';  // Legacy Gymnasticon speed service
     this.scan(); // Auto-discover
   }
   
@@ -263,7 +263,7 @@ export class SpeedSensorClient extends EventEmitter {
 export class CadenceSensorClient extends EventEmitter {
   constructor(noble, options = {}) {
     this.deviceName = options.deviceName;
-    this.serviceUuid = '181b';  // Cycling Cadence Service (or CSC 0x1816)
+    this.serviceUuid = '181b';  // Legacy Gymnasticon cadence service
     this.scan(); // Auto-discover
   }
   
@@ -332,18 +332,18 @@ Both would follow the exact same pattern as HeartRateClient.
    Enable ANT+ server if found
    ```
 
-### What Could Be Added (Framework Ready)
+### Optional Sensor Auto-Detection (Legacy UUIDs)
 
 5. **Speed Sensor Auto-Detection**
    ```
-   After bike connected, scan for Wahoo/other speed sensors
+   After bike connected, scan for legacy Gymnasticon speed sensors (0x181a/0x2a50)
    If found, use sensor speed instead of estimation
    Fall back to bike cadence estimation if not found
    ```
 
 6. **Cadence Sensor Auto-Detection**
    ```
-   After bike connected, scan for Wahoo/other cadence sensors
+   After bike connected, scan for legacy Gymnasticon cadence sensors (0x181b/0x2a51)
    If found, blend with or use sensor cadence
    Fall back to bike cadence if not found
    ```
@@ -408,15 +408,15 @@ export const defaults = {
 
 ---
 
-## 10. Next Steps: Adding Speed/Cadence Sensors
+## 10. Next Steps: Validate/Extend Speed/Cadence Sensors
 
-Once dual-adapter + HR support is working and tested, adding Wahoo speed/cadence sensors would be:
+Once dual-adapter + HR support is working and tested, validate legacy speed/cadence sensors and consider standard CSC support:
 
-### Step 1: Create Speed Sensor Client (300 lines)
-Copy structure of HeartRateClient, scan for Cycling Speed Service (0x181a)
+### Step 1: Validate legacy speed sensor client (already present)
+Copy structure of HeartRateClient, scan for legacy speed service (0x181a)
 
-### Step 2: Create Cadence Sensor Client (300 lines)
-Copy structure of HeartRateClient, scan for Cycling Cadence Service (0x181b)
+### Step 2: Validate legacy cadence sensor client (already present)
+Copy structure of HeartRateClient, scan for legacy cadence service (0x181b)
 
 ### Step 3: Integrate into App.js (100 lines)
 - Create speedClient and cadenceClient instances
@@ -429,7 +429,7 @@ Copy structure of HeartRateClient, scan for Cycling Cadence Service (0x181b)
 - Priority: bike > sensor > estimation
 
 ### Step 5: Test & Validate (2-4 hours)
-- Test with Wahoo sensors if available
+- Test with legacy Gymnasticon-compatible sensors if available
 - Verify Zwift receives correct data
 - Test fallback if sensors drop
 

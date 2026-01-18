@@ -21,23 +21,23 @@
 
 ---
 
-### ✅ Question 2: "Can we support multiple input devices (Epix watch HR + Wahoo speed/cadence)?"
+### ✅ Question 2: "Can we support multiple input devices (Epix watch HR + legacy speed/cadence)?"
 
 **Answer: YES - Architecture is ready.**
 
 **What's Implemented Now:**
 - ✓ Bike scanning (mandatory)
 - ✓ Heart rate scanning (auto-detects any device advertising HR Service 0x180D)
+- ✓ Legacy speed sensor scanning (0x181a/0x2a50)
+- ✓ Legacy cadence sensor scanning (0x181b/0x2a51)
 - ✓ ANT+ broadcasting (optional)
-- ✓ Concurrent operation of all three
+- ✓ Parallel optional sensor startup (HR + speed + cadence)
 
-**What's Ready to Add:**
-- ◐ Wahoo speed sensor (framework exists, just needs client class)
-- ◐ Wahoo cadence sensor (framework exists, just needs client class)
-- ◐ Multi-sensor auto-detection (needs parallel startup)
+**What's Still Future Work:**
+- ◐ Standard CSC sensors (0x1816/0x2A5B)
 - ◐ Speed/cadence blending (needs priority logic)
 
-**Estimated Effort:** 4-5 hours for all sensors + auto-detection
+**Estimated Effort:** 2-4 hours for CSC support + blending
 
 **Files:**
 - `src/hr/heart-rate-client.js` - Proof of concept for sensor scanning
@@ -92,13 +92,13 @@
 | Auto adapter detection | ✅ Implemented | `src/util/adapter-detect.js` |
 | Adapter fallback | ✅ Implemented | `src/app/gymnasticon-app.js` |
 
-### ◐ Extensions (Framework Ready, Not Yet Implemented)
+### ◐ Extensions (Follow-ups)
 
 | Feature | Status | Effort | Notes |
 |---------|--------|--------|-------|
-| Speed sensor client | ◐ Designed | 1-2 hrs | Copy HeartRateClient pattern |
-| Cadence sensor client | ◐ Designed | 1-2 hrs | Copy HeartRateClient pattern |
-| Multi-sensor auto-detect | ◐ Designed | 30 min | Use Promise.allSettled() |
+| Speed sensor client (legacy UUIDs) | ✅ Implemented | -- | 0x181a/0x2a50 |
+| Cadence sensor client (legacy UUIDs) | ✅ Implemented | -- | 0x181b/0x2a51 |
+| Multi-sensor auto-detect | ✅ Implemented | -- | Parallel startup |
 | Metrics blending/priority | ◐ Designed | 30 min | Add switch logic to processor |
 | Configuration options | ◐ Designed | 30 min | Update defaults.js |
 
@@ -170,8 +170,7 @@ The only current limitation: **noble library not emitting discover events on you
    - Zwift receives all data simultaneously
 
 3. **Then consider multi-sensor additions:**
-   - Wahoo speed/cadence sensors (4-5 hours work)
-   - Auto-detect all sensors at startup
+   - Standard CSC speed/cadence sensors (0x1816/0x2A5B)
    - Configurable priority/blending
 
 All the pieces are there. The foundation is solid. ✅

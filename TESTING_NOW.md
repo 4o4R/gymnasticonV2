@@ -31,12 +31,14 @@ which hcitool
 # Expected: /usr/bin/hcitool
 
 # Test 2: Can you run it with sudo?
-sudo -n hcitool -i hci0 lescan
+# Use your configured bike adapter (default: hci0)
+BIKE_ADAPTER=hci0
+sudo -n hcitool -i ${BIKE_ADAPTER} lescan
 # Expected: Starts scanning immediately (no password prompt)
 # If "sudo: not authorized" → see TESTING_DUAL_ADAPTERS.md fix
 
 # Test 3: Does it find your bike?
-sudo timeout 10 hcitool -i hci0 lescan
+sudo timeout 10 hcitool -i ${BIKE_ADAPTER} lescan
 # Pedal the bike HARD during this scan
 # Expected output:
 # LE Scan ...
@@ -209,6 +211,7 @@ sudo hcitool scan
 ```bash
 # Full test with all diagnostics
 cd /opt/gymnasticon && \
+BIKE_ADAPTER=hci0 && \
 echo "=== Adapter Detection ===" && \
 node -e "import('./src/util/adapter-detect.js').then(m => console.log(JSON.stringify(m.detectAdapters(), null, 2)))" && \
 echo "" && \
@@ -216,7 +219,7 @@ echo "=== HCI Config ===" && \
 hciconfig -a && \
 echo "" && \
 echo "=== Test hcitool ===" && \
-sudo timeout 5 hcitool -i hci0 lescan || echo "(no devices found in 5s)" && \
+sudo timeout 5 hcitool -i ${BIKE_ADAPTER} lescan || echo "(no devices found in 5s)" && \
 echo "" && \
 echo "=== Running Gymnasticon (30s) ===" && \
 timeout 30 node src/app/cli.js --bike=keiser 2>&1 | tee /tmp/gym-test.log && \

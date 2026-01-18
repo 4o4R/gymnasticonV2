@@ -17,6 +17,7 @@ class MockBikeClient extends EventEmitter {
   constructor() {
     super();
     this.address = 'AA:BB:CC:DD:EE:FF';
+    this.statsInterval = null;
   }
 
   async connect() {
@@ -26,7 +27,7 @@ class MockBikeClient extends EventEmitter {
     console.log('[MockBike] Connected at', this.address);
     
     // Start emitting stats every 2 seconds
-    setInterval(() => {
+    this.statsInterval = setInterval(() => {
       this.emit('stats', {
         power: 200 + Math.random() * 50,
         cadence: 90 + Math.random() * 10,
@@ -36,23 +37,36 @@ class MockBikeClient extends EventEmitter {
   }
 
   async disconnect() {
+    if (this.statsInterval) {
+      clearInterval(this.statsInterval);
+      this.statsInterval = null;
+    }
     console.log('[MockBike] Disconnected');
   }
 }
 
 class MockHRDevice extends EventEmitter {
+  constructor() {
+    super();
+    this.hrInterval = null;
+  }
+
   async connect() {
     console.log('[MockHR] Scanning for HR device...');
     await new Promise(resolve => setTimeout(resolve, 800));
     console.log('[MockHR] Found HR device, connecting...');
     
     // Start emitting HR every 1 second
-    setInterval(() => {
+    this.hrInterval = setInterval(() => {
       this.emit('heartRate', 120 + Math.floor(Math.random() * 20));
     }, 1000);
   }
 
   async disconnect() {
+    if (this.hrInterval) {
+      clearInterval(this.hrInterval);
+      this.hrInterval = null;
+    }
     console.log('[MockHR] Disconnected');
   }
 }
@@ -71,6 +85,11 @@ class MockSpeedSensor extends EventEmitter {
 }
 
 class MockCadenceSensor extends EventEmitter {
+  constructor() {
+    super();
+    this.cadenceInterval = null;
+  }
+
   async connect() {
     console.log('[MockCadenceSensor] Scanning for cadence sensor...');
     // Simulate finding cadence sensor after 1.5 seconds
@@ -79,7 +98,7 @@ class MockCadenceSensor extends EventEmitter {
     
     // Start emitting cadence every 1.5 seconds
     let crankRevolutions = 0;
-    setInterval(() => {
+    this.cadenceInterval = setInterval(() => {
       crankRevolutions += 2;
       this.emit('stats', {
         crankRevolutions,
@@ -90,6 +109,10 @@ class MockCadenceSensor extends EventEmitter {
   }
 
   async disconnect() {
+    if (this.cadenceInterval) {
+      clearInterval(this.cadenceInterval);
+      this.cadenceInterval = null;
+    }
     console.log('[MockCadenceSensor] Disconnected');
   }
 }

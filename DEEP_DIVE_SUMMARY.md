@@ -63,8 +63,8 @@ V2 (parallel):           Bike(5s) + HR(1s) + Speed(0.5s) + Cad(0.5s) = ~5.5s
 Improvement: 1 second saved!
 
 And it supports:
-✅ Speed Sensors (generic GATT 0x181a)
-✅ Cadence Sensors (generic GATT 0x181b)
+✅ Speed Sensors (legacy Gymnasticon GATT 0x181a)
+✅ Cadence Sensors (legacy Gymnasticon GATT 0x181b)
 ✅ Heart Rate (generic GATT 0x180d)
 ✅ All in parallel = fast discovery
 ```
@@ -192,7 +192,7 @@ if (multiAdapter) {
 ---
 
 ### Priority 2: Test Multi-Sensor Startup (NEXT)
-**Action:** If you have HR device or Wahoo sensors, enable and test
+**Action:** If you have an HR device or sensors exposing the legacy Gymnasticon UUIDs, enable and test
 
 **Test:** `npm run test:multi-sensor`
 
@@ -316,7 +316,7 @@ if (multiAdapter) {
 
 ### Week 2: Multi-Sensor (If Available)
 - [ ] If HR device available, enable and test
-- [ ] If Wahoo sensors available, add and test
+- [ ] If legacy Gymnasticon-compatible sensors are available, add and test
 - [ ] Verify parallel startup timing
 - [ ] Check metric blending in Zwift
 
@@ -359,7 +359,7 @@ if (multiAdapter) {
 
 ✅ **Why does your Pi have noble state issues?** Known bug on some Pi/BlueZ combos; V2 has workaround
 
-✅ **What's the multi-sensor architecture?** Parallel GATT clients for HR/speed/cadence; 20% faster
+✅ **What's the multi-sensor architecture?** Parallel clients for HR + legacy speed/cadence; 20% faster
 
 ✅ **What breaks in original that V2 fixes?** Noble state machine issues; V2 has hcitool fallback
 

@@ -208,7 +208,7 @@ if (detectedAdapters.length) {
 2. **Cadence sensors** ❌ Not mentioned
 3. **Multiple concurrent HR devices** ❌ Says "the new heart-rate peripheral" (singular)
 4. **Hot-plugging sensors** ❌ Not mentioned
-5. **Wahoo speed/cadence sensor integration** ❌ Not mentioned
+5. **Standard CSC speed/cadence sensor integration** ❌ Not mentioned
 
 **Implication:** These features can be added but aren't required to match the README.
 
