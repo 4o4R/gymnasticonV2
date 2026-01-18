@@ -199,16 +199,32 @@ async function scanWithHcitool(filter, options = {}) {
       const needsSudo = typeof process.getuid === 'function' && process.getuid() !== 0;
       const sudoPrefix = needsSudo ? 'sudo -n ' : '';
       
-      // Reset adapter before scanning to clear any stuck state from noble
-      // This fixes "Input/output error" when noble exits without cleanup
-      const resetCmd = `${sudoPrefix}hciconfig ${adapter} reset`;
+      // Aggressively reset adapter before scanning to clear any stuck state from noble
+      // This fixes "Input/output error" and "EALREADY" errors when noble exits without cleanup
+      // Strategy: DOWN → RESET → UP ensures clean state and prevents conflicts
+      const resetStart = Date.now();
       try {
-        execSync(resetCmd, { stdio: 'ignore', timeout: 2000 });
-        // Wait for adapter to settle after reset
-        setTimeout(() => {}, 500);
+        // Bring adapter DOWN to release all HCI bindings
+        execSync(`${sudoPrefix}hciconfig ${adapter} down`, { stdio: 'ignore', timeout: 2000 });
+        // Busy wait for cleanup
+        while (Date.now() - resetStart < 500) {
+          // spin
+        }
+        // Reset the hardware state
+        execSync(`${sudoPrefix}hciconfig ${adapter} reset`, { stdio: 'ignore', timeout: 2000 });
+        // Busy wait again
+        while (Date.now() - resetStart < 1000) {
+          // spin
+        }
+        // Bring adapter back UP
+        execSync(`${sudoPrefix}hciconfig ${adapter} up`, { stdio: 'ignore', timeout: 2000 });
+        // Final wait for stabilization
+        while (Date.now() - resetStart < 2500) {
+          // spin
+        }
       } catch (e) {
-        // Reset failed but we'll try anyway
-        console.log(`[ble-scan] ⚠ Adapter reset failed: ${e.message}`);
+        // Reset sequence failed but we'll try hcitool anyway
+        console.log(`[ble-scan] ⚠ Adapter reset sequence failed: ${e.message}`);
       }
       
       const cmd = `${sudoPrefix}hcitool -i ${adapter} lescan`;
