@@ -1,4 +1,4 @@
-import {execSync} from 'child_process';
+import {execSync, spawn} from 'child_process';
 import {macAddress} from './mac-address.js';
 
 /**
@@ -150,7 +150,7 @@ async function scanWithHcitool(filter, options = {}) {
       const needsSudo = typeof process.getuid === 'function' && process.getuid() !== 0;
       const sudoPrefix = needsSudo ? 'sudo -n ' : '';
       const cmd = `${sudoPrefix}hcitool -i ${adapter} lescan`;
-      const scanProcess = require('child_process').spawn('bash', ['-c', cmd], {
+      const scanProcess = spawn('bash', ['-c', cmd], {
         stdio: ['ignore', 'pipe', 'pipe']
       });
 
