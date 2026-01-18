@@ -198,6 +198,19 @@ async function scanWithHcitool(filter, options = {}) {
         : 30000;
       const needsSudo = typeof process.getuid === 'function' && process.getuid() !== 0;
       const sudoPrefix = needsSudo ? 'sudo -n ' : '';
+      
+      // Reset adapter before scanning to clear any stuck state from noble
+      // This fixes "Input/output error" when noble exits without cleanup
+      const resetCmd = `${sudoPrefix}hciconfig ${adapter} reset`;
+      try {
+        execSync(resetCmd, { stdio: 'ignore', timeout: 2000 });
+        // Wait for adapter to settle after reset
+        setTimeout(() => {}, 500);
+      } catch (e) {
+        // Reset failed but we'll try anyway
+        console.log(`[ble-scan] ⚠ Adapter reset failed: ${e.message}`);
+      }
+      
       const cmd = `${sudoPrefix}hcitool -i ${adapter} lescan`;
       const scanProcess = spawn('bash', ['-c', cmd], {
         stdio: ['ignore', 'pipe', 'pipe']
