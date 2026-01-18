@@ -3,6 +3,9 @@
 ## [Unreleased]
 ### Changed
 - Expanded the IC4 Bluetooth matcher to also recognize Schwinn 290 advertising names (shared FTMS payload).
+- Hardened noble MTU handling to avoid crashes on rapid disconnect/reconnect.
+- Added BLE multi-output mirroring across adapters with new `--ble-multi-output` / `--server-adapters` controls.
+- Made hcitool fallback respect the configured adapter and emit clearer setup errors.
 
 ## 1.4.0
 

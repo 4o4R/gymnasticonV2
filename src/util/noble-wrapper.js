@@ -6,6 +6,34 @@ import {normalizeAdapterId} from './adapter-id.js';
 const requireFromWrapper = createRequire(import.meta.url);
 const NOBLE_REQUEST = '@abandonware/noble';
 
+function patchNobleMtu(noble) {
+  // Guard against the noble MTU race (#55) where a peripheral drops mid-update.
+  if (!noble || noble.__gymnasticonMtuPatched) {
+    return;
+  }
+  const bindings = noble._bindings;
+  if (!bindings || typeof bindings.on !== 'function') {
+    return;
+  }
+
+  const safeOnMtu = (peripheralUuid, mtu) => {
+    const peripheral = noble._peripherals?.[peripheralUuid];
+    if (!peripheral) {
+      if (typeof noble.emit === 'function') {
+        noble.emit('warning', `unknown peripheral ${peripheralUuid} mtu update ignored`);
+      }
+      return;
+    }
+    peripheral.mtu = mtu;
+  };
+
+  if (typeof bindings.removeAllListeners === 'function') {
+    bindings.removeAllListeners('onMtu');
+  }
+  bindings.on('onMtu', safeOnMtu);
+  noble.__gymnasticonMtuPatched = true;
+}
+
 export const initializeBluetooth = async (adapter = 'hci0', options = {}) => {
   const {forceNewInstance = false} = options; // Allow callers to request a dedicated noble instance.
   const previousAdapter = process.env.NOBLE_HCI_DEVICE_ID;
@@ -46,6 +74,8 @@ export const initializeBluetooth = async (adapter = 'hci0', options = {}) => {
         noble.disconnect = noble.disconnect || (() => {});
       }
     }
+
+    patchNobleMtu(noble);
 
     // Add retry logic for robust connections.
     const connect = async (peripheral, retries = 3) => {

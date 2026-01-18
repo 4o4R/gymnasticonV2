@@ -31,7 +31,8 @@ import fs from 'fs/promises'; // Read config early so adapter env vars match per
 import { options as cliOptions } from './cli-options.js'; // Command line option definitions
 import { detectAdapters, supportsExtendedScan } from '../util/adapter-detect.js'; // Auto-detect Bluetooth and ANT+ adapters when the user does not specify them
 import { initializeBluetooth } from '../util/noble-wrapper.js'; // Bluetooth initialization (runs after we set adapter env vars)
-import { normalizeAdapterId } from '../util/adapter-id.js'; // Normalize hci0 -> 0 for noble/bleno env vars
+import { normalizeAdapterId, normalizeAdapterName } from '../util/adapter-id.js'; // Normalize hci0 -> 0 for noble/bleno env vars
+import { isSingleAdapterMultiRoleCapable } from '../util/hardware-info.js'; // Decide when bike adapter can safely advertise too
 
 /**
  * Convert a kebab-case CLI option name into the camelCase property that yargs
@@ -49,6 +50,80 @@ const normalizeConfigKeys = (config = {}) => {
         normalized[toCamelCase(key)] = value;
     }
     return normalized;
+};
+
+const normalizeAdapterList = (value) => {
+    if (!value) {
+        return [];
+    }
+    if (Array.isArray(value)) {
+        return value
+            .map(item => normalizeAdapterName(item))
+            .map(item => (item ? String(item).trim() : ''))
+            .filter(Boolean);
+    }
+    if (typeof value === 'string') {
+        return value
+            .split(',')
+            .map(item => normalizeAdapterName(item))
+            .map(item => (item ? String(item).trim() : ''))
+            .filter(Boolean);
+    }
+    return [];
+};
+
+const dedupeAdapters = (list) => {
+    const seen = new Set();
+    const result = [];
+    list.forEach((adapter) => {
+        if (!adapter || seen.has(adapter)) {
+            return;
+        }
+        seen.add(adapter);
+        result.push(adapter);
+    });
+    return result;
+};
+
+const buildServerAdapters = ({ explicit, serverAdapter, bikeAdapter, detectedAdapters, bleMultiOutput, allowBikeMirror }) => {
+    const normalizedServer = normalizeAdapterName(serverAdapter);
+    const normalizedBike = normalizeAdapterName(bikeAdapter);
+    const normalizedDetected = detectedAdapters.map(adapter => normalizeAdapterName(adapter)).filter(Boolean);
+    const hasDetected = normalizedDetected.length > 0;
+    const filterDetected = (list) => hasDetected
+        ? list.filter(adapter => normalizedDetected.includes(adapter))
+        : list;
+
+    const filteredExplicit = filterDetected(explicit);
+    if (explicit.length && filteredExplicit.length !== explicit.length) {
+        console.warn('[gym-cli] Dropping missing server adapters:', explicit.filter(adapter => !filteredExplicit.includes(adapter)));
+    }
+    if (filteredExplicit.length) {
+        return dedupeAdapters(filteredExplicit);
+    }
+
+    const adapters = [];
+    if (normalizedServer) {
+        adapters.push(normalizedServer);
+    }
+
+    if (bleMultiOutput === false) {
+        return dedupeAdapters(adapters);
+    }
+
+    if (hasDetected) {
+        normalizedDetected.forEach((adapter) => {
+            if (adapter && adapter !== normalizedBike) {
+                adapters.push(adapter);
+            }
+        });
+    }
+
+    if (allowBikeMirror && normalizedBike) {
+        adapters.push(normalizedBike);
+    }
+
+    return dedupeAdapters(adapters);
 };
 
 /**
@@ -156,11 +231,17 @@ const main = async () => {
     if (!providedOptions.has('serverAdapter') && configOverrides.serverAdapter) {
         argv.serverAdapter = configOverrides.serverAdapter;
     }
+    if (!providedOptions.has('serverAdapters') && configOverrides.serverAdapters) {
+        argv.serverAdapters = configOverrides.serverAdapters;
+    }
     if (!providedOptions.has('heartRateAdapter') && configOverrides.heartRateAdapter) {
         argv.heartRateAdapter = configOverrides.heartRateAdapter;
     }
     if (!providedOptions.has('heartRateEnabled') && configOverrides.heartRateEnabled !== undefined) {
         argv.heartRateEnabled = configOverrides.heartRateEnabled;
+    }
+    if (!providedOptions.has('bleMultiOutput') && configOverrides.bleMultiOutput !== undefined) {
+        argv.bleMultiOutput = configOverrides.bleMultiOutput;
     }
 
     const discovery = detectAdapters(); // Gather available adapters and ANT+ presence for sensible defaults.
@@ -169,6 +250,29 @@ const main = async () => {
     }
     if (!argv.serverAdapter) { // Likewise for the BLE advertising adapter.
         argv.serverAdapter = discovery.serverAdapter;
+    }
+    if (argv.bikeAdapter) {
+        argv.bikeAdapter = normalizeAdapterName(argv.bikeAdapter) || argv.bikeAdapter;
+    }
+    if (argv.serverAdapter) {
+        argv.serverAdapter = normalizeAdapterName(argv.serverAdapter) || argv.serverAdapter;
+    }
+    if (argv.heartRateAdapter) {
+        argv.heartRateAdapter = normalizeAdapterName(argv.heartRateAdapter) || argv.heartRateAdapter;
+    }
+    const multiRoleInfo = isSingleAdapterMultiRoleCapable();
+    const explicitServerAdapters = normalizeAdapterList(argv.serverAdapters);
+    const serverAdapters = buildServerAdapters({
+        explicit: explicitServerAdapters,
+        serverAdapter: argv.serverAdapter,
+        bikeAdapter: argv.bikeAdapter,
+        detectedAdapters: discovery.adapters || [],
+        bleMultiOutput: argv.bleMultiOutput,
+        allowBikeMirror: multiRoleInfo.capable,
+    });
+    if (serverAdapters.length) {
+        argv.serverAdapters = serverAdapters;
+        argv.serverAdapter = serverAdapters[0];
     }
 
     const antFlag = typeof argv.antPlus === 'boolean' ? argv.antPlus : undefined; // Track whether the caller explicitly passed --ant-plus / --no-ant-plus.
@@ -197,6 +301,9 @@ const main = async () => {
     const adapterPool = new Set(discovery.adapters ?? []); // All HCIs we detected via sysfs.
     if (argv.bikeAdapter) adapterPool.add(argv.bikeAdapter); // Include overrides supplied by config/CLI to keep the count honest.
     if (argv.serverAdapter) adapterPool.add(argv.serverAdapter);
+    if (Array.isArray(argv.serverAdapters)) {
+        argv.serverAdapters.forEach(adapter => adapterPool.add(adapter));
+    }
     const hasMultiAdapter = discovery.multiAdapter || adapterPool.size >= 2; // Treat either detected dual-HCI or explicit dual overrides as “multi”.
     argv.multiAdapter = hasMultiAdapter; // Pass through to the App so runtime decisions stay consistent with the CLI.
     if (argv.heartRateEnabled === undefined) { // Teaching note: only auto-pick when the user/config didn't decide.
@@ -246,7 +353,13 @@ const main = async () => {
     // Teaching note: multi-role is only needed when one adapter handles both
     // scanning (bike) and advertising (server). With two adapters, leaving it
     // off avoids unnecessary HCI quirks on older stacks.
-    const usesSingleAdapter = Boolean(argv.bikeAdapter && argv.serverAdapter && argv.bikeAdapter === argv.serverAdapter);
+    const serverAdapterList = Array.isArray(argv.serverAdapters)
+        ? argv.serverAdapters
+        : [argv.serverAdapter].filter(Boolean);
+    const usesSingleAdapter = Boolean(
+        argv.bikeAdapter &&
+        serverAdapterList.includes(argv.bikeAdapter)
+    );
     if (usesSingleAdapter) {
         process.env.NOBLE_MULTI_ROLE = '1';
     } else {

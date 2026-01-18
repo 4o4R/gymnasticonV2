@@ -12,6 +12,7 @@
 // Core server components
 import {execSync} from 'child_process'; // Spawn lightweight system probes (hciconfig) when noble never reports a state.
 import {GymnasticonServer} from '../servers/ble/index.js';
+import {MultiBleServer} from '../servers/ble/multi-server.js';
 import {AntServer} from '../servers/ant/index.js';
 
 // Bike and sensor integrations
@@ -23,8 +24,10 @@ import {MetricsProcessor} from '../util/metrics-processor.js';
 import {HealthMonitor} from '../util/health-monitor.js';
 import {BluetoothConnectionManager} from '../util/connection-manager.js';
 import {initializeBluetooth} from '../util/noble-wrapper.js';
-import {normalizeAdapterId} from '../util/adapter-id.js';
+import {initializeBleno} from '../util/bleno-wrapper.js';
+import {normalizeAdapterId, normalizeAdapterName} from '../util/adapter-id.js';
 import {detectAdapters, supportsExtendedScan} from '../util/adapter-detect.js';
+import {isSingleAdapterMultiRoleCapable} from '../util/hardware-info.js';
 
 // Utility modules
 import {Simulation} from './simulation.js'; // Simulation helper for bot mode and testing.
@@ -38,8 +41,6 @@ import {defaults as sharedDefaults} from './defaults.js'; // Lightweight default
 
 const nobleModule = loadDependency('@abandonware/noble', '../../stubs/noble.cjs', import.meta);
 const nobleDefault = toDefaultExport(nobleModule);
-const blenoModule = loadDependency('@abandonware/bleno', '../../stubs/bleno.cjs', import.meta);
-const bleno = toDefaultExport(blenoModule);
 const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta);
 const debug = toDefaultExport(debugModule);
 
@@ -62,9 +63,8 @@ export class App {
 
     this.logger = new Logger();
     this.noble = opts.noble || nobleDefault;
-    this.bleno = bleno;
     this.heartRateNoble = opts.heartRateNoble || this.noble;
-    this.heartRateAdapter = opts.heartRateAdapter;
+    this.heartRateAdapter = normalizeAdapterName(opts.heartRateAdapter) || opts.heartRateAdapter;
     this.metricsProcessor = opts.metricsProcessor || new MetricsProcessor({ smoothingFactor: opts.powerSmoothing });
     this.healthMonitor = opts.healthMonitor || new HealthMonitor(opts.healthCheckInterval);
     this.connectionManager =
@@ -167,10 +167,13 @@ export class App {
     this.speedSensorConnected = false;
     this.cadenceSensorConnected = false;
     
-    // Teaching note: only include the HR GATT service when we expect to rebroadcast HR.
-    this.server = new GymnasticonServer(this.bleno, opts.serverName, {
-      includeHeartRate: this.heartRateAutoPreference,
-    });
+    this.multiRoleInfo = isSingleAdapterMultiRoleCapable();
+    this.serverAdapters = resolveServerAdapters(opts, this.multiRoleInfo);
+    if (this.serverAdapters.length) {
+      this.opts.serverAdapters = this.serverAdapters;
+      this.opts.serverAdapter = this.serverAdapters[0];
+    }
+    this.server = null;
 
     if (this.healthMonitor) {
       this.healthMonitor.on('stale', this.onHealthMetricStale.bind(this));
@@ -211,9 +214,50 @@ export class App {
     process.on('uncaughtException', this.errorHandler);
   }
 
+  async initializeBleServers() {
+    if (this.server) {
+      return;
+    }
+    const adapters = this.serverAdapters?.length
+      ? this.serverAdapters
+      : [this.opts.serverAdapter].filter(Boolean);
+    if (!adapters.length) {
+      throw new Error('No BLE adapters configured for advertising');
+    }
+
+    const entries = [];
+    for (const adapter of adapters) {
+      const { bleno } = await initializeBleno(adapter, { forceNewInstance: entries.length > 0 });
+      const server = new GymnasticonServer(bleno, this.opts.serverName, {
+        includeHeartRate: this.heartRateAutoPreference,
+      });
+      entries.push({ adapter, server });
+    }
+    this.server = new MultiBleServer(entries, this.logger);
+    this.serverAdapters = adapters;
+    this.opts.serverAdapters = adapters;
+    this.opts.serverAdapter = adapters[0];
+    this.configureMultiRole();
+
+    const adapterLabel = adapters.join(', ');
+    this.logger.log(`[gym-app] BLE server adapters: ${adapterLabel}`);
+    if (
+      this.multiRoleInfo?.capable &&
+      this.opts.bikeAdapter &&
+      adapters.map(adapter => normalizeAdapterName(adapter) || adapter).includes(normalizeAdapterName(this.opts.bikeAdapter) || this.opts.bikeAdapter) &&
+      adapters.length > 1
+    ) {
+      const model = this.multiRoleInfo.model ? ` (${this.multiRoleInfo.model})` : '';
+      this.logger.log(`[gym-app] BLE mirror enabled on bike adapter [${this.multiRoleInfo.reason}]${model}`);
+    }
+  }
+
   async ensureServerStarted(reason = 'unspecified') {
     if (this.serverStarted) {
       return; // Teaching note: skip work when advertising is already live.
+    }
+    if (!this.server) {
+      await this.initializeBleServers();
     }
     this.logger.log(`[gym-app] starting BLE server (${reason})`);
     // Teaching note: bleno throws if the adapter cannot advertise; we let the
@@ -231,7 +275,8 @@ export class App {
       this.logger.log('[gym-app] unable to normalize bike adapter ID:', adapter);
       return false;
     }
-    this.opts.bikeAdapter = adapter;
+    const normalizedName = normalizeAdapterName(adapter) || adapter;
+    this.opts.bikeAdapter = normalizedName;
     process.env['NOBLE_HCI_DEVICE_ID'] = adapterId;
     // Teaching note: configure extended scan before noble is (re)initialized,
     // because the env var is read when the module loads.
@@ -239,7 +284,7 @@ export class App {
     // Teaching note: changing the bike adapter can affect whether we need
     // multi-role (single vs dual adapter), so recompute it here too.
     this.configureMultiRole();
-    this.logger.log(`[gym-app] bike adapter set to ${adapter} (id=${adapterId}) [${reason}]`);
+    this.logger.log(`[gym-app] bike adapter set to ${normalizedName} (id=${adapterId}) [${reason}]`);
     return true;
   }
 
@@ -250,29 +295,42 @@ export class App {
       this.logger.log('[gym-app] unable to normalize server adapter ID:', adapter);
       return false;
     }
-    this.opts.serverAdapter = adapter;
+    const normalizedName = normalizeAdapterName(adapter) || adapter;
+    this.opts.serverAdapter = normalizedName;
+    if (Array.isArray(this.serverAdapters) && this.serverAdapters.length) {
+      const nextAdapters = [normalizedName, ...this.serverAdapters.filter(item => item && item !== normalizedName)];
+      this.serverAdapters = nextAdapters;
+      this.opts.serverAdapters = nextAdapters;
+    }
     process.env['BLENO_HCI_DEVICE_ID'] = adapterId;
     // Teaching note: changing the server adapter can flip us between single
     // and dual adapter mode, so recompute multi-role here as well.
     this.configureMultiRole();
-    this.logger.log(`[gym-app] server adapter set to ${adapter} (id=${adapterId}) [${reason}]`);
+    this.logger.log(`[gym-app] server adapter set to ${normalizedName} (id=${adapterId}) [${reason}]`);
     return true;
   }
 
   configureMultiRole() {
     // Teaching note: only enable multi-role when one adapter must both scan
     // (central) and advertise (peripheral). Dual-adapter setups do not need it.
+    const serverAdapters = this.serverAdapters?.length
+      ? this.serverAdapters
+      : [this.opts.serverAdapter].filter(Boolean);
+    const normalizedBike = normalizeAdapterName(this.opts.bikeAdapter) || this.opts.bikeAdapter;
+    const normalizedServers = serverAdapters
+      .map(adapter => normalizeAdapterName(adapter) || adapter)
+      .filter(Boolean);
     const sameAdapter = Boolean(
-      this.opts.bikeAdapter &&
-      this.opts.serverAdapter &&
-      this.opts.bikeAdapter === this.opts.serverAdapter
+      normalizedBike &&
+      normalizedServers.includes(normalizedBike)
     );
     if (sameAdapter) {
       process.env['NOBLE_MULTI_ROLE'] = '1';
     } else {
       delete process.env['NOBLE_MULTI_ROLE'];
     }
-    this.logger.log(`[gym-app] multi-role ${sameAdapter ? 'enabled' : 'disabled'} (bike=${this.opts.bikeAdapter} server=${this.opts.serverAdapter})`);
+    const serverLabel = serverAdapters.length ? serverAdapters.join(',') : this.opts.serverAdapter;
+    this.logger.log(`[gym-app] multi-role ${sameAdapter ? 'enabled' : 'disabled'} (bike=${this.opts.bikeAdapter} server=${serverLabel})`);
   }
 
   configureExtendedScan(adapter) {
@@ -526,6 +584,7 @@ export class App {
   }
 
   async start() {
+    await this.initializeBleServers();
     await this.run();
   }
 
@@ -590,7 +649,8 @@ export class App {
 
       const retryDelayMs = Math.max(1000, Number(this.opts.connectionRetryDelay ?? sharedDefaults.connectionRetryDelay ?? 5000)); // Guarantee at least a one-second delay between attempts even if the config requests 0.
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); // Lightweight helper so the retry loop can pause via await without blocking Node's event loop.
-      this.logger.log(`[gym-app] startup opts: bike=${this.opts.bike} defaultBike=${this.opts.defaultBike} bikeAdapter=${this.opts.bikeAdapter} serverAdapter=${this.opts.serverAdapter}`);
+      const serverAdapterLabel = this.serverAdapters?.length ? this.serverAdapters.join(',') : this.opts.serverAdapter;
+      this.logger.log(`[gym-app] startup opts: bike=${this.opts.bike} defaultBike=${this.opts.defaultBike} bikeAdapter=${this.opts.bikeAdapter} serverAdapter=${serverAdapterLabel}`);
 
       while (true) { // Keep looping until we successfully complete the full startup sequence.
         try {
@@ -1030,6 +1090,76 @@ export class App {
     }
   }
 
+}
+
+function normalizeAdapterList(value) {
+  if (!value) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map(item => normalizeAdapterName(item))
+      .map(item => (item ? String(item).trim() : ''))
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map(item => normalizeAdapterName(item))
+      .map(item => (item ? String(item).trim() : ''))
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function dedupeAdapters(list) {
+  const seen = new Set();
+  const result = [];
+  list.forEach((adapter) => {
+    if (!adapter || seen.has(adapter)) {
+      return;
+    }
+    seen.add(adapter);
+    result.push(adapter);
+  });
+  return result;
+}
+
+function resolveServerAdapters(opts, multiRoleInfo) {
+  const explicit = normalizeAdapterList(opts.serverAdapters);
+  if (explicit.length) {
+    return dedupeAdapters(explicit);
+  }
+
+  const normalizedServer = normalizeAdapterName(opts.serverAdapter) || opts.serverAdapter;
+  const normalizedBike = normalizeAdapterName(opts.bikeAdapter) || opts.bikeAdapter;
+  const primary = normalizedServer ? [normalizedServer] : [];
+  if (opts.bleMultiOutput === false) {
+    return dedupeAdapters(primary);
+  }
+
+  let detected = [];
+  try {
+    const detection = detectAdapters();
+    detected = detection.adapters || [];
+  } catch (_error) {
+    detected = [];
+  }
+  if (!detected.length) {
+    return dedupeAdapters(primary);
+  }
+
+  const adapters = [...primary];
+  detected.forEach((adapter) => {
+    const normalized = normalizeAdapterName(adapter) || adapter;
+    if (normalized && normalized !== normalizedBike) {
+      adapters.push(normalized);
+    }
+  });
+  if (multiRoleInfo?.capable && normalizedBike) {
+    adapters.push(normalizedBike);
+  }
+  return dedupeAdapters(adapters);
 }
 
 // Teaching note: a tiny "deferred" promise helper so event handlers can

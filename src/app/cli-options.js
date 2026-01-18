@@ -75,6 +75,15 @@ export const options = {
     describe: '<name> for app connection',
     default: defaults.serverAdapter,
   },
+  'server-adapters': {
+    describe: '<list> optional comma-separated adapters for BLE output mirroring',
+    type: 'string',
+  },
+  'ble-multi-output': {
+    describe: 'mirror BLE advertising across multiple adapters when available (auto when omitted)',
+    type: 'boolean',
+    default: defaults.bleMultiOutput,
+  },
   'server-name': {
     describe: '<name> used for Bluetooth advertisement',
     default: defaults.serverName,

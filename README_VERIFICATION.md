@@ -182,6 +182,24 @@ if (detectedAdapters.length) {
 
 ---
 
+## Promise #4: BLE Multi-Output (Optional)
+
+### What README Says (Line ~227)
+
+> "Gymnasticon mirrors its BLE advertisement across every non-bike adapter it finds, and on the bike adapter only when the board is known to handle multi-role."
+
+### What Code Does
+
+**Files:** `src/app/cli.js`, `src/app/app.js`, `src/servers/ble/multi-server.js`, `src/util/bleno-wrapper.js`
+
+- Builds an adapter list (auto unless `--no-ble-multi-output` or explicit `--server-adapters`).
+- Creates one `GymnasticonServer` per adapter (each with its own bleno instance).
+- Fans out updates to all servers via `MultiBleServer`.
+
+**Verification:** ✓ Mirrors BLE advertising across multiple adapters when enabled.
+
+---
+
 ## What the README DOES NOT Promise (Out of Scope)
 
 ### NOT Promised in README

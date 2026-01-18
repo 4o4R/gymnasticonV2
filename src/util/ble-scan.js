@@ -21,15 +21,17 @@ import {macAddress} from './mac-address.js';
  * @param {FilterFunction} filter - find devices matching this filter
  * @returns {Peripheral} the matching peripheral
  */
-export async function scan(noble, serviceUuids, filter = () => true) {
+export async function scan(noble, serviceUuids, filter = () => true, options = {}) {
   let peripheral;
+  const allowDuplicates = options?.allowDuplicates ?? true;
+  const adapter = resolveAdapterName(options);
   
   // Try the normal noble path first
   try {
     let results = on(noble, 'discover');
     
     // Start scanning - this may fail if noble.state is 'unknown'
-    await noble.startScanningAsync(serviceUuids, true);
+    await noble.startScanningAsync(serviceUuids, allowDuplicates);
     
     console.log('[ble-scan] ✓ Noble scan started successfully');
     for await (const [result] of results) {
@@ -44,37 +46,64 @@ export async function scan(noble, serviceUuids, filter = () => true) {
     // Noble failed - try hcitool fallback
     console.warn(`[ble-scan] ⚠ Noble scan failed: ${err.message}`);
     console.warn(`[ble-scan] ⚠ Falling back to hcitool lescan...`);
-    return scanWithHcitool(filter);
+    return scanWithHcitool(filter, { adapter, timeoutMs: options?.timeoutMs });
   }
+}
+
+function resolveAdapterName(options = {}) {
+  if (options.adapter) {
+    return options.adapter;
+  }
+  if (options.adapterName) {
+    return options.adapterName;
+  }
+  const envAdapter = process.env.NOBLE_HCI_DEVICE_ID;
+  if (envAdapter !== undefined && envAdapter !== null) {
+    const text = String(envAdapter).trim();
+    if (/^\d+$/.test(text)) {
+      return `hci${text}`;
+    }
+    if (/^hci\d+$/i.test(text)) {
+      return text;
+    }
+  }
+  return 'hci0';
 }
 
 /**
  * Fallback BLE scan using hcitool.
  * Used when noble fails (e.g., due to state machine issues on some Pi hardware).
  */
-async function scanWithHcitool(filter) {
+async function scanWithHcitool(filter, options = {}) {
   return new Promise((resolve, reject) => {
     try {
-      const cmd = 'sudo hcitool -i hci0 lescan';
-      const process = require('child_process').spawn('bash', ['-c', cmd], {
+      const adapter = options.adapter || 'hci0';
+      const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+        ? options.timeoutMs
+        : 30000;
+      const needsSudo = typeof process.getuid === 'function' && process.getuid() !== 0;
+      const sudoPrefix = needsSudo ? 'sudo -n ' : '';
+      const cmd = `${sudoPrefix}hcitool -i ${adapter} lescan`;
+      const scanProcess = require('child_process').spawn('bash', ['-c', cmd], {
         stdio: ['ignore', 'pipe', 'pipe']
       });
 
       let output = '';
+      let errorOutput = '';
       let foundMatch = false;
       const seenDevices = new Set();
       const timeout = setTimeout(() => {
         try {
-          process.kill();
+          scanProcess.kill();
         } catch (e) {
           // ignore
         }
         if (!foundMatch) {
           reject(new Error('hcitool scan timeout - no devices found'));
         }
-      }, 30000);  // 30 second timeout
+      }, timeoutMs);  // 30 second timeout
 
-      process.stdout.on('data', (data) => {
+      scanProcess.stdout.on('data', (data) => {
         output += data.toString();
         const lines = output.split('\n');
 
@@ -106,7 +135,7 @@ async function scanWithHcitool(filter) {
             foundMatch = true;
             clearTimeout(timeout);
             try {
-              process.kill();
+              scanProcess.kill();
             } catch (e) {
               // ignore
             }
@@ -118,14 +147,30 @@ async function scanWithHcitool(filter) {
         output = lines[lines.length - 1];
       });
 
-      process.on('error', (err) => {
+      scanProcess.stderr.on('data', (data) => {
+        errorOutput += data.toString();
+      });
+
+      scanProcess.on('error', (err) => {
         clearTimeout(timeout);
         reject(new Error(`hcitool process error: ${err.message}`));
       });
 
-      process.on('exit', () => {
+      scanProcess.on('exit', () => {
         clearTimeout(timeout);
         if (!foundMatch) {
+          if (/sudo:.*password/i.test(errorOutput)) {
+            reject(new Error('hcitool requires passwordless sudo; run `sudo visudo` or execute Gymnasticon as root'));
+            return;
+          }
+          if (/sudo: command not found/i.test(errorOutput)) {
+            reject(new Error('sudo is not installed; install it or run Gymnasticon as root'));
+            return;
+          }
+          if (/hcitool:.*not found/i.test(errorOutput)) {
+            reject(new Error('hcitool is missing; install bluez (sudo apt-get install -y bluez)'));
+            return;
+          }
           reject(new Error('hcitool scan ended without finding device'));
         }
       });

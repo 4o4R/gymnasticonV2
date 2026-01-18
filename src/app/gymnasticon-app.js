@@ -9,6 +9,7 @@ import {MetricsProcessor} from '../util/metrics-processor.js';
 import {HealthMonitor} from '../util/health-monitor.js';
 import {BluetoothConnectionManager} from '../util/connection-manager.js';
 import {detectAdapters} from '../util/adapter-detect.js';
+import {normalizeAdapterName} from '../util/adapter-id.js';
 
 const DEFAULT_CONFIG_PATH = '/etc/gymnasticon.json'; // Matches deploy/gymnasticon.service expectations.
 
@@ -99,15 +100,37 @@ export class GymnasticonApp {
     const detection = detectAdapters();
     const detectedAdapters = detection.adapters || [];
     if (detectedAdapters.length) {
+      const normalizedBikeAdapter = normalizeAdapterName(mergedOptions.bikeAdapter) || mergedOptions.bikeAdapter;
+      const normalizedServerAdapter = normalizeAdapterName(mergedOptions.serverAdapter) || mergedOptions.serverAdapter;
       // Teaching note: if the configured adapter is missing, fall back to the
       // detected default so BLE advertising and scanning still come up.
-      if (!detectedAdapters.includes(mergedOptions.bikeAdapter)) {
+      if (!detectedAdapters.includes(normalizedBikeAdapter)) {
         console.warn(`[GymnasticonApp] bike adapter ${mergedOptions.bikeAdapter} not found; falling back to ${detection.bikeAdapter}`);
         mergedOptions.bikeAdapter = detection.bikeAdapter;
+      } else {
+        mergedOptions.bikeAdapter = normalizedBikeAdapter;
       }
-      if (!detectedAdapters.includes(mergedOptions.serverAdapter)) {
+      if (!detectedAdapters.includes(normalizedServerAdapter)) {
         console.warn(`[GymnasticonApp] server adapter ${mergedOptions.serverAdapter} not found; falling back to ${detection.serverAdapter}`);
         mergedOptions.serverAdapter = detection.serverAdapter;
+      } else {
+        mergedOptions.serverAdapter = normalizedServerAdapter;
+      }
+      const requestedServers = normalizeAdapterList(mergedOptions.serverAdapters);
+      if (requestedServers.length) {
+        const filteredServers = requestedServers.filter(adapter => detectedAdapters.includes(adapter));
+        if (filteredServers.length !== requestedServers.length) {
+          const missing = requestedServers.filter(adapter => !filteredServers.includes(adapter));
+          console.warn(`[GymnasticonApp] dropping missing server adapters: ${missing.join(', ')}`);
+        }
+        if (filteredServers.length) {
+          mergedOptions.serverAdapters = filteredServers;
+          mergedOptions.serverAdapter = filteredServers[0];
+        } else {
+          mergedOptions.serverAdapters = [mergedOptions.serverAdapter];
+        }
+      } else if (mergedOptions.serverAdapter) {
+        mergedOptions.serverAdapters = [mergedOptions.serverAdapter];
       }
     }
     console.log('[gym-cli] Effective bike options:', JSON.stringify({
@@ -115,6 +138,7 @@ export class GymnasticonApp {
       defaultBike: mergedOptions.defaultBike,
       bikeAdapter: mergedOptions.bikeAdapter,
       serverAdapter: mergedOptions.serverAdapter,
+      serverAdapters: mergedOptions.serverAdapters,
     }));
 
     this.app = new App(mergedOptions);
@@ -126,4 +150,24 @@ export class GymnasticonApp {
       await this.app.stop();
     }
   }
+}
+
+function normalizeAdapterList(value) {
+  if (!value) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map(item => normalizeAdapterName(item))
+      .map(item => (item ? String(item).trim() : ''))
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map(item => normalizeAdapterName(item))
+      .map(item => (item ? String(item).trim() : ''))
+      .filter(Boolean);
+  }
+  return [];
 }

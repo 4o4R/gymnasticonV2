@@ -175,6 +175,26 @@ journalctl -u gymnasticon -f --output=short-iso | grep -E "(HR|speed|cadence|opt
 # Sequential would take 8s; parallel takes ~2s total ✓
 ```
 
+### Scenario 7: Verify BLE Multi-Output (Two Advertisements)
+
+**Goal:** Confirm Gymnasticon advertises on more than one adapter when available
+
+```bash
+# Start Gymnasticon with auto multi-output (default)
+systemctl restart gymnasticon
+
+# Check logs for the adapter list
+journalctl -u gymnasticon -n 50 | grep -E "BLE server adapters|BLE mirror enabled"
+
+# Expected:
+# [gym-app] BLE server adapters: hci1, hci0
+# [gym-app] BLE mirror enabled on bike adapter [whitelist] (Raspberry Pi 4 ...)
+
+# From a phone or another computer, scan for BLE devices:
+# - You should see two "GymnasticonV2" entries (different MACs).
+# - Connect the watch to one entry and Zwift to the other.
+```
+
 ---
 
 ## Troubleshooting Checklist

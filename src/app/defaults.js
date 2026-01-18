@@ -32,6 +32,7 @@ export const defaults = {
   serverAdapter: 'hci0',         // BLE adapter used to advertise Gymnasticon
   serverName: 'GymnasticonV2',     // BLE name seen by Zwift/TrainerRoad/etc.
   serverPingInterval: 1,         // seconds between keep-alive power frames
+  bleMultiOutput: undefined,     // auto-enable multi-adapter BLE mirroring when possible
 
   // ANT+ server options
   antDeviceId: 21234,            // deterministic default for ANT+ device ID
