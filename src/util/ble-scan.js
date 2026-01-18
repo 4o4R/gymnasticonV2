@@ -37,7 +37,7 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
   try {
     // Start scanning - this may fail if noble.state is 'unknown'
     try {
-      await noble.startScanningAsync(serviceUuids, allowDuplicates);
+      await startScanningWithAdapter(noble, serviceUuids, allowDuplicates, adapter);
       startedScan = true;
       console.log('[ble-scan] ✓ Noble scan started successfully');
     } catch (err) {
@@ -85,6 +85,55 @@ function resolveAdapterName(options = {}) {
 function isAlreadyScanningError(error) {
   const message = String(error?.message || error || '');
   return /already (?:start(ed)? )?scanning/i.test(message) || /scan already in progress/i.test(message);
+}
+
+function isStateUnknownError(error) {
+  const message = String(error?.message || error || '');
+  return /state is unknown/i.test(message) || /not poweredon/i.test(message);
+}
+
+function isAdapterUp(adapterName) {
+  if (!adapterName) {
+    return false;
+  }
+  try {
+    const output = execSync(`hciconfig ${adapterName}`, { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString();
+    return /UP RUNNING/.test(output);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function forceNoblePoweredOn(noble) {
+  if (!noble) {
+    return;
+  }
+  try {
+    noble.state = 'poweredOn';
+    if ('_state' in noble) {
+      noble._state = 'poweredOn';
+    }
+    if (typeof noble.emit === 'function') {
+      noble.emit('stateChange', 'poweredOn');
+    }
+  } catch (_error) {
+    // ignore - best-effort shim for broken state machines
+  }
+}
+
+async function startScanningWithAdapter(noble, serviceUuids, allowDuplicates, adapter) {
+  try {
+    await noble.startScanningAsync(serviceUuids, allowDuplicates);
+  } catch (error) {
+    if (isStateUnknownError(error) && isAdapterUp(adapter)) {
+      console.warn(`[ble-scan] ⚠ Noble state unknown but ${adapter} is UP; forcing state to poweredOn and retrying scan`);
+      forceNoblePoweredOn(noble);
+      await noble.startScanningAsync(serviceUuids, allowDuplicates);
+      return;
+    }
+    throw error;
+  }
 }
 
 function waitForDiscovery(noble, filter, options = {}) {
