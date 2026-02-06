@@ -456,12 +456,16 @@ export class App {
         return;
       }
       
-      // Teaching note: If adapter is UP at OS level but noble won't report it,
-      // this is a known issue with some Pi/BlueZ combinations. Try to proceed anyway.
+      // Teaching note: If adapter is UP at OS level but noble reports unknown,
+      // verify scan usability before proceeding; some stacks still fail scans.
       if (this.isAdapterUp(this.opts.bikeAdapter)) {
         this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP (verified via hciconfig); noble state is ${state}`);
-        this.logger.log(`[gym-app] proceeding despite noble state mismatch (some Pi/BlueZ combinations have this issue)`);
-        return;
+        const canScan = await this.probeNobleScan(this.opts.bikeAdapter);
+        if (canScan) {
+          this.logger.log('[gym-app] proceeding despite noble state mismatch (scan probe succeeded)');
+          return;
+        }
+        this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is up but scan probe failed; reinitializing noble`);
       }
       
       this.logger.log(`[gym-app] waiting for Bluetooth adapter to become poweredOn (attempt ${attempt}/${maxAttempts}, current state: ${state})`);
@@ -474,10 +478,14 @@ export class App {
       } catch (error) {
         this.logger.log(`[gym-app] Bluetooth adapter state timeout after ${timeoutMs}ms; checking if adapter is up...`);
         
-        // If adapter is actually up at OS level, don't reinitialize - try to scan anyway
+        // If adapter is up, only continue if a probe scan succeeds.
         if (this.isAdapterUp(this.opts.bikeAdapter)) {
-          this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP (hciconfig confirms); proceeding despite noble state being ${state}`);
-          return;
+          const canScan = await this.probeNobleScan(this.opts.bikeAdapter);
+          if (canScan) {
+            this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP (hciconfig confirms); proceeding despite noble state being ${state}`);
+            return;
+          }
+          this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP but scan probe failed; reinitializing noble`);
         }
         
         this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is not responding; reinitializing noble`);
@@ -511,6 +519,39 @@ export class App {
         .toString();
       return /UP RUNNING/.test(output);
     } catch (_error) {
+      return false;
+    }
+  }
+
+  isAlreadyScanningError(error) {
+    const message = String(error?.message || error || '');
+    return /already (?:start(ed)? )?scanning/i.test(message) || /scan already in progress/i.test(message);
+  }
+
+  async probeNobleScan(adapterName) {
+    // Teaching note: a short scan start/stop confirms noble is actually usable.
+    if (!this.noble?.startScanningAsync || !this.noble?.stopScanningAsync) {
+      return false;
+    }
+    try {
+      await this.noble.startScanningAsync([], false);
+      try {
+        await this.noble.stopScanningAsync();
+      } catch (stopError) {
+        const message = String(stopError?.message || stopError || '');
+        if (!/not scanning/i.test(message)) {
+          this.logger.log(`[gym-app] scan probe stop warning on ${adapterName}: ${message}`);
+        }
+      }
+      this.logger.log(`[gym-app] noble scan probe succeeded on ${adapterName}`);
+      return true;
+    } catch (error) {
+      if (this.isAlreadyScanningError(error)) {
+        this.logger.log(`[gym-app] noble scan probe on ${adapterName}: scan already running; treating as usable`);
+        return true;
+      }
+      const message = String(error?.message || error || '');
+      this.logger.log(`[gym-app] noble scan probe failed on ${adapterName}: ${message}`);
       return false;
     }
   }

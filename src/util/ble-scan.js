@@ -58,8 +58,41 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
     // Noble failed - try hcitool fallback
     console.warn(`[ble-scan] ⚠ Noble scan failed: ${err.message}`);
     console.warn(`[ble-scan] ⚠ Falling back to hcitool lescan...`);
-    return scanWithHcitool(filter, { adapter, timeoutMs: options?.timeoutMs, skipReset: true });
+    const skipReset = resolveHcitoolResetPolicy({ error: err, noble, options });
+    return scanWithHcitool(filter, { adapter, timeoutMs: options?.timeoutMs, skipReset });
   }
+}
+
+function resolveHcitoolResetPolicy({ error, noble, options }) {
+  // Explicit per-call override wins over all heuristics.
+  if (typeof options?.hcitoolReset === 'boolean') {
+    return options.hcitoolReset !== true;
+  }
+
+  // Optional global override for field debugging.
+  const envPolicy = String(process.env.GYMNASTICON_HCITOOL_RESET || '').trim().toLowerCase();
+  if (['1', 'true', 'always', 'force', 'on'].includes(envPolicy)) {
+    return false;
+  }
+  if (['0', 'false', 'never', 'off'].includes(envPolicy)) {
+    return true;
+  }
+
+  // Auto policy: avoid adapter resets while noble is in the "unknown" failure
+  // mode because that path is known to trigger EALREADY bind races on Pi.
+  const message = String(error?.message || error || '');
+  if (isStateUnknownError(error)) {
+    return true;
+  }
+  if (/ealready|operation already in progress/i.test(message) || /syscall.*bind/i.test(message)) {
+    return true;
+  }
+  if (String(noble?.state || '').toLowerCase() === 'unknown') {
+    return true;
+  }
+
+  // For non-noble-state failures, keep the original reset behavior.
+  return false;
 }
 
 function resolveAdapterName(options = {}) {
