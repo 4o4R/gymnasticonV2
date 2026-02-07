@@ -627,7 +627,9 @@ export class App {
   }
 
   async start() {
-    await this.initializeBleServers();
+    // Teaching note: initialize BLE advertising lazily after bike connect.
+    // On some Pi/BlueZ combos, eager bleno init can interfere with noble scan
+    // startup when only one adapter is available.
     await this.run();
   }
 

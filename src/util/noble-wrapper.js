@@ -69,18 +69,6 @@ function patchNobleHciInit(noble) {
       if (typeof this.emit === 'function') {
         this.emit('stateChange', 'poweredOff');
       }
-      // Re-arm the poll loop after the transient bind failure.
-      setTimeout(() => {
-        try {
-          if (typeof this.pollIsDevUp === 'function') {
-            this.pollIsDevUp();
-          }
-        } catch (retryError) {
-          if (typeof noble.emit === 'function') {
-            noble.emit('warning', `HCI poll retry failed: ${retryError?.message || retryError}`);
-          }
-        }
-      }, 1000);
       return;
     }
   };
