@@ -162,10 +162,35 @@ async function startScanningWithAdapter(noble, serviceUuids, allowDuplicates, ad
     if (isStateUnknownError(error) && isAdapterUp(adapter)) {
       console.warn(`[ble-scan] ⚠ Noble state unknown but ${adapter} is UP; forcing state to poweredOn and retrying scan`);
       forceNoblePoweredOn(noble);
-      await noble.startScanningAsync(serviceUuids, allowDuplicates);
-      return;
+      try {
+        await noble.startScanningAsync(serviceUuids, allowDuplicates);
+        return;
+      } catch (retryError) {
+        if (isStateUnknownError(retryError) && tryStartScanViaBindings(noble, serviceUuids, allowDuplicates)) {
+          return;
+        }
+        throw retryError;
+      }
     }
     throw error;
+  }
+}
+
+function tryStartScanViaBindings(noble, serviceUuids, allowDuplicates) {
+  const bindings = noble?._bindings;
+  if (!bindings || typeof bindings.startScanning !== 'function') {
+    return false;
+  }
+  try {
+    // Mirror noble's bookkeeping so duplicate filtering remains consistent.
+    noble._discoveredPeripheralUUids = [];
+    noble._allowDuplicates = allowDuplicates;
+    bindings.startScanning(serviceUuids, allowDuplicates);
+    console.warn('[ble-scan] ⚠ Started scan via noble bindings fallback (state remained unknown)');
+    return true;
+  } catch (error) {
+    console.warn(`[ble-scan] ⚠ Direct bindings scan start failed: ${error?.message || error}`);
+    return false;
   }
 }
 
@@ -269,15 +294,17 @@ async function scanWithHcitool(filter, options = {}) {
         console.log(`[ble-scan] ℹ Skipping adapter reset for ${adapter} (avoids noble EALREADY crash)`);
       }
       
-      const cmd = `${sudoPrefix}hcitool -i ${adapter} lescan`;
+      const cmd = `${sudoPrefix}hcitool -i ${adapter} lescan --duplicates`;
       const scanProcess = spawn('bash', ['-c', cmd], {
         stdio: ['ignore', 'pipe', 'pipe']
       });
 
-      let output = '';
+      let stdoutBuffer = '';
+      let stderrBuffer = '';
       let errorOutput = '';
       let foundMatch = false;
       const seenDevices = new Set();
+      let discoveredCount = 0;
       const timeout = setTimeout(() => {
         try {
           scanProcess.kill();
@@ -285,56 +312,81 @@ async function scanWithHcitool(filter, options = {}) {
           // ignore
         }
         if (!foundMatch) {
-          reject(new Error('hcitool scan timeout - no devices found'));
+          reject(new Error(`hcitool scan timeout - no matching devices found (saw ${discoveredCount})`));
         }
       }, timeoutMs);  // 30 second timeout
 
-      scanProcess.stdout.on('data', (data) => {
-        output += data.toString();
-        const lines = output.split('\n');
+      const processLine = (line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        if (/^LE Scan/i.test(trimmed)) return;
 
-        for (let i = 0; i < lines.length - 1; i++) {
-          const line = lines[i].trim();
-          if (!line || line.includes('LE Scan')) continue;
-
-          const parts = line.split(/\s+/);
-          if (parts.length < 2) continue;
-
-          const addr = parts[0];
-          const name = parts.slice(1).join(' ') || '(no name)';
-          const deviceKey = `${addr}:${name}`;
-
-          if (seenDevices.has(deviceKey)) continue;
-          seenDevices.add(deviceKey);
-
-          console.log(`[ble-scan] hcitool found: ${name} [${addr}]`);
-
-          const fakePeripheral = {
-            address: addr,
-            advertisement: {
-              localName: name
-            }
-          };
-
-          if (filter(fakePeripheral)) {
-            console.log(`[ble-scan] ✓ MATCH via hcitool: ${name} [${addr}]`);
-            foundMatch = true;
-            clearTimeout(timeout);
-            try {
-              scanProcess.kill();
-            } catch (e) {
-              // ignore
-            }
-            resolve(fakePeripheral);
-            return;
-          }
+        // hcitool output is usually:
+        //   AA:BB:CC:DD:EE:FF Name
+        // but some stacks emit only the address with no name.
+        const match = trimmed.match(/^([0-9A-F]{2}(?::[0-9A-F]{2}){5})(?:\s+(.*))?$/i);
+        if (!match) {
+          return;
         }
 
-        output = lines[lines.length - 1];
+        const addr = match[1];
+        const rawName = (match[2] || '').trim();
+        const name = rawName || '(no name)';
+        const deviceKey = `${addr}:${name}`;
+
+        if (seenDevices.has(deviceKey)) return;
+        seenDevices.add(deviceKey);
+        discoveredCount += 1;
+
+        console.log(`[ble-scan] hcitool found: ${name} [${addr}]`);
+
+        const fakePeripheral = {
+          address: addr,
+          advertisement: {
+            localName: rawName
+          }
+        };
+
+        if (filter(fakePeripheral)) {
+          console.log(`[ble-scan] ✓ MATCH via hcitool: ${name} [${addr}]`);
+          foundMatch = true;
+          clearTimeout(timeout);
+          try {
+            scanProcess.kill();
+          } catch (e) {
+            // ignore
+          }
+          resolve(fakePeripheral);
+        }
+      };
+
+      const consumeStream = (chunk, source) => {
+        const text = chunk.toString();
+        if (source === 'stderr') {
+          errorOutput += text;
+        }
+        const next = (source === 'stdout' ? stdoutBuffer : stderrBuffer) + text;
+        const lines = next.split('\n');
+        const rest = lines.pop() || '';
+        for (const line of lines) {
+          processLine(line);
+          if (foundMatch) {
+            break;
+          }
+        }
+        if (source === 'stdout') {
+          stdoutBuffer = rest;
+        } else {
+          stderrBuffer = rest;
+        }
+      };
+
+      scanProcess.stdout.on('data', (data) => {
+        consumeStream(data, 'stdout');
       });
 
       scanProcess.stderr.on('data', (data) => {
-        errorOutput += data.toString();
+        consumeStream(data, 'stderr');
       });
 
       scanProcess.on('error', (err) => {
@@ -344,6 +396,17 @@ async function scanWithHcitool(filter, options = {}) {
 
       scanProcess.on('exit', () => {
         clearTimeout(timeout);
+        // Flush any trailing unterminated line.
+        if (!foundMatch) {
+          if (stdoutBuffer) processLine(stdoutBuffer);
+          if (stderrBuffer) processLine(stderrBuffer);
+        }
+        stdoutBuffer = '';
+        stderrBuffer = '';
+
+        if (foundMatch) {
+          return;
+        }
         if (!foundMatch) {
           if (/sudo:.*password/i.test(errorOutput)) {
             reject(new Error('hcitool requires passwordless sudo; run `sudo visudo` or execute Gymnasticon as root'));
@@ -357,7 +420,11 @@ async function scanWithHcitool(filter, options = {}) {
             reject(new Error('hcitool is missing; install bluez (sudo apt-get install -y bluez)'));
             return;
           }
-          reject(new Error('hcitool scan ended without finding device'));
+          if (/invalid option|unrecognized option|usage:/i.test(errorOutput)) {
+            reject(new Error('hcitool does not support --duplicates on this system'));
+            return;
+          }
+          reject(new Error(`hcitool scan ended without finding device (saw ${discoveredCount})`));
         }
       });
     } catch (err) {
