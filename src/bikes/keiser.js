@@ -73,6 +73,11 @@ const debuglog = toDefaultExport(debugModule)('gym:bikes:keiser');
 
 const KEISER_NAME_PATTERN = /m3/i; // Match M-Series names even when a prefix (e.g., "Keiser ") is present.
 
+function isStateUnknownScanError(error) {
+  const message = String(error?.message || error || '');
+  return /state is unknown/i.test(message) || /not poweredon/i.test(message);
+}
+
 export function matchesKeiserName(peripheral) {
   const advertisement = peripheral?.advertisement ?? {}; // Stash a local ref so the code below stays readable for new contributors.
   const name = advertisement.localName ?? ''; // Local names only appear occasionally; treat missing names as blank strings.
@@ -107,9 +112,10 @@ export function matchesKeiserName(peripheral) {
  */
 
 export class KeiserBikeClient extends EventEmitter {
-  constructor(noble) {
+  constructor(noble, options = {}) {
     super();
     this.noble = noble;
+    this.targetAddress = normalizeAddress(options.address);
     this.state = 'disconnected';
     this.onReceive = this.onReceive.bind(this);
     this.restartScan = this.restartScan.bind(this);
@@ -128,6 +134,30 @@ export class KeiserBikeClient extends EventEmitter {
     this.fixDropout = null;
     this.ignoredPackets = 0; // Teaching note: small counter to avoid log spam when we ignore packets.
   }
+
+  async startScanWithFallback(serviceUuids = null, allowDuplicates = true) {
+    try {
+      await this.noble.startScanningAsync(serviceUuids, allowDuplicates);
+      return;
+    } catch (error) {
+      if (!isStateUnknownScanError(error)) {
+        throw error;
+      }
+
+      const bindings = this.noble?._bindings;
+      if (!bindings || typeof bindings.startScanning !== 'function') {
+        throw error;
+      }
+
+      // Teaching note: use low-level bindings when noble is stuck in
+      // "unknown" state but the adapter is otherwise operational.
+      this.noble._discoveredPeripheralUUids = [];
+      this.noble._allowDuplicates = allowDuplicates;
+      bindings.startScanning(serviceUuids, allowDuplicates);
+      debuglog('noble state unknown; started Keiser scan via bindings fallback');
+    }
+  }
+
   /**
    * Bike behaves like a BLE beacon. Simulate connect by looking up MAC address
    * scanning and filtering subsequent announcements from this address.
@@ -139,9 +169,21 @@ export class KeiserBikeClient extends EventEmitter {
 
     this.state = 'connecting';
 
-    const filter = matchesKeiserName;
+    const filter = (peripheral) => {
+      if (this.targetAddress) {
+        const candidate = normalizeAddress(peripheral?.address);
+        if (candidate && candidate === this.targetAddress) {
+          return true;
+        }
+      }
+      return matchesKeiserName(peripheral);
+    };
     
-    console.log('[keiser] Starting Keiser bike scan (timeout: disabled)...');
+    if (this.targetAddress) {
+      console.log(`[keiser] Starting Keiser bike scan (timeout: disabled, address=${this.targetAddress})...`);
+    } else {
+      console.log('[keiser] Starting Keiser bike scan (timeout: disabled)...');
+    }
     debuglog('Starting Keiser bike scan with no timeout');
     const peripheral = await scan(this.noble, null, filter, {
       allowDuplicates: true,
@@ -197,7 +239,7 @@ export class KeiserBikeClient extends EventEmitter {
     this.fixDropout = createDropoutFilter();
 
     try {
-      await this.noble.startScanningAsync(null, true);
+      await this.startScanWithFallback(null, true);
     } catch (err) {
       this.state = 'disconnected';
       if (this.statsTimeout) {
@@ -288,7 +330,7 @@ export class KeiserBikeClient extends EventEmitter {
     }
 
     try {
-      await this.noble.startScanningAsync(null, true);
+      await this.startScanWithFallback(null, true);
     } catch (err) {
       debuglog('Stats timeout: Unable to restart BLE scan', err);
     } finally {
@@ -354,7 +396,7 @@ export class KeiserBikeClient extends EventEmitter {
       return;
     }
     try {
-      await this.noble.startScanningAsync(null, true);
+      await this.startScanWithFallback(null, true);
     } catch (err) {
       debuglog('Unable to restart BLE scan', err);
     }

@@ -1,5 +1,6 @@
 import {EventEmitter} from 'events';
 import {createRequire} from 'module';
+import {execSync} from 'child_process';
 import {loadDependency, toDefaultExport} from './optional-deps.js';
 import {normalizeAdapterId} from './adapter-id.js';
 
@@ -41,6 +42,52 @@ function isHciBindRaceError(error) {
     /bind/i.test(message);
 }
 
+function isStateUnknownScanError(error) {
+  const message = String(error?.message || error || '');
+  return /state is unknown/i.test(message) || /not poweredon/i.test(message);
+}
+
+function resolveAdapterNameFromEnv() {
+  const raw = String(process.env.NOBLE_HCI_DEVICE_ID || '').trim();
+  if (!raw) {
+    return 'hci0';
+  }
+  if (/^\d+$/.test(raw)) {
+    return `hci${raw}`;
+  }
+  if (/^hci\d+$/i.test(raw)) {
+    return raw.toLowerCase();
+  }
+  return 'hci0';
+}
+
+function isAdapterUp(adapterName) {
+  if (!adapterName) {
+    return false;
+  }
+  try {
+    const output = execSync(`hciconfig ${adapterName}`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString();
+    return /UP RUNNING/.test(output);
+  } catch (_error) {
+    return false;
+  }
+}
+
+function tryStartScanViaBindings(noble, serviceUuids, allowDuplicates) {
+  const bindings = noble?._bindings;
+  if (!bindings || typeof bindings.startScanning !== 'function') {
+    return false;
+  }
+  try {
+    noble._discoveredPeripheralUUids = [];
+    noble._allowDuplicates = allowDuplicates;
+    bindings.startScanning(serviceUuids, allowDuplicates);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
 function patchNobleHciInit(noble) {
   if (!noble || noble.__gymnasticonHciInitPatched) {
     return;
@@ -74,6 +121,47 @@ function patchNobleHciInit(noble) {
   };
 
   noble.__gymnasticonHciInitPatched = true;
+}
+
+function patchNobleUnknownStateScan(noble) {
+  if (!noble || noble.__gymnasticonUnknownStateScanPatched) {
+    return;
+  }
+  if (typeof noble.startScanningAsync !== 'function') {
+    return;
+  }
+
+  const originalStartScanningAsync = noble.startScanningAsync.bind(noble);
+  noble.startScanningAsync = async function patchedStartScanningAsync(serviceUuids, allowDuplicates) {
+    try {
+      return await originalStartScanningAsync(serviceUuids, allowDuplicates);
+    } catch (error) {
+      if (!isStateUnknownScanError(error)) {
+        throw error;
+      }
+
+      const adapterName = resolveAdapterNameFromEnv();
+      if (!isAdapterUp(adapterName)) {
+        throw error;
+      }
+
+      // Some Pi/BlueZ builds report state "unknown" forever, but the adapter
+      // can still scan if we invoke bindings directly.
+      if (!tryStartScanViaBindings(noble, serviceUuids, allowDuplicates)) {
+        throw error;
+      }
+
+      if (typeof noble.emit === 'function') {
+        noble.emit(
+          'warning',
+          `state unknown on ${adapterName}; started scan via bindings fallback`
+        );
+      }
+      return undefined;
+    }
+  };
+
+  noble.__gymnasticonUnknownStateScanPatched = true;
 }
 
 export const initializeBluetooth = async (adapter = 'hci0', options = {}) => {
@@ -119,6 +207,7 @@ export const initializeBluetooth = async (adapter = 'hci0', options = {}) => {
 
     patchNobleMtu(noble);
     patchNobleHciInit(noble);
+    patchNobleUnknownStateScan(noble);
 
     // Add retry logic for robust connections.
     const connect = async (peripheral, retries = 3) => {

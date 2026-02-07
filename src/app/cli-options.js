@@ -45,6 +45,9 @@ export const options = {
   'flywheel-name': {
     describe: '<name>',
   },
+  'keiser-address': {
+    describe: '<macaddr> optional MAC filter for Keiser discovery',
+  },
   'peloton-path': {
     describe: '<path> usb serial device path',
     type: 'string',

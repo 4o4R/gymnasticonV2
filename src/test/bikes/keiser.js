@@ -1,6 +1,7 @@
 import test from '../support/tape.js';
 import {parse} from '../../bikes/keiser.js';
 import {bikeVersion} from '../../bikes/keiser.js';
+import {KeiserBikeClient} from '../../bikes/keiser.js';
 
 /**
  * See https://dev.keiser.com/mseries/direct/#data-parse-example for a
@@ -45,4 +46,60 @@ test('bikeVersion() Tests Keiser bike version (5.12)', t => {
   const {version, timeout} = bikeVersion(bufver);
   t.equal(version, '5.12', 'Version: 5.12');
   t.equal(timeout, 30, 'Timeout: 30 seconds');
+});
+
+test('KeiserBikeClient.startScanWithFallback() uses normal noble scan when available', async t => {
+  t.plan(1);
+  const noble = {
+    startScanningAsync: async () => {},
+    _bindings: {
+      startScanning: () => {
+        throw new Error('bindings path should not run');
+      }
+    }
+  };
+  const client = new KeiserBikeClient(noble);
+  await client.startScanWithFallback(null, true);
+  t.pass('scan started via noble');
+});
+
+test('KeiserBikeClient.startScanWithFallback() falls back on unknown state', async t => {
+  t.plan(3);
+  let called = false;
+  const noble = {
+    _discoveredPeripheralUUids: ['old'],
+    _allowDuplicates: false,
+    startScanningAsync: async () => {
+      throw new Error('Could not start scanning, state is unknown (not poweredOn)');
+    },
+    _bindings: {
+      startScanning: (serviceUuids, allowDuplicates) => {
+        called = true;
+        t.equal(serviceUuids, null, 'passes service UUIDs through');
+        t.equal(allowDuplicates, true, 'passes duplicate setting through');
+      }
+    }
+  };
+  const client = new KeiserBikeClient(noble);
+  await client.startScanWithFallback(null, true);
+  t.equal(called, true, 'bindings fallback started scan');
+});
+
+test('KeiserBikeClient.startScanWithFallback() rethrows non-state errors', async t => {
+  t.plan(1);
+  const noble = {
+    startScanningAsync: async () => {
+      throw new Error('Permission denied');
+    },
+    _bindings: {
+      startScanning: () => {}
+    }
+  };
+  const client = new KeiserBikeClient(noble);
+  try {
+    await client.startScanWithFallback(null, true);
+    t.fail('expected error');
+  } catch (error) {
+    t.equal(String(error.message), 'Permission denied', 'non-state scan errors are preserved');
+  }
 });
