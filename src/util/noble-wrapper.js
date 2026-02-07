@@ -34,6 +34,60 @@ function patchNobleMtu(noble) {
   noble.__gymnasticonMtuPatched = true;
 }
 
+function isHciBindRaceError(error) {
+  const message = String(error?.message || error || '');
+  return error?.code === 'EALREADY' ||
+    /operation already in progress/i.test(message) ||
+    /bind/i.test(message);
+}
+
+function patchNobleHciInit(noble) {
+  if (!noble || noble.__gymnasticonHciInitPatched) {
+    return;
+  }
+  const hci = noble?._bindings?._hci;
+  if (!hci || typeof hci.init !== 'function') {
+    return;
+  }
+
+  const originalInit = hci.init.bind(hci);
+  hci.init = function patchedHciInit(...args) {
+    try {
+      return originalInit(...args);
+    } catch (error) {
+      if (!isHciBindRaceError(error)) {
+        throw error;
+      }
+
+      if (typeof noble.emit === 'function') {
+        noble.emit(
+          'warning',
+          `suppressed noble HCI bind race (${error?.code || 'EALREADY'}); continuing in degraded mode`
+        );
+      }
+      // Keep noble alive even when BlueZ reports transient bind races.
+      if (typeof this.emit === 'function') {
+        this.emit('stateChange', 'poweredOff');
+      }
+      // Re-arm the poll loop after the transient bind failure.
+      setTimeout(() => {
+        try {
+          if (typeof this.pollIsDevUp === 'function') {
+            this.pollIsDevUp();
+          }
+        } catch (retryError) {
+          if (typeof noble.emit === 'function') {
+            noble.emit('warning', `HCI poll retry failed: ${retryError?.message || retryError}`);
+          }
+        }
+      }, 1000);
+      return;
+    }
+  };
+
+  noble.__gymnasticonHciInitPatched = true;
+}
+
 export const initializeBluetooth = async (adapter = 'hci0', options = {}) => {
   const {forceNewInstance = false} = options; // Allow callers to request a dedicated noble instance.
   const previousAdapter = process.env.NOBLE_HCI_DEVICE_ID;
@@ -76,6 +130,7 @@ export const initializeBluetooth = async (adapter = 'hci0', options = {}) => {
     }
 
     patchNobleMtu(noble);
+    patchNobleHciInit(noble);
 
     // Add retry logic for robust connections.
     const connect = async (peripheral, retries = 3) => {
