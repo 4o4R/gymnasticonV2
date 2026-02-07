@@ -535,10 +535,31 @@ export class App {
     if (!this.noble?.startScanningAsync || !this.noble?.stopScanningAsync) {
       return false;
     }
-    try {
-      await this.noble.startScanningAsync([], false);
+    const withTimeout = async (promise, timeoutMs, label) => {
+      let timeoutId;
       try {
-        await this.noble.stopScanningAsync();
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error(`probe ${label} timeout after ${timeoutMs}ms`)), timeoutMs);
+          }),
+        ]);
+      } finally {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+      }
+    };
+    try {
+      await withTimeout(this.noble.startScanningAsync([], false), 1500, 'start');
+      try {
+        if (typeof this.noble.stopScanning === 'function') {
+          // Teaching note: stopScanningAsync can hang forever waiting for scanStop
+          // on some Pi/BlueZ combos, so use the sync variant during probing.
+          this.noble.stopScanning();
+        } else {
+          await withTimeout(this.noble.stopScanningAsync(), 1000, 'stop');
+        }
       } catch (stopError) {
         const message = String(stopError?.message || stopError || '');
         if (!/not scanning/i.test(message)) {
