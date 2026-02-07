@@ -465,7 +465,8 @@ export class App {
           this.logger.log('[gym-app] proceeding despite noble state mismatch (scan probe succeeded)');
           return;
         }
-        this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is up but scan probe failed; reinitializing noble`);
+        this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is up but scan probe failed; proceeding in degraded mode to avoid noble reinit bind race`);
+        return;
       }
       
       this.logger.log(`[gym-app] waiting for Bluetooth adapter to become poweredOn (attempt ${attempt}/${maxAttempts}, current state: ${state})`);
@@ -485,7 +486,8 @@ export class App {
             this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP (hciconfig confirms); proceeding despite noble state being ${state}`);
             return;
           }
-          this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP but scan probe failed; reinitializing noble`);
+          this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP but scan probe failed; proceeding in degraded mode to avoid noble reinit bind race`);
+          return;
         }
         
         this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is not responding; reinitializing noble`);
