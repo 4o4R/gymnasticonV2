@@ -48,12 +48,21 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
       }
     }
 
-    return await waitForDiscovery(noble, filter, {
+    const discovered = await waitForDiscovery(noble, filter, {
       timeoutMs,
       startedScan,
       stopScanOnMatch,
       stopScanOnTimeout,
     });
+    if (discovered) {
+      return discovered;
+    }
+    // Teaching note: when noble starts scanning but never emits discover
+    // events, treat that as a noble failure so we can fall back to hcitool.
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      throw new Error(`noble scan timeout - no matching devices found after ${timeoutMs}ms`);
+    }
+    return discovered;
   } catch (err) {
     // Noble failed - try hcitool fallback
     console.warn(`[ble-scan] ⚠ Noble scan failed: ${err.message}`);

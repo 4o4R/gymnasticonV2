@@ -179,16 +179,20 @@ export class KeiserBikeClient extends EventEmitter {
       return matchesKeiserName(peripheral);
     };
     
+    const scanTimeoutFromEnv = Number.parseInt(process.env.GYMNASTICON_KEISER_SCAN_TIMEOUT_MS || '', 10);
+    const scanTimeoutMs = Number.isFinite(scanTimeoutFromEnv) && scanTimeoutFromEnv > 0
+      ? scanTimeoutFromEnv
+      : 20000;
     if (this.targetAddress) {
-      console.log(`[keiser] Starting Keiser bike scan (timeout: disabled, address=${this.targetAddress})...`);
+      console.log(`[keiser] Starting Keiser bike scan (timeout: ${scanTimeoutMs}ms, address=${this.targetAddress})...`);
     } else {
-      console.log('[keiser] Starting Keiser bike scan (timeout: disabled)...');
+      console.log(`[keiser] Starting Keiser bike scan (timeout: ${scanTimeoutMs}ms)...`);
     }
-    debuglog('Starting Keiser bike scan with no timeout');
+    debuglog(`Starting Keiser bike scan with timeout ${scanTimeoutMs}ms`);
     const peripheral = await scan(this.noble, null, filter, {
       allowDuplicates: true,
       active: true,
-      timeoutMs: 0  // wait indefinitely until the bike advertises
+      timeoutMs: scanTimeoutMs,
     });
 
     if (!peripheral) {
