@@ -25,6 +25,8 @@ function createTestApp() {
 function destroyTestApp(app) {
   process.removeListener('unhandledRejection', app.errorHandler);
   process.removeListener('uncaughtException', app.errorHandler);
+  process.removeListener('SIGINT', app.onSigInt);
+  process.removeListener('exit', app.onExit);
 }
 
 test('App.onBikeDisconnect() tolerates an early disconnect before BLE startup', (t) => {
@@ -68,4 +70,73 @@ test('App.clearRestartRequest() removes stale restart state after a failed start
   }
 
   t.end();
+});
+
+test('App.run() retries cold-start bike discovery until a bike appears, then starts advertising', async (t) => {
+  const logs = [];
+  const sleepCalls = [];
+  const serverEvents = [];
+  let connectionAttempt = 0;
+
+  const server = {
+    async start() {
+      serverEvents.push(`start:${connectionAttempt}`);
+    },
+    async stop() {
+      serverEvents.push(`stop:${connectionAttempt}`);
+    },
+    ensureCscCapabilities() {},
+    updatePower() {},
+    updateCsc() {},
+    updateHeartRate() {},
+  };
+
+  const app = createTestApp();
+  try {
+    app.createBikeClient = async () => {
+      const attempt = ++connectionAttempt;
+      const bike = new EventEmitter();
+      bike.address = 'AA:BB:CC:DD:EE:FF';
+      bike.connect = async () => {
+        logs.push(`connect:${attempt}`);
+        if (attempt === 1) {
+          throw new Error('bike asleep');
+        }
+      };
+      bike.disconnect = async () => {
+        logs.push(`disconnect:${attempt}`);
+      };
+      return bike;
+    };
+    app.sleep = async (ms) => {
+      sleepCalls.push(ms);
+    };
+    app.minimumRetryDelayMs = 0;
+    app.opts.connectionRetryDelay = 25;
+    app.server = server;
+    app.logger = {
+      log: (...args) => logs.push(`log:${args.join(' ')}`),
+      warn: (...args) => logs.push(`warn:${args.join(' ')}`),
+      error: (...args) => logs.push(`error:${args.join(' ')}`),
+    };
+    app.attachNobleDiagnostics = () => {};
+    app.ensureBluetoothPoweredOn = async () => {};
+    app.startOptionalSensors = async () => {
+      logs.push('optional-sensors-started');
+    };
+    app.waitForRestartSignal = async () => {
+      logs.push('wait-for-restart');
+      app.keepRunning = false;
+    };
+
+    await app.run();
+
+    t.equal(connectionAttempt, 2, 'bike discovery retried after the initial cold-start miss');
+    t.deepEqual(sleepCalls, [25], 'retry delay applied between cold-start attempts');
+    t.equal(serverEvents[0], 'start:2', 'BLE advertising only starts after the successful connect');
+    t.ok(logs.includes('optional-sensors-started'), 'optional sensors start after the bike connects');
+    t.ok(logs.includes('wait-for-restart'), 'run loop reaches steady connected state after the bike appears');
+  } finally {
+    destroyTestApp(app);
+  }
 });

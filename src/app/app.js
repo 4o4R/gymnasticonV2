@@ -60,6 +60,10 @@ export class App {
   constructor(options = {}) {
     const opts = { ...defaults, ...options };
     this.opts = opts;
+    this.createBikeClient = opts.createBikeClient || createBikeClient; // Allow tests to inject deterministic bike discovery/connection behavior.
+    this.sleep = opts.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))); // Keep retry backoff overridable so tests do not wait in real time.
+    this.minimumRetryDelayMs = Number.isFinite(opts.minimumRetryDelayMs) ? Number(opts.minimumRetryDelayMs) : 1000; // Production keeps a one-second floor; tests can lower it explicitly.
+    this.keepRunning = true; // Main run loop flag so graceful shutdowns and tests can stop the reconnect loop cleanly.
 
     this.logger = new Logger();
     this.noble = opts.noble || nobleDefault;
@@ -426,6 +430,7 @@ export class App {
   async stopBikeConnection({ stopServer = false } = {}) {
     // Teaching note: this cleans up the bike connection and optionally stops
     // advertising when we should not broadcast without a bike.
+    this.pingInterval.cancel(); // Stop BLE keep-alives immediately so reconnect loops do not keep publishing stale telemetry.
     this.statsTimeout.cancel();
     this.connectTimeout.cancel();
     if (this.bike) {
@@ -664,6 +669,11 @@ export class App {
   }
 
   async stop() {
+    this.keepRunning = false;
+    if (this.restartSignal && !this.restartSignal.resolved) {
+      this.restartSignal.resolved = true;
+      this.restartSignal.resolve('app-stop');
+    }
     this.pingInterval.cancel();
     this.statsTimeout.cancel();
     this.connectTimeout.cancel();
@@ -722,15 +732,14 @@ export class App {
       await this.ensureBluetoothPoweredOn();
       this.logger.log('[gym-app] Bluetooth adapter ready (poweredOn)');
 
-      const retryDelayMs = Math.max(1000, Number(this.opts.connectionRetryDelay ?? sharedDefaults.connectionRetryDelay ?? 5000)); // Guarantee at least a one-second delay between attempts even if the config requests 0.
-      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); // Lightweight helper so the retry loop can pause via await without blocking Node's event loop.
+      const retryDelayMs = Math.max(this.minimumRetryDelayMs, Number(this.opts.connectionRetryDelay ?? sharedDefaults.connectionRetryDelay ?? 5000)); // Guarantee a sensible retry floor in production while allowing tests to override it.
       const serverAdapterLabel = this.serverAdapters?.length ? this.serverAdapters.join(',') : this.opts.serverAdapter;
       this.logger.log(`[gym-app] startup opts: bike=${this.opts.bike} defaultBike=${this.opts.defaultBike} bikeAdapter=${this.opts.bikeAdapter} serverAdapter=${serverAdapterLabel}`);
 
-      while (true) { // Keep looping until we successfully complete the full startup sequence.
+      while (this.keepRunning) { // Keep looping until shutdown or we successfully complete the full startup sequence.
         try {
           this.logger.log('connecting to bike...'); // Show progress on the console so headless installs still provide feedback.
-          this.bike = await createBikeClient(this.opts, this.noble); // Instantiate the bike client selected via config/CLI (autodetect, keiser, etc.).
+          this.bike = await this.createBikeClient(this.opts, this.noble); // Instantiate the bike client selected via config/CLI (autodetect, keiser, etc.).
           // Teaching note: using bound handlers allows us to remove listeners when we reconnect.
           this.bike.on('disconnect', this.onBikeDisconnectBound); // Restart the app when the bike disconnects unexpectedly.
           this.bike.on('stats', this.onBikeStatsBound); // Stream bike telemetry into the BLE/ANT broadcasters.
@@ -764,7 +773,10 @@ export class App {
           // a bike is actually connected.
           await this.stopBikeConnection({ stopServer: true }).catch(() => {}); // Tear down partial bike state before the next attempt.
           this.logger.log(`retrying connection in ${retryDelayMs / 1000}s (adjust with --connection-retry-delay)`); // Give a friendly heads-up that retries are automatic.
-          await sleep(retryDelayMs); // Wait before the next attempt to avoid hammering the Bluetooth stack.
+          if (!this.keepRunning) {
+            break;
+          }
+          await this.sleep(retryDelayMs); // Wait before the next attempt to avoid hammering the Bluetooth stack.
         }
       }
     } catch (e) {
