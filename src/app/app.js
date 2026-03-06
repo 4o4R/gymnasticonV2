@@ -414,6 +414,15 @@ export class App {
     this.restartSignal.resolve(reason);
   }
 
+  clearRestartRequest() {
+    // Teaching note: failed startup attempts can queue a restart before the main
+    // loop reaches waitForRestartSignal(); once we enter the retry path that
+    // stale request must be discarded so the next successful connect can settle.
+    this.pendingRestartReason = null;
+    this.restartReason = null;
+    this.restartSignal = null;
+  }
+
   async stopBikeConnection({ stopServer = false } = {}) {
     // Teaching note: this cleans up the bike connection and optionally stops
     // advertising when we should not broadcast without a bike.
@@ -750,6 +759,7 @@ export class App {
           await this.stopBikeConnection({ stopServer: true });
         } catch (e) {
           this.logger.error(e); // Surface the failure reason so users can photograph the console for debugging.
+          this.clearRestartRequest(); // Retry errors already trigger a new connection attempt; discard stale pre-wait restart requests from the failed cycle.
           // Teaching note: stop advertising on errors so we only broadcast when
           // a bike is actually connected.
           await this.stopBikeConnection({ stopServer: true }).catch(() => {}); // Tear down partial bike state before the next attempt.
@@ -947,9 +957,11 @@ export class App {
   }
 
   publishTelemetry() { // Push the latest power/cadence/speed state to BLE and ANT+ consumers.
-    this.server.ensureCscCapabilities({ supportWheel: true, supportCrank: true }); // Always advertise both wheel and crank data so speed shows up in apps.
-    this.server.updatePower({ power: this.power, cadence: this.currentCadence, crank: this.crank }); // Send Cycling Power measurements including crank events.
-    this.server.updateCsc({ wheel: this.wheel, crank: this.crank }); // Send CSC measurements with cumulative wheel/crank counters.
+    if (this.server) {
+      this.server.ensureCscCapabilities({ supportWheel: true, supportCrank: true }); // Always advertise both wheel and crank data so speed shows up in apps.
+      this.server.updatePower({ power: this.power, cadence: this.currentCadence, crank: this.crank }); // Send Cycling Power measurements including crank events.
+      this.server.updateCsc({ wheel: this.wheel, crank: this.crank }); // Send CSC measurements with cumulative wheel/crank counters.
+    }
     if (this.antServer?.isRunning) { // Forward to ANT+ bicycle power profile when broadcasting is active.
       this.antServer.updateMeasurement({ power: this.power, cadence: this.currentCadence });
     }
@@ -971,6 +983,9 @@ export class App {
   }
 
   onHeartRate(hr) {
+    if (!this.server) {
+      return;
+    }
     this.server.updateHeartRate(hr);
   }
 
