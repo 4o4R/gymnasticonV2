@@ -33,7 +33,7 @@ export const defaults = {
 
   // server options
   serverAdapter: 'hci0',         // BLE adapter used to advertise Gymnasticon
-  serverName: 'GymnasticonV2',     // BLE name seen by Zwift/TrainerRoad/etc.
+  serverName: 'GymnasticonV2',   // Distinguish this bridge from nearby legacy Gymnasticon instances on BLE scans.
   serverPingInterval: 1,         // seconds between keep-alive power frames
   bleMultiOutput: undefined,     // auto-enable multi-adapter BLE mirroring when possible
 

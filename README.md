@@ -51,7 +51,7 @@ There are now two images so both old Zeros and newer boards “just work”:
 4. Optional (Wi-Fi headless): copy `gymnasticon-wifi.env.example` from the boot partition to `gymnasticon-wifi.env`, fill in `WIFI_COUNTRY`, `WIFI_SSID`, and `WIFI_PSK`. The Pi will join Wi-Fi on first boot.
 5. Optional: copy a `gymnasticon.json` into the boot partition to pre-set your bike profile.
 6. Insert the card in the Pi and power it on. First boot takes about 2-3 minutes.
-7. Log in if needed (default credentials `pi` / `raspberry`) or just start pedaling and pair Zwift with the `Gymnasticon` power and cadence sensors.
+7. Log in if needed (default credentials `pi` / `raspberry`) or just start pedaling and pair Zwift with the `GymnasticonV2` power and cadence sensors.
 
 **Verify**
 ```bash

@@ -13,6 +13,8 @@ Group=pi
 ExecStart=/opt/gymnasticon/bin/gymnasticon --config /etc/gymnasticon.json
 RestartSec=1
 Restart=always
+StandardOutput=journal+console
+StandardError=journal+console
 
 AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
 NoNewPrivileges=true

@@ -236,6 +236,8 @@ WorkingDirectory=/opt/gymnasticon
 ExecStart=/usr/bin/node /opt/gymnasticon/src/app/cli.js --config /etc/gymnasticon.json
 Restart=always
 RestartSec=10
+StandardOutput=journal+console
+StandardError=journal+console
 
 [Install]
 WantedBy=multi-user.target

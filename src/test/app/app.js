@@ -2,6 +2,7 @@ import {EventEmitter} from 'events';
 
 import test from '../support/tape.js';
 import {App} from '../../app/app.js';
+import {DEFAULT_NAME as DEFAULT_SERVER_NAME} from '../../servers/ble/index.js';
 
 function createTestApp() {
   const noble = new EventEmitter();
@@ -65,6 +66,18 @@ test('App.clearRestartRequest() removes stale restart state after a failed start
     t.equal(app.pendingRestartReason, null, 'pending restart reason cleared');
     t.equal(app.restartReason, null, 'active restart reason cleared');
     t.equal(app.restartSignal, null, 'restart signal cleared');
+  } finally {
+    destroyTestApp(app);
+  }
+
+  t.end();
+});
+
+test('App defaults use the GymnasticonV2 BLE advertisement name', (t) => {
+  const app = createTestApp();
+  try {
+    t.equal(app.opts.serverName, 'GymnasticonV2', 'app default server name matches the BLE branding choice');
+    t.equal(DEFAULT_SERVER_NAME, 'GymnasticonV2', 'BLE server fallback name matches the app default');
   } finally {
     destroyTestApp(app);
   }
