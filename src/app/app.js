@@ -86,7 +86,9 @@ export class App {
     this.kinematics = { // Maintain cumulative wheel/crank state for CSC notifications.
       lastTimestamp: null, // Last time we integrated cadence/speed samples.
       crankRevolutions: 0, // Floating-point accumulator for crank revolutions so we can wrap at 16 bits cleanly.
-      wheelRevolutions: 0 // Floating-point accumulator for wheel revolutions (32-bit field in BLE spec).
+      wheelRevolutions: 0, // Floating-point accumulator for wheel revolutions (32-bit field in BLE spec).
+      lastCrankEventTimestamp: 0, // BLE "last crank event time" should only advance when a new crank revolution is observed.
+      lastWheelEventTimestamp: 0 // BLE "last wheel event time" should only advance when a new wheel revolution is observed.
     };
     this.crank = { timestamp: 0, revolutions: 0 }; // BLE-friendly crank snapshot (16-bit revolutions + seconds timestamp).
     this.wheel = { timestamp: 0, revolutions: 0 }; // BLE-friendly wheel snapshot (32-bit revolutions + seconds timestamp).
@@ -469,6 +471,7 @@ export class App {
       if (state === 'poweredOn') {
         return;
       }
+      let shouldReinitialize = false; // Track whether this attempt should force a noble reinit/fallback adapter hop.
       
       // Teaching note: If adapter is UP at OS level but noble reports unknown,
       // verify scan usability before proceeding; some stacks still fail scans.
@@ -479,34 +482,42 @@ export class App {
           this.logger.log('[gym-app] proceeding despite noble state mismatch (scan probe succeeded)');
           return;
         }
-        this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is up but scan probe failed; proceeding in degraded mode to avoid noble reinit bind race`);
-        return;
+        this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP but scan probe failed; reinitializing noble instead of proceeding in degraded mode`);
+        shouldReinitialize = true;
       }
       
-      this.logger.log(`[gym-app] waiting for Bluetooth adapter to become poweredOn (attempt ${attempt}/${maxAttempts}, current state: ${state})`);
-      try {
-        const nextState = await this.waitForNobleStateChange(timeoutMs);
-        if (nextState === 'poweredOn') {
-          return;
-        }
-        this.logger.log(`[gym-app] Bluetooth adapter state is ${nextState}; reinitializing noble`);
-      } catch (error) {
-        this.logger.log(`[gym-app] Bluetooth adapter state timeout after ${timeoutMs}ms; checking if adapter is up...`);
-        
-        // If adapter is up, only continue if a probe scan succeeds.
-        if (this.isAdapterUp(this.opts.bikeAdapter)) {
-          const canScan = await this.probeNobleScan(this.opts.bikeAdapter);
-          if (canScan) {
-            this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP (hciconfig confirms); proceeding despite noble state being ${state}`);
+      if (!shouldReinitialize) {
+        this.logger.log(`[gym-app] waiting for Bluetooth adapter to become poweredOn (attempt ${attempt}/${maxAttempts}, current state: ${state})`);
+        try {
+          const nextState = await this.waitForNobleStateChange(timeoutMs);
+          if (nextState === 'poweredOn') {
             return;
           }
-          this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP but scan probe failed; proceeding in degraded mode to avoid noble reinit bind race`);
-          return;
+          this.logger.log(`[gym-app] Bluetooth adapter state is ${nextState}; reinitializing noble`);
+          shouldReinitialize = true;
+        } catch (error) {
+          this.logger.log(`[gym-app] Bluetooth adapter state timeout after ${timeoutMs}ms; checking if adapter is up...`);
+          
+          // If adapter is up, only continue if a probe scan succeeds.
+          if (this.isAdapterUp(this.opts.bikeAdapter)) {
+            const canScan = await this.probeNobleScan(this.opts.bikeAdapter);
+            if (canScan) {
+              this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP (hciconfig confirms); proceeding despite noble state being ${state}`);
+              return;
+            }
+            this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP but scan probe failed; forcing noble reinit`);
+            shouldReinitialize = true;
+          } else {
+            this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is not responding; reinitializing noble`);
+            shouldReinitialize = true;
+          }
         }
-        
-        this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is not responding; reinitializing noble`);
       }
-      
+
+      if (!shouldReinitialize) {
+        continue; // Defensive: if we somehow got here without a reason to reinit, start the next probe attempt.
+      }
+
       const fallback = fallbackAdapters[fallbackIndex];
       if (fallback) {
         fallbackIndex += 1;
@@ -517,6 +528,9 @@ export class App {
         await this.reinitializeNoble(`fallback-${attempt}`);
       } else {
         await this.reinitializeNoble(`attempt-${attempt}`);
+      }
+      if (this.noble?.state === 'poweredOn') {
+        return; // No need to sleep/retry when reinit already recovered the adapter.
       }
       await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }
@@ -735,6 +749,8 @@ export class App {
       const retryDelayMs = Math.max(this.minimumRetryDelayMs, Number(this.opts.connectionRetryDelay ?? sharedDefaults.connectionRetryDelay ?? 5000)); // Guarantee a sensible retry floor in production while allowing tests to override it.
       const serverAdapterLabel = this.serverAdapters?.length ? this.serverAdapters.join(',') : this.opts.serverAdapter;
       this.logger.log(`[gym-app] startup opts: bike=${this.opts.bike} defaultBike=${this.opts.defaultBike} bikeAdapter=${this.opts.bikeAdapter} serverAdapter=${serverAdapterLabel}`);
+      this.logger.log(`[gym-app] ANT+ mode: ${this.antEnabled ? 'enabled (USB ANT stick transport)' : 'disabled'}`); // ANT+ transport is independent from BLE adapter selection.
+      this.logRadioMap(); // Emit one compact "which radio does what" line for Pi troubleshooting.
 
       while (this.keepRunning) { // Keep looping until shutdown or we successfully complete the full startup sequence.
         try {
@@ -957,14 +973,26 @@ export class App {
     this.kinematics.wheelRevolutions += wheelIncrement; // Accumulate wheel revolutions for the CSC service.
     this.kinematics.wheelRevolutions %= 0x100000000; // Apply 32-bit wrap so the counter mirrors BLE behavior.
 
-    this.crank = { // Build the BLE-friendly crank snapshot (16-bit revolutions + timestamp in seconds).
-      timestamp: now,
-      revolutions: Math.floor(this.kinematics.crankRevolutions) & 0xffff,
+    const nextCrankRevolutions = Math.floor(this.kinematics.crankRevolutions) & 0xffff; // Snapshot the 16-bit cumulative crank count for this sample.
+    const nextWheelRevolutions = Math.floor(this.kinematics.wheelRevolutions) >>> 0; // Snapshot the 32-bit cumulative wheel count for this sample.
+
+    // Teaching note: per the CSC spec, "last event time" is the time of the
+    // most recent revolution event, not the timestamp of the packet itself.
+    if (nextCrankRevolutions !== this.crank.revolutions) {
+      this.kinematics.lastCrankEventTimestamp = now;
+    }
+    if (nextWheelRevolutions !== this.wheel.revolutions) {
+      this.kinematics.lastWheelEventTimestamp = now;
+    }
+
+    this.crank = { // Build the BLE-friendly crank snapshot (16-bit revolutions + last event timestamp in seconds).
+      timestamp: this.kinematics.lastCrankEventTimestamp,
+      revolutions: nextCrankRevolutions,
     };
 
-    this.wheel = { // Build the BLE-friendly wheel snapshot (32-bit revolutions + timestamp in seconds).
-      timestamp: now,
-      revolutions: Math.floor(this.kinematics.wheelRevolutions) >>> 0,
+    this.wheel = { // Build the BLE-friendly wheel snapshot (32-bit revolutions + last event timestamp in seconds).
+      timestamp: this.kinematics.lastWheelEventTimestamp,
+      revolutions: nextWheelRevolutions,
     };
   }
 
@@ -1137,6 +1165,7 @@ export class App {
         this.logger.error('failed to open ANT+ stick');
         return;
       }
+      this.logger.log('[gym-app] ANT+ stick detected; BLE adapter selection does not affect ANT+ USB transport');
       this.antStickClosed = false;
       const hasEventEmitter = typeof this.antStick.on === 'function';
       if (!hasEventEmitter || opened === true) {
@@ -1145,6 +1174,28 @@ export class App {
     } catch (err) {
       this.logger.error('failed to open ANT+ stick', err);
     }
+  }
+
+  getAntStatusForLogs() { // Best-effort ANT status probe used for startup diagnostics.
+    if (!this.antEnabled) {
+      return 'disabled';
+    }
+    if (!this.antStick) {
+      return 'enabled-no-stick';
+    }
+    try {
+      return this.antStick.is_present() ? 'enabled-stick-present' : 'enabled-stick-missing';
+    } catch (_error) {
+      return 'enabled-probe-error';
+    }
+  }
+
+  logRadioMap() { // Single-line adapter assignment summary to simplify support requests.
+    const bike = this.opts.bikeAdapter || 'unknown';
+    const advertise = this.serverAdapters?.length ? this.serverAdapters.join(',') : (this.opts.serverAdapter || 'unknown');
+    const hr = this.hrClient ? (this.heartRateAdapter || bike) : 'disabled';
+    const ant = this.getAntStatusForLogs();
+    this.logger.log(`[gym-app] radio map: bike-scan=${bike} ble-advertise=${advertise} hr-scan=${hr} ant=${ant}`);
   }
 
   onAntStickStartup() {
@@ -1244,9 +1295,19 @@ function resolveServerAdapters(opts, multiRoleInfo) {
     return dedupeAdapters(primary);
   }
 
-  const adapters = [...primary];
-  detected.forEach((adapter) => {
-    const normalized = normalizeAdapterName(adapter) || adapter;
+  const normalizedDetected = detected
+    .map(adapter => normalizeAdapterName(adapter) || adapter)
+    .filter(Boolean);
+  const preferredPrimary = normalizedDetected.find(adapter => adapter !== normalizedBike) || normalizedDetected[0];
+  const adapters = primary.length
+    ? [...primary]
+    : (preferredPrimary ? [preferredPrimary] : []);
+  // Teaching note: when defaults leave serverAdapter == bikeAdapter (hci0),
+  // prefer a detected non-bike adapter first so dual-radio setups split scan+advertise.
+  if (adapters.length && adapters[0] === normalizedBike && preferredPrimary && preferredPrimary !== normalizedBike) {
+    adapters.unshift(preferredPrimary);
+  }
+  normalizedDetected.forEach((normalized) => {
     if (normalized && normalized !== normalizedBike) {
       adapters.push(normalized);
     }
