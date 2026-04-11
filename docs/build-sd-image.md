@@ -53,3 +53,20 @@ You can copy the `.img.xz` (or the raw `.img` if you prefer) onto your Windows f
 cp deploy/pi-sdcard/pi-gen/deploy/Gymnasticon-modern-*.img.xz /mnt/c/Users/James/Downloads/
 ```
 You can then clone this to an an SD card to use in your Rasberry Pi.
+
+## Publish a real GitHub Release asset (not source-code zip)
+
+GitHub automatically shows **Source code (zip/tar.gz)** for every tag; those are not bootable Pi images.  
+To publish an actual flashable artifact, upload the generated `.img.xz` to the release:
+
+```bash
+cd ~/gymnasticonV2
+# Requires GitHub CLI auth (`gh auth login`)
+scripts/create-release-from-image.sh v1.5.2 bookworm
+```
+
+That command creates (or updates) the `v1.5.2` release and uploads:
+- `Gymnasticon-modern-*.img.xz`
+- `Gymnasticon-modern-*.img.xz.sha256`
+
+Use Raspberry Pi Imager or Balena Etcher to flash the `.img.xz` directly to SD/SSD.

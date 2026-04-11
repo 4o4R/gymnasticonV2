@@ -85,6 +85,31 @@ test('App defaults use the GymnasticonV2 BLE advertisement name', (t) => {
   t.end();
 });
 
+test('App.integrateKinematics() keeps CSC event timestamps stable until revolutions change', (t) => {
+  const app = createTestApp();
+  try {
+    app.integrateKinematics(0, 0, 100);
+    t.equal(app.crank.revolutions, 0, 'starts with zero crank revolutions');
+    t.equal(app.wheel.revolutions, 0, 'starts with zero wheel revolutions');
+    t.equal(app.crank.timestamp, 0, 'crank event timestamp stays at zero before first revolution');
+    t.equal(app.wheel.timestamp, 0, 'wheel event timestamp stays at zero before first revolution');
+
+    app.integrateKinematics(0, 0, 110);
+    t.equal(app.crank.timestamp, 0, 'crank timestamp does not advance when cadence is zero');
+    t.equal(app.wheel.timestamp, 0, 'wheel timestamp does not advance when speed is zero');
+
+    app.integrateKinematics(120, 8, 111);
+    t.ok(app.crank.revolutions > 0, 'crank revolutions advance when cadence is positive');
+    t.ok(app.wheel.revolutions > 0, 'wheel revolutions advance when speed is positive');
+    t.equal(app.crank.timestamp, 111, 'crank timestamp moves to the sample time when a crank revolution occurs');
+    t.equal(app.wheel.timestamp, 111, 'wheel timestamp moves to the sample time when a wheel revolution occurs');
+  } finally {
+    destroyTestApp(app);
+  }
+
+  t.end();
+});
+
 test('App.run() retries cold-start bike discovery until a bike appears, then starts advertising', async (t) => {
   const logs = [];
   const sleepCalls = [];
@@ -152,4 +177,127 @@ test('App.run() retries cold-start bike discovery until a bike appears, then sta
   } finally {
     destroyTestApp(app);
   }
+});
+
+test('App.ensureBluetoothPoweredOn() reinitializes when adapter is up but probe scan fails', async (t) => {
+  const app = createTestApp();
+  let setBikeAdapterCalls = 0;
+  let reinitCalls = 0;
+  let waitCalls = 0;
+  try {
+    app.noble.state = 'unknown';
+    app.attachNobleDiagnostics = () => {};
+    app.isAdapterUp = () => true;
+    app.probeNobleScan = async () => false;
+    app.waitForNobleStateChange = async () => {
+      waitCalls += 1;
+      return 'unknown';
+    };
+    app.getFallbackAdapters = () => ['hci1'];
+    app.setBikeAdapter = () => {
+      setBikeAdapterCalls += 1;
+      return true;
+    };
+    app.reinitializeNoble = async () => {
+      reinitCalls += 1;
+      app.noble.state = 'poweredOn';
+    };
+
+    await app.ensureBluetoothPoweredOn();
+
+    t.equal(waitCalls, 0, 'does not wait for stateChange when scan probe already proved adapter is unusable');
+    t.equal(setBikeAdapterCalls, 1, 'tries a fallback adapter when available');
+    t.equal(reinitCalls, 1, 'reinitializes noble instead of continuing in degraded mode');
+  } finally {
+    destroyTestApp(app);
+  }
+});
+
+test('App.ensureBluetoothPoweredOn() returns immediately when adapter-up probe succeeds', async (t) => {
+  const app = createTestApp();
+  let reinitCalls = 0;
+  try {
+    app.noble.state = 'unknown';
+    app.attachNobleDiagnostics = () => {};
+    app.isAdapterUp = () => true;
+    app.probeNobleScan = async () => true;
+    app.reinitializeNoble = async () => {
+      reinitCalls += 1;
+    };
+
+    await app.ensureBluetoothPoweredOn();
+    t.equal(reinitCalls, 0, 'skips reinitialization when scan probe proves noble can scan');
+  } finally {
+    destroyTestApp(app);
+  }
+});
+
+test('App.startAnt() treats ANT+ as USB transport independent from BLE adapter assignment', (t) => {
+  const app = createTestApp();
+  const logs = [];
+  let started = 0;
+  try {
+    app.antEnabled = true;
+    app.logger = {
+      log: (...args) => logs.push(args.join(' ')),
+      warn: () => {},
+      error: () => {},
+    };
+    app.antStick = {
+      is_present: () => true,
+      open: () => true,
+      on() {},
+      close() {},
+    };
+    app.antServer = {
+      isRunning: false,
+      start: () => {
+        started += 1;
+      },
+      stop() {},
+    };
+
+    app.setBikeAdapter('hci1', 'test-fallback');
+    app.startAnt();
+
+    t.equal(started, 1, 'ANT+ server starts even after bike BLE adapter is reassigned');
+    t.ok(
+      logs.some(line => line.includes('BLE adapter selection does not affect ANT+ USB transport')),
+      'logs clarify that ANT+ uses separate USB transport'
+    );
+  } finally {
+    destroyTestApp(app);
+  }
+
+  t.end();
+});
+
+test('App.logRadioMap() reports bike/advertise/hr/ant assignments in one line', (t) => {
+  const app = createTestApp();
+  const logs = [];
+  try {
+    app.logger = {
+      log: (...args) => logs.push(args.join(' ')),
+      warn() {},
+      error() {},
+    };
+    app.opts.bikeAdapter = 'hci0';
+    app.serverAdapters = ['hci1'];
+    app.hrClient = null;
+    app.antEnabled = true;
+    app.antStick = { is_present: () => true };
+
+    app.logRadioMap();
+
+    const line = logs.find(entry => entry.includes('[gym-app] radio map:'));
+    t.ok(line, 'radio map log line emitted');
+    t.ok(line.includes('bike-scan=hci0'), 'bike adapter included');
+    t.ok(line.includes('ble-advertise=hci1'), 'advertising adapter included');
+    t.ok(line.includes('hr-scan=disabled'), 'hr role included');
+    t.ok(line.includes('ant=enabled-stick-present'), 'ant role included');
+  } finally {
+    destroyTestApp(app);
+  }
+
+  t.end();
 });
