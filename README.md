@@ -61,7 +61,7 @@ journalctl -u gymnasticon -f
 
 ### Option 2 - Install onto Raspberry Pi OS using the script
 
-Use this when you already have Raspberry Pi OS on the device, or when you want Raspberry Pi OS Bookworm support for Pi 5. **This path is recommended** because it pins Node 14.21.3, installs a modern node-gyp, Python 3.11, build-essential, BLE/USB libs, and wires up systemd. Manual installs on Bookworm with Python 3.12 often fail with `ValueError: invalid mode: 'rU'` unless you upgrade node-gyp—this script avoids that.
+Use this when you already have Raspberry Pi OS on the device, or when you want Raspberry Pi OS Bookworm support for Pi 5. **This path is recommended** because it pins Node 14.21.3, installs a modern node-gyp, the distro Python 3 package, build-essential, BLE/USB libs, and wires up systemd. Manual installs on Bookworm with Python 3.12 often fail with `ValueError: invalid mode: 'rU'` unless you upgrade node-gyp—this script avoids that.
 
 **Prerequisites**
 - Raspberry Pi OS Legacy (Buster) for Zero/Zero W, Raspberry Pi OS (Bullseye/Bookworm) for Zero 2 W/3/4/5.
@@ -118,7 +118,7 @@ cd /opt/gymnasticon
 # so prefer environment variables over persistent npm config.
 NODE_GYP_BIN="$(npm root -g)/node-gyp/bin/node-gyp.js"
 export npm_config_node_gyp="$NODE_GYP_BIN"
-export npm_config_python=/usr/bin/python3.11
+export npm_config_python=/usr/bin/python3
 
 # ARMv6 boards need this before npm install
 export CXXFLAGS=-std=gnu++14
