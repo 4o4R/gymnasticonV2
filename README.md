@@ -73,7 +73,7 @@ Use this when you already have Raspberry Pi OS on the device, or when you want R
    ```bash
    curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/install.sh | bash
    ```
-   This script removes any previous install, installs system packages, pulls Node.js 14.21.3 (ARMv6 build on Pi Zero family), installs node-gyp@9 and Python 3.11, clones Gymnasticon into `/opt/gymnasticon`, runs `npm install --omit=dev`, and enables the `gymnasticon` systemd service.
+   This script removes any previous install, installs system packages, pulls Node.js 14.21.3 (ARMv6 build on Pi Zero family), installs node-gyp@9 and the distro Python 3 package, clones Gymnasticon into `/opt/gymnasticon`, runs `npm install --omit=dev`, and enables the `gymnasticon` systemd service. It does not require `python3-pip`.
    It automatically detects whether you are on Raspberry Pi OS Legacy (Buster) or newer releases (Bullseye/Bookworm), rewrites apt mirrors when necessary, and installs optional packages only when they exist—no codename knowledge required.
 3. Reinstalling remotely? Use nohup to watch progress later:
    ```bash

@@ -12,7 +12,7 @@ WorkingDirectory=/opt/gymnasticon
 # Mirror runtime logs to the console so HDMI output reflects what Gymnasticon emits during boot.
 StandardOutput=journal+console
 StandardError=journal+console
-ExecStart=/usr/bin/node /opt/gymnasticon/src/app/cli.js --config /etc/gymnasticon.json
+ExecStart=/usr/bin/env node /opt/gymnasticon/src/app/cli.js --config /etc/gymnasticon.json
 
 [Install]
 WantedBy=multi-user.target
