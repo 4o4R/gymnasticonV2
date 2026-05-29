@@ -1,8 +1,10 @@
 import {EventEmitter} from 'events';
 
 import test from '../support/tape.js';
-import {App} from '../../app/app.js';
+import {App, resolveServerAdapters} from '../../app/app.js';
+import {options as cliOptions} from '../../app/cli-options.js';
 import {DEFAULT_NAME as DEFAULT_SERVER_NAME} from '../../servers/ble/index.js';
+import {chooseAdapterRoles} from '../../util/adapter-detect.js';
 
 function createTestApp() {
   const noble = new EventEmitter();
@@ -295,6 +297,76 @@ test('App.logRadioMap() reports bike/advertise/hr/ant assignments in one line', 
     t.ok(line.includes('ble-advertise=hci1'), 'advertising adapter included');
     t.ok(line.includes('hr-scan=disabled'), 'hr role included');
     t.ok(line.includes('ant=enabled-stick-present'), 'ant role included');
+  } finally {
+    destroyTestApp(app);
+  }
+
+  t.end();
+});
+
+test('adapter role detection prefers onboard/non-USB for bike and USB for BLE server', (t) => {
+  const roles = chooseAdapterRoles([
+    { name: 'hci0', type: 'unknown' },
+    { name: 'hci1', type: 'usb' },
+  ]);
+
+  t.equal(roles.bikeAdapter, 'hci0', 'unknown non-USB adapter is treated as the onboard bike radio');
+  t.equal(roles.serverAdapter, 'hci1', 'USB adapter is selected for BLE advertising');
+  t.equal(roles.multiAdapter, true, 'two HCIs enable multi-adapter mode');
+  t.deepEqual(roles.adapters, ['hci0', 'hci1'], 'detected adapter names are preserved');
+  t.end();
+});
+
+test('CLI adapter options stay unset so hardware detection can split dual radios', (t) => {
+  t.equal(cliOptions['bike-adapter'].default, undefined, 'bike adapter has no yargs default');
+  t.equal(cliOptions['server-adapter'].default, undefined, 'server adapter has no yargs default');
+  t.end();
+});
+
+test('resolveServerAdapters keeps Pi Zero bike radio out of advertising by default', (t) => {
+  const adapters = resolveServerAdapters({
+    bikeAdapter: 'hci0',
+    serverAdapter: 'hci0',
+    detectedAdapters: ['hci0', 'hci1'],
+  }, { capable: false });
+
+  t.deepEqual(adapters, ['hci1'], 'uses only the non-bike adapter when single-radio multi-role is not trusted');
+  t.end();
+});
+
+test('resolveServerAdapters mirrors to bike radio only on multi-role-capable boards', (t) => {
+  const adapters = resolveServerAdapters({
+    bikeAdapter: 'hci0',
+    serverAdapter: 'hci0',
+    detectedAdapters: ['hci0', 'hci1'],
+  }, { capable: true });
+
+  t.deepEqual(adapters, ['hci1', 'hci0'], 'adds bike adapter mirror only when hardware is whitelisted');
+  t.end();
+});
+
+test('App constructor preserves detected USB server adapter instead of restoring hci0', (t) => {
+  const noble = new EventEmitter();
+  noble.state = 'poweredOn';
+  const healthMonitor = {
+    on() {},
+    stop() {},
+    recordMetric() {},
+  };
+
+  const app = new App({
+    noble,
+    antEnabled: false,
+    healthMonitor,
+    bikeAdapter: 'hci0',
+    serverAdapter: 'hci0',
+    detectedAdapters: ['hci0', 'hci1'],
+  });
+
+  try {
+    t.deepEqual(app.serverAdapters, ['hci1'], 'BLE advertising stays on the USB adapter');
+    t.equal(app.opts.serverAdapter, 'hci1', 'primary server adapter follows the resolved list');
+    t.notEqual(process.env.NOBLE_MULTI_ROLE, '1', 'multi-role is not enabled on the Pi Zero-style split');
   } finally {
     destroyTestApp(app);
   }

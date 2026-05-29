@@ -6,6 +6,7 @@
 - Hardened noble MTU handling to avoid crashes on rapid disconnect/reconnect.
 - Added BLE multi-output mirroring across adapters with new `--ble-multi-output` / `--server-adapters` controls.
 - Made hcitool fallback respect the configured adapter and emit clearer setup errors.
+- Fixed automatic BLE role assignment on Pi Zero-class dual-radio installs so the onboard adapter scans for the bike while USB BLE dongles advertise to apps; single-adapter installs still fall back to reduced-feature mode.
 
 ## 1.4.0
 

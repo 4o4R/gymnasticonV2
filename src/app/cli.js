@@ -85,11 +85,20 @@ const dedupeAdapters = (list) => {
     return result;
 };
 
-const buildServerAdapters = ({ explicit, serverAdapter, bikeAdapter, detectedAdapters, bleMultiOutput, allowBikeMirror }) => {
+const buildServerAdapters = ({
+    explicit,
+    serverAdapter,
+    bikeAdapter,
+    detectedAdapters,
+    bleMultiOutput,
+    allowBikeMirror,
+    serverAdapterExplicit = false,
+}) => {
     const normalizedServer = normalizeAdapterName(serverAdapter);
     const normalizedBike = normalizeAdapterName(bikeAdapter);
     const normalizedDetected = detectedAdapters.map(adapter => normalizeAdapterName(adapter)).filter(Boolean);
     const hasDetected = normalizedDetected.length > 0;
+    const nonBikeDetected = normalizedDetected.filter(adapter => adapter && adapter !== normalizedBike);
     const filterDetected = (list) => hasDetected
         ? list.filter(adapter => normalizedDetected.includes(adapter))
         : list;
@@ -103,7 +112,16 @@ const buildServerAdapters = ({ explicit, serverAdapter, bikeAdapter, detectedAda
     }
 
     const adapters = [];
-    if (normalizedServer) {
+    const serverUsesBike = Boolean(normalizedServer && normalizedBike && normalizedServer === normalizedBike);
+    const preferDetectedServer = Boolean(
+        serverUsesBike &&
+        nonBikeDetected.length &&
+        !serverAdapterExplicit &&
+        bleMultiOutput !== false
+    );
+    if (preferDetectedServer) {
+        adapters.push(nonBikeDetected[0]);
+    } else if (normalizedServer) {
         adapters.push(normalizedServer);
     }
 
@@ -112,11 +130,7 @@ const buildServerAdapters = ({ explicit, serverAdapter, bikeAdapter, detectedAda
     }
 
     if (hasDetected) {
-        normalizedDetected.forEach((adapter) => {
-            if (adapter && adapter !== normalizedBike) {
-                adapters.push(adapter);
-            }
-        });
+        nonBikeDetected.forEach(adapter => adapters.push(adapter));
     }
 
     if (allowBikeMirror && normalizedBike) {
@@ -243,6 +257,7 @@ const main = async () => {
     if (!providedOptions.has('bleMultiOutput') && configOverrides.bleMultiOutput !== undefined) {
         argv.bleMultiOutput = configOverrides.bleMultiOutput;
     }
+    const serverAdapterExplicit = providedOptions.has('serverAdapter') || Boolean(configOverrides.serverAdapter);
 
     const discovery = detectAdapters(); // Gather available adapters and ANT+ presence for sensible defaults.
     if (!argv.bikeAdapter) { // If the user did not specify a bike adapter, fall back to the detected value.
@@ -269,11 +284,13 @@ const main = async () => {
         detectedAdapters: discovery.adapters || [],
         bleMultiOutput: argv.bleMultiOutput,
         allowBikeMirror: multiRoleInfo.capable,
+        serverAdapterExplicit,
     });
     if (serverAdapters.length) {
         argv.serverAdapters = serverAdapters;
         argv.serverAdapter = serverAdapters[0];
     }
+    argv.serverAdapterExplicit = serverAdapterExplicit;
 
     const antFlag = typeof argv.antPlus === 'boolean' ? argv.antPlus : undefined; // Track whether the caller explicitly passed --ant-plus / --no-ant-plus.
     const antAuto = argv.antAuto === undefined ? true : argv.antAuto; // Treat auto mode as enabled unless the config/CLI disabled it.

@@ -17,20 +17,34 @@ function discoverAdapters() {
     .map((name) => {
       const node = path.join(BLUETOOTH_SYSFS, name);
       let modalias = '';
+      let devicePath = '';
       try {
         modalias = fs.readFileSync(path.join(node, 'device', 'modalias'), 'utf8').trim();
       } catch (error) {
         // ignore missing modalias
       }
+      try {
+        devicePath = fs.realpathSync(path.join(node, 'device'));
+      } catch (error) {
+        // ignore missing device symlink
+      }
       let type = 'unknown';
-      if (modalias.startsWith('usb:')) {
+      const lowerModalias = modalias.toLowerCase();
+      const lowerDevicePath = devicePath.toLowerCase();
+      if (lowerModalias.startsWith('usb:') || lowerDevicePath.includes('/usb')) {
         type = 'usb';
-      } else if (modalias.startsWith('platform:') || modalias.startsWith('brcm:') || modalias.startsWith('sdio:')) {
+      } else if (
+        lowerModalias.startsWith('platform:') ||
+        lowerModalias.startsWith('brcm:') ||
+        lowerModalias.startsWith('sdio:') ||
+        lowerModalias.startsWith('of:') ||
+        lowerDevicePath
+      ) {
         type = 'builtin';
       }
-      return { name, type, modalias };
+      return { name, type, modalias, devicePath };
     })
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 }
 
 function bringUpAdapters(adapters) {
@@ -54,25 +68,7 @@ export function detectAdapters() {
 
   const adapters = discoverAdapters();
   bringUpAdapters(adapters);
-  summary.adapters = adapters.map(a => a.name);
-
-  const builtin = adapters.filter((adapter) => adapter.type === 'builtin');
-  const usb = adapters.filter((adapter) => adapter.type === 'usb');
-  // Teaching note: use the *actual* adapter count to decide dual-mode behavior
-  // so every board listed in the README (Pi 3/4/400/CM4/Zero 2/5, etc.) can
-  // benefit from a second radio when it is physically present.
-  const allowDual = adapters.length >= 2;
-
-  if (builtin.length >= 1) {
-    summary.bikeAdapter = builtin[0].name;
-    summary.serverAdapter = allowDual && (usb[0]?.name || builtin[1]?.name) ? (usb[0]?.name || builtin[1]?.name) : builtin[0].name;
-  } else if (usb.length >= 1) {
-    summary.bikeAdapter = usb[0].name;
-    summary.serverAdapter = allowDual && usb[1]?.name ? usb[1].name : usb[0].name;
-  }
-  if (allowDual) {
-    summary.multiAdapter = true;
-  }
+  Object.assign(summary, chooseAdapterRoles(adapters));
 
   try {
     const usbList = execSync('lsusb', { stdio: ['ignore', 'pipe', 'ignore'] })
@@ -82,6 +78,36 @@ export function detectAdapters() {
   } catch (_error) {
     // leave antPresent false if lsusb fails.
   }
+
+  return summary;
+}
+
+export function chooseAdapterRoles(adapters = []) {
+  const summary = {
+    bikeAdapter: 'hci0',
+    serverAdapter: 'hci0',
+    multiAdapter: false,
+    adapters: adapters.map(a => a.name).filter(Boolean),
+  };
+
+  const candidates = adapters.filter((adapter) => adapter?.name);
+  const nonUsb = candidates.filter((adapter) => adapter.type !== 'usb');
+  const usb = candidates.filter((adapter) => adapter.type === 'usb');
+  const allowDual = candidates.length >= 2;
+
+  // Pi onboard UART radios do not always expose a useful modalias. Treat any
+  // non-USB controller as the preferred bike scanner, then put USB radios on
+  // BLE advertising where possible.
+  if (nonUsb.length >= 1) {
+    summary.bikeAdapter = nonUsb[0].name;
+    summary.serverAdapter = allowDual && (usb[0]?.name || nonUsb[1]?.name)
+      ? (usb[0]?.name || nonUsb[1]?.name)
+      : nonUsb[0].name;
+  } else if (usb.length >= 1) {
+    summary.bikeAdapter = usb[0].name;
+    summary.serverAdapter = allowDual && usb[1]?.name ? usb[1].name : usb[0].name;
+  }
+  summary.multiAdapter = allowDual;
 
   return summary;
 }

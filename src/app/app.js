@@ -205,8 +205,8 @@ export class App {
     // Modern Bluetooth configuration
     // Teaching note: noble/bleno want a numeric HCI index in the env vars,
     // so convert "hci0" style names before setting them.
-    this.setBikeAdapter(opts.bikeAdapter, 'startup');
-    this.setServerAdapter(opts.serverAdapter, 'startup');
+    this.setBikeAdapter(this.opts.bikeAdapter, 'startup');
+    this.setServerAdapter(this.opts.serverAdapter, 'startup');
     process.env['BLENO_MAX_CONNECTIONS'] = '3';
 
     // Teaching note: multi-role is only required when one adapter must both
@@ -1271,7 +1271,7 @@ function dedupeAdapters(list) {
   return result;
 }
 
-function resolveServerAdapters(opts, multiRoleInfo) {
+export function resolveServerAdapters(opts, multiRoleInfo) {
   const explicit = normalizeAdapterList(opts.serverAdapters);
   if (explicit.length) {
     return dedupeAdapters(explicit);
@@ -1279,39 +1279,48 @@ function resolveServerAdapters(opts, multiRoleInfo) {
 
   const normalizedServer = normalizeAdapterName(opts.serverAdapter) || opts.serverAdapter;
   const normalizedBike = normalizeAdapterName(opts.bikeAdapter) || opts.bikeAdapter;
-  const primary = normalizedServer ? [normalizedServer] : [];
+  const primary = [];
   if (opts.bleMultiOutput === false) {
-    return dedupeAdapters(primary);
+    return dedupeAdapters(normalizedServer ? [normalizedServer] : []);
   }
 
   let detected = [];
-  try {
-    const detection = detectAdapters();
-    detected = detection.adapters || [];
-  } catch (_error) {
-    detected = [];
+  if (Array.isArray(opts.detectedAdapters)) {
+    detected = opts.detectedAdapters;
+  } else {
+    try {
+      const detection = detectAdapters();
+      detected = detection.adapters || [];
+    } catch (_error) {
+      detected = [];
+    }
   }
   if (!detected.length) {
-    return dedupeAdapters(primary);
+    return dedupeAdapters(normalizedServer ? [normalizedServer] : []);
   }
 
   const normalizedDetected = detected
     .map(adapter => normalizeAdapterName(adapter) || adapter)
     .filter(Boolean);
-  const preferredPrimary = normalizedDetected.find(adapter => adapter !== normalizedBike) || normalizedDetected[0];
-  const adapters = primary.length
-    ? [...primary]
-    : (preferredPrimary ? [preferredPrimary] : []);
-  // Teaching note: when defaults leave serverAdapter == bikeAdapter (hci0),
-  // prefer a detected non-bike adapter first so dual-radio setups split scan+advertise.
-  if (adapters.length && adapters[0] === normalizedBike && preferredPrimary && preferredPrimary !== normalizedBike) {
-    adapters.unshift(preferredPrimary);
+  const nonBikeDetected = normalizedDetected.filter(adapter => adapter && adapter !== normalizedBike);
+  const serverUsesBike = Boolean(normalizedServer && normalizedBike && normalizedServer === normalizedBike);
+  const preferDetectedServer = Boolean(
+    serverUsesBike &&
+    nonBikeDetected.length &&
+    !opts.serverAdapterExplicit
+  );
+  if (preferDetectedServer) {
+    primary.push(nonBikeDetected[0]);
+  } else if (normalizedServer) {
+    primary.push(normalizedServer);
+  } else if (nonBikeDetected[0]) {
+    primary.push(nonBikeDetected[0]);
+  } else if (normalizedBike) {
+    primary.push(normalizedBike);
   }
-  normalizedDetected.forEach((normalized) => {
-    if (normalized && normalized !== normalizedBike) {
-      adapters.push(normalized);
-    }
-  });
+
+  const adapters = [...primary];
+  nonBikeDetected.forEach(normalized => adapters.push(normalized));
   if (multiRoleInfo?.capable && normalizedBike) {
     adapters.push(normalizedBike);
   }

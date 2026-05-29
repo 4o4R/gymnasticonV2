@@ -35,8 +35,7 @@ export const options = {
     default: defaults.bikeReceiveTimeout,
   },
   'bike-adapter': {
-    describe: '<name> for bike connection',
-    default: defaults.bikeAdapter,
+    describe: '<name> for bike connection (auto-detected when omitted)',
   },
 
   'flywheel-address': {
@@ -75,8 +74,7 @@ export const options = {
   },
 
   'server-adapter': {
-    describe: '<name> for app connection',
-    default: defaults.serverAdapter,
+    describe: '<name> for app connection (auto-detected when omitted)',
   },
   'server-adapters': {
     describe: '<list> optional comma-separated adapters for BLE output mirroring',
