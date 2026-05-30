@@ -1,166 +1,171 @@
-# Troubleshooting: Native build (gyp) and VSCode debugging issues
+# Troubleshooting
 
-This page collects concrete steps and explanations for two common problems you're seeing:
+This guide covers the issues most likely to affect installation, Bluetooth pairing, and runtime operation.
 
-1. The Python/gyp error ("invalid mode: 'rU' while trying to load binding.gyp") when npm/node-gyp tries to build native modules.
-2. VSCode launching the wrong Node binary (debug terminal using the Node in Program Files instead of the nvm-managed Node 14).
+## Check the Service First
 
----
+On Raspberry Pi installs, Gymnasticon runs as a systemd service.
 
-## 1) The `rU` / gyp / node-gyp error (why it happens)
-
-Symptoms seen in your log:
-
-- A Python traceback ending with `ValueError: invalid mode: 'rU' while trying to load binding.gyp`
-- `gyp ERR! configure error` and `node-gyp` failing during `npm install`
-
-Why this happens:
-
-- The gyp codebase historically used the file open mode `"rU"` (universal newline mode). That was supported in Python 2 but removed/unsupported in some Python 3 versions. If `node-gyp` is executed with Python 3 that doesn't accept `rU`, the script fails while trying to read binding.gyp.
-- Many old native build toolchains (and some older `node-gyp` versions) expect Python 2.7.
-- Some npm packages bundle/expect specific `node-gyp` versions; npm itself may invoke its bundled `node-gyp`.
-
-How to fix (Windows, step-by-step):
-
-1. Install Python 2.7 (if not already installed). The setup script attempts this; if it failed, install manually:
-
-```powershell
-# Download and run the MSI (run as Admin)
-$msi = "$env:TEMP\python-2.7.18.amd64.msi"
-Invoke-WebRequest -Uri "https://www.python.org/ftp/python/2.7.18/python-2.7.18.amd64.msi" -OutFile $msi
-Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart ADDLOCAL=ALL" -Wait
+```bash
+sudo systemctl status gymnasticon
+journalctl -u gymnasticon -f
 ```
 
-2. Point npm/node-gyp to the Python 2.7 binary (temporary for the session):
+Useful signals in the log:
 
-```powershell
-# For the current PowerShell session
-$env:npm_config_python = 'C:\Python27\python.exe'
+- `radio map`: shows which adapter is used for bike scanning, BLE advertising, heart-rate scanning, and ANT+.
+- `bike disconnected`: confirms the bike connection dropped and Gymnasticon is restarting discovery.
+- `ANT+ mode`: shows whether ANT+ output is enabled and whether a stick is present.
+- `Heart-rate rebroadcast disabled`: usually means the system has only one Bluetooth adapter or heart-rate rebroadcast was disabled in config.
 
-# Persist across sessions
-npm config set python "C:\Python27\python.exe"
+## Installation Fails During Native Module Build
+
+Native modules are the most common source of install failures. The supported runtime is Node.js 14.21.3.
+
+Confirm the active Node version:
+
+```bash
+node --version
+npm --version
 ```
 
-3. Ensure a compatible node-gyp is available. For Node 14 it's safest to use node-gyp v6.x or v7.x. Install it globally:
+If you are on Raspberry Pi OS, prefer the installer because it pins Node 14 and configures the native build toolchain:
 
-```powershell
-npm install -g node-gyp@6.1.0
+```bash
+curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/install.sh | bash
 ```
 
-4. Tell npm to use the global node-gyp (optional, but avoids some npm-bundled node-gyp mismatches):
+For manual Linux installs, set the build environment before running `npm install`:
 
-```powershell
-# Replace the path below if your global node-gyp is installed elsewhere
-$globalNodeGyp = (Get-Command node-gyp).Source
-npm config set node_gyp $globalNodeGyp
-# Or set the env var for the session:
-$env:npm_config_node_gyp = $globalNodeGyp
+```bash
+sudo apt-get install -y bluetooth bluez libbluetooth-dev libudev-dev libusb-1.0-0-dev build-essential python3 pkg-config git curl ca-certificates
+
+NODE_GYP_BIN="$(npm root -g)/node-gyp/bin/node-gyp.js"
+export npm_config_node_gyp="$NODE_GYP_BIN"
+export npm_config_python=/usr/bin/python3
+export CXXFLAGS=-std=gnu++14
+
+npm install
 ```
 
-5. Clean and reinstall dependencies with verbose logs so you can inspect failures:
+If you see `ValueError: invalid mode: 'rU'`, an old `node-gyp`/Python combination is being used. Use the installer on Raspberry Pi OS, or install a modern `node-gyp` and point `npm_config_node_gyp` at it.
 
-```powershell
-Remove-Item -Recurse -Force node_modules -ErrorAction SilentlyContinue
-Remove-Item package-lock.json -ErrorAction SilentlyContinue
-npm install --verbose 2>&1 | Tee-Object npm-install.log
+## Bluetooth Adapter Is Missing
+
+List adapters:
+
+```bash
+hciconfig -a
+bluetoothctl list
+rfkill list
 ```
 
-6. If you still see `rU` errors, confirm the Python binary used by node-gyp is actually Python 2.7:
+Bring adapters up:
 
-```powershell
-# This prints the Python version node-gyp will use
-& $env:npm_config_python --version
-# If that prints a Python 3.x, update npm config to the correct python path
+```bash
+sudo rfkill unblock bluetooth
+sudo hciconfig hci0 up
+sudo hciconfig hci1 up
 ```
 
-Notes and alternatives:
+If a USB adapter does not appear:
 
-- Upgrading `node-gyp` / `gyp` to versions that work with Python 3 is possible, but it depends on dependent packages and prebuild availability. On Windows, the simplest cross-compatible path is to install Python 2.7 and use a node-gyp v6.x.
-- For Windows, Visual C++ Build Tools are also required. The setup script installs those. If the automatic installer fails, manual installation from Microsoft is a fallback.
+1. Confirm it is visible over USB:
+   ```bash
+   lsusb
+   ```
+2. Check kernel logs:
+   ```bash
+   sudo dmesg | grep -i -E 'bluetooth|hci|firmware'
+   ```
+3. Try a powered USB hub if the adapter is connected through an OTG cable.
 
----
+## Broadcom USB Bluetooth Firmware
 
-## 2) VSCode launching the wrong Node binary for debugging
+Some USB BLE dongles, including adapters based on Broadcom BCM20702A1, require firmware before Linux creates `hci1`.
 
-Symptoms seen:
+Missing firmware usually appears in `dmesg` as:
 
-- VSCode debug output shows `C:\Program Files\nodejs\node.exe` being used rather than the nvm-managed Node 14 installed under `%APPDATA%\nvm\v14.x.x`.
-
-Cause:
-
-- VSCode debug uses either the system `node` in PATH or a configured `runtimeExecutable`. Because you have multiple Node versions installed (Program Files vs nvm), the Program Files node was being picked up.
-
-Fixes applied and recommended steps:
-
-1. The workspace `.vscode/launch.json` has been updated so the Bot Mode debug configuration uses the nvm-managed Node binary explicitly:
-
-```jsonc
-"runtimeExecutable": "C:/Users/James/AppData/Roaming/nvm/v14.21.3/node.exe"
+```text
+Bluetooth: hci1: BCM: firmware Patch file not found
 ```
 
-If your nvm-windows version or Node 14 patch version differs, change that path accordingly.
+Gymnasticon includes `deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd`. The Raspberry Pi image and installer copy it to `/lib/firmware/brcm/`. If `hci1` is still missing, verify the file exists on the Pi and reboot.
 
-2. If you prefer not to hard-code the absolute path, you can instead ensure the desired node is first in your PATH before launching VSCode. For example in PowerShell:
+## App Cannot Pair With Gymnasticon
+
+1. Confirm the bike is powered on and awake.
+2. Watch the service logs while pairing:
+   ```bash
+   journalctl -u gymnasticon -f
+   ```
+3. Confirm Gymnasticon is advertising as `GymnasticonV2` or the configured `serverName`.
+4. If using a Pi Zero / Zero W, prefer a USB BLE dongle for advertising.
+5. Remove old pairings from the training app and scan again.
+6. Restart the service:
+   ```bash
+   sudo systemctl restart gymnasticon
+   ```
+
+## Heart Rate Is Not Rebroadcast
+
+Gymnasticon listens for standard BLE Heart Rate Service peripherals. Apple Watch does not advertise that profile directly, so it requires an iPhone bridge app that re-advertises watch heart rate over BLE.
+
+Heart-rate rebroadcast is enabled automatically when Gymnasticon has a suitable second adapter. On single-adapter Pi Zero systems it is disabled by default for stability.
+
+Configuration options:
+
+```json
+{
+  "heartRateEnabled": true,
+  "heartRateAdapter": "hci1"
+}
+```
+
+## ANT+ Output Is Missing
+
+ANT+ requires a compatible USB ANT+ stick. It is independent of Bluetooth adapter assignment.
+
+Check that Linux sees the stick:
+
+```bash
+lsusb
+journalctl -u gymnasticon -f
+```
+
+To force ANT+ on:
+
+```json
+{
+  "antEnabled": true
+}
+```
+
+If no stick is present, Gymnasticon continues running in BLE-only mode.
+
+## Windows Development Issues
+
+Windows is useful for source editing, tests, and bot-mode development. Raspberry Pi or Linux remains the recommended runtime environment for Bluetooth work.
+
+If VSCode launches the wrong Node binary, run:
 
 ```powershell
 nvm use 14.21.3
-# then start code from this shell so VSCode inherits the PATH
 code .
 ```
 
-3. Close and reopen VSCode after switching Node versions with `nvm use` so the debug adapter picks up the correct node.
+If native modules fail during Windows install, use the Windows setup guide:
 
-4. The debug config also sets `npm_config_python` for the debug session so native builds and npm calls inside debug will resolve the Python path if set.
+- [Windows development setup](windows-dev-setup.md)
 
----
+## Reporting an Issue
 
-## Quick checklist for you to run now
+Include:
 
-1. In an elevated PowerShell (Administrator) run these commands:
-
-```powershell
-# Ensure node 14 is selected
-nvm use 14.21.3
-
-# Ensure Python 2.7 is set for npm/node-gyp
-npm config set python "C:\Python27\python.exe"
-# (optional) point npm to the global node-gyp if installed
-$globalNodeGyp = (Get-Command node-gyp).Source
-npm config set node_gyp $globalNodeGyp
-
-# Clean and reinstall deps with a log
-Remove-Item -Recurse -Force node_modules -ErrorAction SilentlyContinue
-Remove-Item package-lock.json -ErrorAction SilentlyContinue
-npm install --verbose 2>&1 | Tee-Object npm-install.log
-```
-
-2. Inspect `npm-install.log` for the first failing native module and paste the last ~200 lines here if it still fails.
-
-3. Start VSCode from the same shell where you ran `nvm use 14.21.3` (this helps ensure PATH is consistent):
-
-```powershell
-code .
-```
-
-4. Run the `Debug Gymnasticon (Bot Mode)` launch configuration (F5).
-
----
-
-## USB Bluetooth dongle firmware (Kinivo BTD-400 / BCM20702A1)
-
-Some USB Bluetooth adapters (Kinivo BTD-400, Plugable BT-USB4LE, etc.) use Broadcom's BCM20702A1 radio. Linux requires a small firmware patch file before it creates `hci1`. If the file is missing you will see boot logs similar to:
-
-```
-Bluetooth: hci1: BCM: firmware Patch file not found, tried: brcm/BCM20702A1-0a5c-21e8.hcd
-```
-
-Gymnasticon bundles that patch so even offline installs have it:
-
-- `deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd` is baked into the SD image and copied during the one-line installer (`/lib/firmware/brcm/...` on the Pi).
-- On boot the kernel loads it automatically and the adapter appears as `hci1` when you run `hciconfig -a`.
-
-**If you still do not see `hci1`:**
-
-1. `lsusb` should list the dongle (e.g., `0a5c:21e8 Broadcom Corp.`). If it is missing, the hub/OTG cable is not providing power/data.
-2. `sudo dmesg | grep -i hci1` should no longer show the “Patch file not found” error. If it does, verify the firmware file exists at `/lib/firmware/brcm/`.
-3. After the firmware loads run `sudo hciconfig -a`; you should now see both `hci0` (onboard) and `hci1` (USB). Gymnasticon will automatically dedicate one adapter to heart-rate scanning once both are present.
+- Raspberry Pi model or workstation OS.
+- Install path used: image, installer, or manual install.
+- Node and npm versions.
+- Bluetooth adapters from `hciconfig -a`.
+- ANT+ stick model if applicable.
+- Last 100-200 lines from `journalctl -u gymnasticon`.
+- The relevant `/etc/gymnasticon.json` settings with passwords or personal data removed.

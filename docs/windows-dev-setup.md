@@ -1,82 +1,101 @@
-# Windows Development Setup Guide
+# Windows Development Setup
 
-This guide helps you set up your Windows development environment for Gymnasticon, ensuring compatibility with the Raspberry Pi Zero target platform.
+Windows is supported for source editing, tests, and bot-mode development. Raspberry Pi OS or Linux is still the recommended runtime environment for Bluetooth and ANT+ hardware testing.
 
-## Prerequisites
+## Requirements
 
-1. Windows 10 or 11
-2. PowerShell with Administrator rights
-3. Visual Studio Code
-4. Git for Windows
+- Windows 10 or 11.
+- PowerShell running as Administrator for the setup script.
+- Git for Windows.
+- Visual Studio Code.
+- nvm-windows.
 
-## Setup Instructions
+Gymnasticon targets Node.js 14.21.3 so native dependencies remain compatible with Raspberry Pi Zero / Zero W.
 
-### 1. Open PowerShell as Administrator
-- Right-click on PowerShell
-- Select "Run as Administrator"
+## Automated Setup
 
-### 2. Navigate to Project Directory
+From an Administrator PowerShell:
+
 ```powershell
 cd path\to\gymnasticonV2
-```
-
-### 3. Run Setup Script
-```powershell
 .\scripts\setup-windows-dev.ps1
 ```
 
-This script will:
-- Install nvm-windows (Node Version Manager)
-- Install Node.js 14.21.3 (compatible with RPi Zero)
-- Install required build tools
-- Set up project dependencies
+The script installs:
 
-> **Important:** `npm install` now runs `scripts/check-node-version.cjs` and will fail fast if anything other than Node 14.21.3 is active. Run `nvm use 14.21.3` (the version in `.nvmrc`) before installing dependencies, or export `GYMNASTICON_ALLOW_UNSUPPORTED_NODE=1` only if you truly need to bypass the guard.
+- nvm-windows if it is not already present.
+- Node.js 14.21.3.
+- Python and Visual C++ build tools used by `node-gyp`.
+- Project dependencies.
 
-### 4. Verify Installation
-After setup completes, you should see:
-- Node.js version: v14.21.3
-- npm version: 6.x or 8.x
+After the script finishes, verify:
 
-### 5. Development in VSCode
-
-#### Debugging
-1. Open VSCode
-2. Press F5 to start debugging
-3. Select "Debug Gymnasticon (Bot Mode)"
-
-#### Available Debug Configurations
-- **Bot Mode**: Simulates a bike with fixed power/cadence
-- **Auto-detect**: Searches for real bike hardware
-- **Run Tests**: Executes the test suite
-
-## Common Issues
-
-### Native Module Build Errors
-If you see errors about node-gyp or native modules:
-1. Ensure Visual Studio Build Tools are installed
-2. Run as Administrator:
 ```powershell
-npm install -g node-gyp@8.4.1
-npm install -g windows-build-tools@5.2.2 --vs2015
+node --version
+npm --version
+npm test
 ```
 
-### Node.js Version Mismatch
-If VSCode uses the wrong Node.js version:
-1. Close VSCode completely
-2. In PowerShell:
+Expected Node version:
+
+```text
+v14.21.3
+```
+
+## Manual Node Selection
+
+If Node 14 is already installed through nvm-windows:
+
 ```powershell
 nvm use 14.21.3
+npm install
+npm test
 ```
-3. Reopen VSCode
 
-## Development Tips
+`npm install` runs `scripts/check-node-version.cjs` and fails fast if the active Node version is outside `>=14.21.3 <15`. Set `GYMNASTICON_ALLOW_UNSUPPORTED_NODE=1` only for deliberate compatibility testing.
 
-1. Always use Node.js 14.21.3 for development to maintain compatibility
-2. Test with the bot mode first before trying real hardware
-3. Use WSL for Linux-specific testing
-4. Keep build tools and dependencies up to date
+## VSCode
 
-## WSL Development
+Open VSCode from the same shell after selecting Node 14:
 
-For WSL-based image builds, see [`docs/build-sd-image.md`](build-sd-image.md).
+```powershell
+nvm use 14.21.3
+code .
+```
+
+Available debug configurations include:
+
+- Bot Mode
+- Auto-detect
+- Run Tests
+
+Use Bot Mode first. It simulates fixed power and cadence without requiring bike hardware.
+
+## Native Build Failures
+
+Native modules depend on the active Node version, Python, and Visual C++ build tools. If `npm install` fails:
+
+1. Confirm Node 14.21.3 is active.
+2. Reopen PowerShell as Administrator.
+3. Install or repair Visual Studio Build Tools with the C++ workload.
+4. Re-run the setup script.
+
+Useful checks:
+
+```powershell
+node --version
+npm --version
+npm config get python
+```
+
+For Raspberry Pi or Linux installations, use the main installer instead of reproducing the Windows toolchain:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/4o4R/gymnasticonV2/main/deploy/install.sh | bash
+```
+
+## WSL
+
+Use WSL2 for Raspberry Pi image builds. Keep the repository inside the WSL filesystem, not under `/mnt/c`, because `pi-gen` writes many small files and the Windows filesystem bridge is slow.
+
+- [Build a Raspberry Pi image](build-sd-image.md)

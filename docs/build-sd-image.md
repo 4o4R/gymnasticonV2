@@ -1,55 +1,91 @@
-# Building the Raspberry Pi Image on WSL
+# Build a Raspberry Pi Image
 
-Follow the steps below to create the Gymnasticon Raspberry Pi SD/SSD card image from inside Windows Subsystem for Linux (WSL). The process works on any x86\_64 Windows 10/11 machine with WSL2 and Docker Desktop.
+Use this guide to build Gymnasticon Raspberry Pi images locally with WSL2 or Linux. The build wraps Raspberry Pi `pi-gen`, applies the Gymnasticon image stage, and writes compressed `.img.xz` files suitable for flashing.
 
-## Prerequisites
+## Requirements
 
-- Windows 10/11 with WSL2 enabled.
-- Docker Desktop 4.x (or newer) installed and running.
-  - Enable the **Use the WSL 2 based engine** option.
-  - Under **Settings -> Resources -> WSL Integration**, toggle on your WSL distribution (e.g. Ubuntu).
-- At least 15 GB of free disk space inside your WSL filesystem.
-- This repository cloned inside the WSL filesystem (e.g. `\\wsl$\Ubuntu\home\<user>\gymnasticonV2`). Avoid building from `/mnt/c/...` because pi-gen writes many small files and the NTFS bridge slows down the build.
+- Windows 10/11 with WSL2, or a Linux host.
+- Docker Desktop 4.x or newer on Windows, with WSL integration enabled.
+- At least 15 GB of free space inside the Linux filesystem.
+- The repository cloned inside the Linux filesystem.
 
-## Build the image
+On WSL, prefer a path like:
 
-1. Open a terminal in your WSL distro.
-2. Ensure Docker can talk to the daemon:
-   ```bash
-   docker info
-   ```
-   If this fails, start Docker Desktop in Windows and retry.   Or if you have tried to build before, Docker may have an old container. Try to remove it:
-    ```bash
-   docker ps -a | grep pigen_work   # optional: confirm it exists
-   docker rm -v pigen_work          # drop the stopped container and scratch volumes
-    ```
+```text
+\\wsl$\Ubuntu\home\<user>\gymnasticonV2
+```
 
+Avoid building from `/mnt/c/...`; `pi-gen` writes many small files and the NTFS bridge significantly slows the build.
 
-4. From the repository root, launch the build helper:
-   ```bash
-   cd ~/gymnasticonV2
-   # Build the modern Bookworm image (Zero 2 W / Pi 3 / 4 / 400 / CM)
-   GYM_CONFIG=config.bookworm bash scripts/build-pi-image.sh
+## Prepare Docker
 
-   # Build the legacy Buster image (Zero / Zero W with USB BT dongle)
-   GYM_CONFIG=config.buster bash scripts/build-pi-image.sh
+Confirm Docker is reachable:
 
-   # Or build both back-to-back
-   deploy/pi-sdcard/build-all.sh
-   ```
-   - The wrapper clones Raspberry Pi's `pi-gen` project, applies Gymnasticon's stages, and starts the Docker build.
-   - A full build takes 20-40 minutes on most machines. The script prints progress as each pi-gen stage finishes.
+```bash
+docker info
+```
 
-## Locate the output
+If a previous `pi-gen` build left a stopped container behind, remove it:
 
-After the build completes, the compressed disk image and SHA256 sums live under:
+```bash
+docker ps -a | grep pigen_work
+docker rm -v pigen_work
+```
 
-- Modern Bookworm: `deploy/pi-sdcard/pi-gen/deploy/Gymnasticon-modern-*.img.xz`
-- Legacy Buster: `deploy/pi-sdcard/pi-gen/deploy/Gymnasticon-legacy-*.img.xz`
+## Build
 
-You can copy the `.img.xz` (or the raw `.img` if you prefer) onto your Windows filesystem, for example:
+From the repository root:
+
+```bash
+# Modern Bookworm image for Zero 2 W, Pi 3, Pi 4, Pi 400, and CM boards
+GYM_CONFIG=config.bookworm bash scripts/build-pi-image.sh
+
+# Legacy Buster image for Pi Zero / Zero W with a USB BLE dongle
+GYM_CONFIG=config.buster bash scripts/build-pi-image.sh
+
+# Build both images
+deploy/pi-sdcard/build-all.sh
+```
+
+The build usually takes 20-40 minutes depending on host performance and network speed.
+
+## Output
+
+Completed images and checksums are written under:
+
+```text
+deploy/pi-sdcard/pi-gen/deploy/
+```
+
+Expected image names:
+
+- `Gymnasticon-modern-*.img.xz`
+- `Gymnasticon-legacy-*.img.xz`
+
+Copy an image to your Windows downloads folder if needed:
 
 ```bash
 cp deploy/pi-sdcard/pi-gen/deploy/Gymnasticon-modern-*.img.xz /mnt/c/Users/James/Downloads/
 ```
-You can then clone this to an an SD card to use in your Rasberry Pi.
+
+Flash the `.img.xz` with Raspberry Pi Imager, balenaEtcher, or `dd`.
+
+## First-Boot Customization
+
+Before first boot, mount the boot partition and optionally add:
+
+- `gymnasticon-wifi.env` for Wi-Fi credentials.
+- `gymnasticon.json` for bike-specific Gymnasticon settings.
+
+The image copies these settings into the installed system during boot.
+
+## Release Checklist
+
+Before publishing an image:
+
+1. Verify the SHA256 checksum.
+2. Flash the image to fresh media.
+3. Boot on the target Pi family.
+4. Confirm `sudo systemctl status gymnasticon`.
+5. Pair a training app with `GymnasticonV2`.
+6. Save the service log if anything behaves unexpectedly.
