@@ -5,7 +5,6 @@
  */
 
 import { BluetoothConnectionManager } from './src/util/connection-manager.js';
-import { BleServer } from './src/util/ble-server.js';
 import { MultiBleServer } from './src/servers/ble/multi-server.js';
 
 console.log('🧪 Verifying Bug Fixes\n');

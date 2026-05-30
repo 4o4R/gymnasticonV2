@@ -163,7 +163,7 @@ class SimpleFakeTimers {
       return;
     }
 
-    while (true) {
+    for (;;) {
       this.sortQueue();
       const next = this.queue[0];
       if (!next || next.time > targetTime) break;
@@ -201,7 +201,7 @@ class SimpleFakeTimers {
   runAll() {
     if (!this.active) return;
     this.sortQueue();
-    while (true) {
+    for (;;) {
       const next = this.queue.find(timer => timer.active);
       if (!next) break;
       this.advanceTo(next.time);

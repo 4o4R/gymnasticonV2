@@ -200,7 +200,13 @@ function collectProvidedOptions(rawArgs, optionDefinitions) {
  * @param {Object} rest - All other arguments that will be passed to the app
  * @returns {Object} Clean options object for the application
  */
-const buildAppOptions = ({ _, $0, ...rest }) => rest;
+const buildAppOptions = (args) => {
+    const options = {...args};
+    delete options._;
+    delete options.$0;
+    delete options.config;
+    return options;
+};
 
 /**
  * Main Application Entry Point

@@ -58,7 +58,7 @@ export class BotBikeClient extends EventEmitter {
   /**
    * @private
    */
-  onUdpMessage(msg, rinfo) {
+  onUdpMessage(msg) {
     let j
     try {
       j = JSON.parse(msg);
@@ -78,7 +78,7 @@ export class BotBikeClient extends EventEmitter {
   /**
    * @private
    */
-  onUdpError(err) {
+  onUdpError() {
     this.emit('disconnect', {address: this._address})
   }
 }

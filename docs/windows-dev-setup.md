@@ -1,5 +1,4 @@
-npm config set python "C:\Python27\python.exe"
-npm config set python "C:\Python27\python.exe".\scripts\setup-windows-dev.ps1# Windows Development Setup Guide
+# Windows Development Setup Guide
 
 This guide helps you set up your Windows development environment for Gymnasticon, ensuring compatibility with the Raspberry Pi Zero target platform.
 
@@ -80,4 +79,4 @@ nvm use 14.21.3
 
 ## WSL Development
 
-For WSL development, see the WSL-specific guide in `README-WSL.md`.
+For WSL-based image builds, see [`docs/build-sd-image.md`](build-sd-image.md).

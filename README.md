@@ -235,5 +235,4 @@ Gymnasticon listens for the standard Bluetooth Low Energy Heart Rate Service (UU
 
 - [Troubleshooting guide](docs/troubleshooting.md)
 - [Windows development setup](docs/windows-dev-setup.md)
-- [Learning guide](docs/learning-guide.md)
 - [Build the SD image](docs/build-sd-image.md)

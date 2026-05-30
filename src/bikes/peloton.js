@@ -1,4 +1,4 @@
-import {once, EventEmitter} from 'events';
+import {EventEmitter} from 'events';
 import {Timer} from '../util/timer.js';
 import util from 'util';
 import {loadDependency, toDefaultExport} from '../util/optional-deps.js';

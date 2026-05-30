@@ -4,10 +4,10 @@ import {FlywheelBikeClient, FLYWHEEL_LOCALNAME} from './flywheel.js'; // Flywhee
 import {PelotonBikeClient} from './peloton.js'; // Peloton USB profile.
 import {Ic4BikeClient, matchesIc4OrSchwinn290} from './ic4.js'; // Schwinn IC4 profile.
 import {Ic5BikeClient} from './ic5.js'; // LifeFitness IC5 profile built atop the IC4 implementation.
-import {KeiserBikeClient, KEISER_LOCALNAME, matchesKeiserName} from './keiser.js'; // Keiser broadcast profile.
+import {KeiserBikeClient, matchesKeiserName} from './keiser.js'; // Keiser broadcast profile.
 import {BotBikeClient} from './bot.js'; // Simulation/bot mode profile.
 import {macAddress} from '../util/mac-address.js'; // MAC normalization helper used when targeting specific peripherals.
-import {scan, createNameFilter, createAddressFilter} from '../util/ble-scan.js'; // BLE scanning utilities.
+import {createNameFilter, createAddressFilter} from '../util/ble-scan.js'; // BLE scanning utilities.
 import {Ic8BikeClient} from './ic8.js'; // Schwinn IC8 / Bowflex C6 profile.
 
 const NAME_MATCHERS = { // Heuristics used during autodetect to match advertising names.

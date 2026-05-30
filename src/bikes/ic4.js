@@ -1,7 +1,4 @@
-import util from 'util';
 import {EventEmitter} from 'events';
-import {execFile} from 'child_process';
-const execFileAsync = util.promisify(execFile);
 import {scan} from '../util/ble-scan.js';
 import {macAddress} from '../util/mac-address.js';
 
