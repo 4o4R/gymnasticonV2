@@ -58,6 +58,11 @@ export const defaults = {
   heartRateEnabled: undefined,
   heartRateAdapter: undefined,
 
+  // external BLE sensor discovery
+  // Core workout speed/cadence output remains on through bike telemetry and
+  // cadence-derived speed. This timeout only limits optional accessory scans.
+  sensorConnectTimeout: 8,
+
   // connection retry behavior
   connectionRetryDelay: 5000,   // milliseconds to wait before retrying a failed startup attempt
 };
