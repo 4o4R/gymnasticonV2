@@ -10,11 +10,11 @@ import {macAddress} from './mac-address.js';
 
 /**
  * Scan for first matching BLE device.
- * 
+ *
  * Some Pi/noble combinations don't properly report adapter state, so noble.state
  * stays 'unknown' even though the adapter is up. When noble.startScanningAsync()
  * fails due to state issues, this function falls back to using hcitool lescan.
- * 
+ *
  * @param {Noble} noble - a Noble instance.
  * @param {string[]} serviceUuids - find devices advertising these GATT service uuids
  * @param {FilterFunction} filter - find devices matching this filter
@@ -23,6 +23,7 @@ import {macAddress} from './mac-address.js';
  * @param {number} [options.timeoutMs] - stop scanning after this duration (ms)
  * @param {boolean} [options.stopScanOnMatch=true] - stop scanning after match
  * @param {boolean} [options.stopScanOnTimeout=true] - stop scanning when timing out
+ * @param {boolean} [options.fallbackOnTimeout=true] - use hcitool fallback when a noble scan times out
  * @returns {Peripheral} the matching peripheral
  */
 export async function scan(noble, serviceUuids, filter = () => true, options = {}) {
@@ -32,7 +33,7 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
   const stopScanOnMatch = options?.stopScanOnMatch !== false;
   const stopScanOnTimeout = options?.stopScanOnTimeout !== false;
   let startedScan = false;
-  
+
   // Try the normal noble path first
   try {
     // Start scanning - this may fail if noble.state is 'unknown'
@@ -60,7 +61,12 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
     // Teaching note: when noble starts scanning but never emits discover
     // events, treat that as a noble failure so we can fall back to hcitool.
     if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
-      throw new Error(`noble scan timeout - no matching devices found after ${timeoutMs}ms`);
+      if (options?.fallbackOnTimeout === false) {
+        return null;
+      }
+      const timeoutError = new Error(`noble scan timeout - no matching devices found after ${timeoutMs}ms`);
+      timeoutError.code = 'BLE_SCAN_TIMEOUT';
+      throw timeoutError;
     }
     return discovered;
   } catch (err) {
@@ -266,7 +272,7 @@ async function scanWithHcitool(filter, options = {}) {
       const skipReset = options.skipReset === true;
       const needsSudo = typeof process.getuid === 'function' && process.getuid() !== 0;
       const sudoPrefix = needsSudo ? 'sudo -n ' : '';
-      
+
       // Aggressively reset adapter before scanning to clear any stuck state from noble
       // This fixes "Input/output error" and "EALREADY" errors when noble exits without cleanup
       // Strategy: DOWN → RESET → UP ensures clean state and prevents conflicts
@@ -302,7 +308,7 @@ async function scanWithHcitool(filter, options = {}) {
       } else {
         console.log(`[ble-scan] ℹ Skipping adapter reset for ${adapter} (avoids noble EALREADY crash)`);
       }
-      
+
       const cmd = `${sudoPrefix}hcitool -i ${adapter} lescan --duplicates`;
       const scanProcess = spawn('bash', ['-c', cmd], {
         stdio: ['ignore', 'pipe', 'pipe']

@@ -1,11 +1,11 @@
 /**
  * Generic Cadence Sensor Client
- * 
+ *
  * Connects to any Bluetooth LE device advertising the legacy
  * Gymnasticon cadence service (UUID 0x181b) and emits cadence data.
- * 
+ *
  * Works with: devices exposing the legacy Gymnasticon cadence profile (0x181b/0x2a51)
- * 
+ *
  * Data flow:
  * Device broadcasts legacy Gymnasticon cadence service (0x181b)
  *   → Cycling Cadence Measurement characteristic (0x2a51)
@@ -18,6 +18,9 @@ import {scan} from '../util/ble-scan.js';
 
 const EVENT_TIME_MAX = 0x10000;
 const CRANK_REV_MAX = 0x10000;
+const DEFAULT_CONNECT_TIMEOUT_SECONDS = 8;
+const DEFAULT_RETRY_DELAY_MS = 60000;
+const DEFAULT_MAX_RETRY_DELAY_MS = 300000;
 
 function counterDelta(current, previous, maxValue) {
   if (!Number.isFinite(current) || !Number.isFinite(previous)) {
@@ -42,11 +45,13 @@ export class CadenceSensorClient extends EventEmitter {
     this.characteristicUuid = '2a51';  // Legacy cadence measurement
 
     // Connection parameters
-    this.connectTimeout = options.connectTimeout || 30;  // seconds
+    this.connectTimeout = Number.isFinite(options.connectTimeout)
+      ? options.connectTimeout
+      : DEFAULT_CONNECT_TIMEOUT_SECONDS;  // seconds
     this.statTimeout = options.statTimeout || 5000;  // milliseconds between expected updates
     this.maxConnectRetries = Number.isFinite(options.maxConnectRetries) ? options.maxConnectRetries : Infinity;
-    this.retryDelay = Number.isFinite(options.retryDelay) ? options.retryDelay : 1000;  // ms before retry
-    this.maxRetryDelay = Number.isFinite(options.maxRetryDelay) ? options.maxRetryDelay : 30000;
+    this.retryDelay = Number.isFinite(options.retryDelay) ? options.retryDelay : DEFAULT_RETRY_DELAY_MS;  // ms before retry
+    this.maxRetryDelay = Number.isFinite(options.maxRetryDelay) ? options.maxRetryDelay : DEFAULT_MAX_RETRY_DELAY_MS;
 
     // State tracking
     this.peripheral = null;
@@ -78,7 +83,7 @@ export class CadenceSensorClient extends EventEmitter {
     this.connecting = true;
     this.shouldReconnect = true;
     this.logger.log('[CadenceSensorClient] Starting cadence sensor discovery...');
-    
+
     try {
       // Phase 1: Scan for cadence sensor
       const timeoutMs = Number.isFinite(this.connectTimeout) && this.connectTimeout > 0
@@ -90,10 +95,18 @@ export class CadenceSensorClient extends EventEmitter {
         (peripheral) => this.matchesFilter(peripheral),
         {
           timeoutMs,
-          stopScanOnMatch: false,
-          stopScanOnTimeout: false,
+          stopScanOnMatch: true,
+          stopScanOnTimeout: true,
+          fallbackOnTimeout: false,
+          hcitoolReset: false,
         }
       );
+
+      if (!this.shouldReconnect) {
+        this.connecting = false;
+        this.cleanupConnection();
+        return;
+      }
 
       if (!this.peripheral) {
         this.emit('connect-failed', 'Cadence sensor not found');
@@ -119,8 +132,8 @@ export class CadenceSensorClient extends EventEmitter {
 
       // Phase 3: Discover services and characteristics
       const {characteristics} = await this.peripheral.discoverServicesAndCharacteristicsAsync();
-      
-      this.characteristic = characteristics.find(c => 
+
+      this.characteristic = characteristics.find(c =>
         c.uuid === this.characteristicUuid.toLowerCase()
       );
 
@@ -133,7 +146,7 @@ export class CadenceSensorClient extends EventEmitter {
       // Phase 4: Subscribe to notifications
       this.characteristic.on('data', this.onCadenceDataBound);
       await this.characteristic.subscribeAsync();
-      
+
       this.isConnected = true;
       this.connecting = false;
       this.retryCount = 0;
@@ -147,6 +160,9 @@ export class CadenceSensorClient extends EventEmitter {
       this.logger.error(`[CadenceSensorClient] Connection failed: ${error.message}`);
       this.connecting = false;
       this.cleanupConnection();
+      if (!this.shouldReconnect) {
+        return;
+      }
       this.emit('connect-failed', error.message);
       this.scheduleReconnect();
     }

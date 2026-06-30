@@ -1,11 +1,11 @@
 /**
  * Generic Speed Sensor Client
- * 
+ *
  * Connects to any Bluetooth LE device advertising the legacy
  * Gymnasticon speed service (UUID 0x181a) and emits speed data.
- * 
+ *
  * Works with: devices exposing the legacy Gymnasticon speed profile (0x181a/0x2a50)
- * 
+ *
  * Data flow:
  * Device broadcasts legacy Gymnasticon speed service (0x181a)
  *   → Speed Measurement characteristic (0x2a50)
@@ -18,6 +18,9 @@ import {scan} from '../util/ble-scan.js';
 
 const EVENT_TIME_MAX = 0x10000;
 const WHEEL_REV_MAX = 0x100000000;
+const DEFAULT_CONNECT_TIMEOUT_SECONDS = 8;
+const DEFAULT_RETRY_DELAY_MS = 60000;
+const DEFAULT_MAX_RETRY_DELAY_MS = 300000;
 
 function counterDelta(current, previous, maxValue) {
   if (!Number.isFinite(current) || !Number.isFinite(previous)) {
@@ -42,11 +45,13 @@ export class SpeedSensorClient extends EventEmitter {
     this.characteristicUuid = '2a50';  // Legacy speed measurement
 
     // Connection parameters
-    this.connectTimeout = options.connectTimeout || 30;  // seconds
+    this.connectTimeout = Number.isFinite(options.connectTimeout)
+      ? options.connectTimeout
+      : DEFAULT_CONNECT_TIMEOUT_SECONDS;  // seconds
     this.statTimeout = options.statTimeout || 5000;  // milliseconds between expected updates
     this.maxConnectRetries = Number.isFinite(options.maxConnectRetries) ? options.maxConnectRetries : Infinity;
-    this.retryDelay = Number.isFinite(options.retryDelay) ? options.retryDelay : 1000;  // ms before retry
-    this.maxRetryDelay = Number.isFinite(options.maxRetryDelay) ? options.maxRetryDelay : 30000;
+    this.retryDelay = Number.isFinite(options.retryDelay) ? options.retryDelay : DEFAULT_RETRY_DELAY_MS;  // ms before retry
+    this.maxRetryDelay = Number.isFinite(options.maxRetryDelay) ? options.maxRetryDelay : DEFAULT_MAX_RETRY_DELAY_MS;
 
     // State tracking
     this.peripheral = null;
@@ -78,7 +83,7 @@ export class SpeedSensorClient extends EventEmitter {
     this.connecting = true;
     this.shouldReconnect = true;
     this.logger.log('[SpeedSensorClient] Starting speed sensor discovery...');
-    
+
     try {
       // Phase 1: Scan for speed sensor
       const timeoutMs = Number.isFinite(this.connectTimeout) && this.connectTimeout > 0
@@ -90,10 +95,18 @@ export class SpeedSensorClient extends EventEmitter {
         (peripheral) => this.matchesFilter(peripheral),
         {
           timeoutMs,
-          stopScanOnMatch: false,
-          stopScanOnTimeout: false,
+          stopScanOnMatch: true,
+          stopScanOnTimeout: true,
+          fallbackOnTimeout: false,
+          hcitoolReset: false,
         }
       );
+
+      if (!this.shouldReconnect) {
+        this.connecting = false;
+        this.cleanupConnection();
+        return;
+      }
 
       if (!this.peripheral) {
         this.emit('connect-failed', 'Speed sensor not found');
@@ -119,8 +132,8 @@ export class SpeedSensorClient extends EventEmitter {
 
       // Phase 3: Discover services and characteristics
       const {characteristics} = await this.peripheral.discoverServicesAndCharacteristicsAsync();
-      
-      this.characteristic = characteristics.find(c => 
+
+      this.characteristic = characteristics.find(c =>
         c.uuid === this.characteristicUuid.toLowerCase()
       );
 
@@ -133,7 +146,7 @@ export class SpeedSensorClient extends EventEmitter {
       // Phase 4: Subscribe to notifications
       this.characteristic.on('data', this.onSpeedDataBound);
       await this.characteristic.subscribeAsync();
-      
+
       this.isConnected = true;
       this.connecting = false;
       this.retryCount = 0;
@@ -147,6 +160,9 @@ export class SpeedSensorClient extends EventEmitter {
       this.logger.error(`[SpeedSensorClient] Connection failed: ${error.message}`);
       this.connecting = false;
       this.cleanupConnection();
+      if (!this.shouldReconnect) {
+        return;
+      }
       this.emit('connect-failed', error.message);
       this.scheduleReconnect();
     }

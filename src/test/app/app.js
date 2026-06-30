@@ -112,6 +112,124 @@ test('App.integrateKinematics() keeps CSC event timestamps stable until revoluti
   t.end();
 });
 
+test('App.startOptionalSensors() delays and serializes optional speed/cadence discovery', async (t) => {
+  const app = createTestApp();
+  const order = [];
+  try {
+    app.hrClient = null;
+    app.sensorDiscoveryDelayMs = 7;
+    app.sleep = async (ms) => {
+      order.push(`sleep:${ms}`);
+    };
+    app.connectSpeedSensor = async () => {
+      order.push('speed-start');
+      await Promise.resolve();
+      order.push('speed-end');
+    };
+    app.connectCadenceSensor = async () => {
+      order.push('cadence-start');
+    };
+
+    await app.startOptionalSensors();
+
+    t.deepEqual(order, ['sleep:7', 'speed-start', 'speed-end', 'cadence-start'], 'speed and cadence discovery run after the delay and do not overlap');
+  } finally {
+    destroyTestApp(app);
+  }
+});
+
+test('App.connectSpeedSensor()/connectCadenceSensor() use conservative optional sensor options', async (t) => {
+  const app = createTestApp();
+  const constructed = [];
+  class FakeSensorClient extends EventEmitter {
+    constructor(noble, options) {
+      super();
+      constructed.push({noble, options});
+    }
+    async connect() {}
+    async disconnect() {}
+  }
+
+  try {
+    app.SpeedSensorClient = FakeSensorClient;
+    app.CadenceSensorClient = FakeSensorClient;
+
+    await app.connectSpeedSensor();
+    await app.connectCadenceSensor();
+
+    t.equal(constructed.length, 2, 'both optional sensor clients are constructed');
+    constructed.forEach(({noble, options}) => {
+      t.equal(noble, app.noble, 'uses the bike noble instance for optional accessory scans');
+      t.equal(options.connectTimeout, 8, 'uses the short optional accessory scan window');
+      t.equal(options.retryDelay, 60000, 'starts no-sensor retries at one minute');
+      t.equal(options.maxRetryDelay, 300000, 'caps no-sensor retry delay at five minutes');
+    });
+  } finally {
+    await app.stopOptionalSensorDiscovery('test').catch(() => {});
+    destroyTestApp(app);
+  }
+});
+
+test('App.connectHeartRateSensor() does not double-attach the heart-rate listener', async (t) => {
+  const app = createTestApp();
+  const hrClient = new EventEmitter();
+  hrClient.connect = async () => {};
+  hrClient.disconnect = async () => {};
+  try {
+    app.hrClient = hrClient;
+    app.hrClient.on('heartRate', app.onHeartRateBound);
+
+    await app.connectHeartRateSensor();
+
+    const listenerCount = app.hrClient.listeners('heartRate')
+      .filter(listener => listener === app.onHeartRateBound)
+      .length;
+    t.equal(listenerCount, 1, 'heart-rate handler remains attached once');
+  } finally {
+    destroyTestApp(app);
+  }
+});
+
+test('App.onBikeDisconnect() stops optional speed/cadence sensor discovery', async (t) => {
+  const app = createTestApp();
+  let speedDisconnects = 0;
+  let cadenceDisconnects = 0;
+  class FakeSensorClient extends EventEmitter {
+    constructor(onDisconnect) {
+      super();
+      this.onDisconnect = onDisconnect;
+    }
+    async disconnect() {
+      this.onDisconnect();
+    }
+  }
+
+  try {
+    app.speedSensor = new FakeSensorClient(() => {
+      speedDisconnects += 1;
+    });
+    app.cadenceSensor = new FakeSensorClient(() => {
+      cadenceDisconnects += 1;
+    });
+    app.speedSensorConnected = true;
+    app.cadenceSensorConnected = true;
+    app.stopServerAdvertising = async () => {};
+
+    app.onBikeDisconnect({address: 'AA:BB:CC:DD:EE:FF'});
+    await Promise.resolve();
+
+    t.equal(speedDisconnects, 1, 'speed sensor discovery is stopped');
+    t.equal(cadenceDisconnects, 1, 'cadence sensor discovery is stopped');
+    t.equal(app.speedSensor, null, 'speed client reference is cleared');
+    t.equal(app.cadenceSensor, null, 'cadence client reference is cleared');
+    t.equal(app.speedSensorConnected, false, 'speed connected state is cleared');
+    t.equal(app.cadenceSensorConnected, false, 'cadence connected state is cleared');
+    t.equal(app.pendingRestartReason, 'bike-disconnect', 'bike reconnect is still requested');
+  } finally {
+    destroyTestApp(app);
+  }
+});
+
 test('App.run() retries cold-start bike discovery until a bike appears, then starts advertising', async (t) => {
   const logs = [];
   const sleepCalls = [];
@@ -320,6 +438,7 @@ test('adapter role detection prefers onboard/non-USB for bike and USB for BLE se
 test('CLI adapter options stay unset so hardware detection can split dual radios', (t) => {
   t.equal(cliOptions['bike-adapter'].default, undefined, 'bike adapter has no yargs default');
   t.equal(cliOptions['server-adapter'].default, undefined, 'server adapter has no yargs default');
+  t.equal(cliOptions['sensor-connect-timeout'].default, 8, 'optional speed/cadence sensor scan window defaults to 8 seconds');
   t.end();
 });
 

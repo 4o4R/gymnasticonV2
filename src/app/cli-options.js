@@ -151,6 +151,11 @@ export const options = {
     describe: 'force-enable or disable heart-rate rebroadcast (auto when omitted)',
     type: 'boolean',
   },
+  'sensor-connect-timeout': {
+    describe: '<seconds> optional external speed/cadence sensor scan window',
+    type: 'number',
+    default: defaults.sensorConnectTimeout,
+  },
   'power-smoothing': {
     describe: '<0-1> exponential smoothing factor for power output',
     type: 'number',

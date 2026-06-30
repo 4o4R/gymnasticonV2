@@ -3,14 +3,14 @@
 /**
  * Command Line Interface (CLI) Entry Point for Gymnasticon
  * ====================================================
- * 
+ *
  * This file is the starting point of the application when run from the command line.
  * It handles:
  * 1. Parsing command line arguments
  * 2. Loading configuration files
  * 3. Setting up environment variables
  * 4. Initializing the main application
- * 
+ *
  * The shebang line above (#!) tells Unix-like systems to run this with Node.js
  */
 
@@ -192,7 +192,7 @@ function collectProvidedOptions(rawArgs, optionDefinitions) {
 
 /**
  * Builds the application options object by filtering out yargs-specific properties
- * 
+ *
  * @param {Object} args - The parsed command line arguments
  * @param {string} args._ - Contains all non-option arguments (removed)
  * @param {string} args.$0 - The script name (removed)
@@ -262,6 +262,9 @@ const main = async () => {
     }
     if (!providedOptions.has('bleMultiOutput') && configOverrides.bleMultiOutput !== undefined) {
         argv.bleMultiOutput = configOverrides.bleMultiOutput;
+    }
+    if (!providedOptions.has('sensorConnectTimeout') && configOverrides.sensorConnectTimeout !== undefined) {
+        argv.sensorConnectTimeout = configOverrides.sensorConnectTimeout;
     }
     const serverAdapterExplicit = providedOptions.has('serverAdapter') || Boolean(configOverrides.serverAdapter);
 
@@ -350,7 +353,7 @@ const main = async () => {
             // Noble is used to connect to the exercise bike
             process.env.NOBLE_HCI_DEVICE_ID = nobleAdapterId;
         }
-        
+
     }
 
     // If a specific Bluetooth adapter is specified for the server (connects to apps)
@@ -365,7 +368,7 @@ const main = async () => {
             // Bleno is used to advertise to and connect with fitness apps
             process.env.BLENO_HCI_DEVICE_ID = blenoAdapterId;
         }
-        
+
         // Set maximum number of simultaneous connections if not already set
         // This allows multiple apps to connect at once (e.g., Zwift + heart rate app)
         if (!process.env.BLENO_MAX_CONNECTIONS) {

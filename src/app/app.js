@@ -1,6 +1,6 @@
 /**
  * Main Application Entry Point
- * 
+ *
  * This file coordinates all the major components of the Gymnasticon system:
  * - Bluetooth (BLE) server for connecting to fitness apps
  * - ANT+ server for older fitness devices
@@ -45,6 +45,9 @@ const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta
 const debug = toDefaultExport(debugModule);
 
 const debuglog = debug('gym:app:app');
+const DEFAULT_SENSOR_DISCOVERY_DELAY_MS = 1000;
+const DEFAULT_SENSOR_RETRY_DELAY_MS = 60000;
+const DEFAULT_SENSOR_MAX_RETRY_DELAY_MS = 300000;
 
 export {getBikeTypes};
 export const defaults = sharedDefaults;
@@ -61,8 +64,13 @@ export class App {
     const opts = { ...defaults, ...options };
     this.opts = opts;
     this.createBikeClient = opts.createBikeClient || createBikeClient; // Allow tests to inject deterministic bike discovery/connection behavior.
+    this.SpeedSensorClient = opts.SpeedSensorClient || SpeedSensorClient; // Optional accessory client injection for tests.
+    this.CadenceSensorClient = opts.CadenceSensorClient || CadenceSensorClient;
     this.sleep = opts.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms))); // Keep retry backoff overridable so tests do not wait in real time.
     this.minimumRetryDelayMs = Number.isFinite(opts.minimumRetryDelayMs) ? Number(opts.minimumRetryDelayMs) : 1000; // Production keeps a one-second floor; tests can lower it explicitly.
+    this.sensorDiscoveryDelayMs = Number.isFinite(opts.sensorDiscoveryDelayMs)
+      ? Math.max(0, Number(opts.sensorDiscoveryDelayMs))
+      : DEFAULT_SENSOR_DISCOVERY_DELAY_MS;
     this.keepRunning = true; // Main run loop flag so graceful shutdowns and tests can stop the reconnect loop cleanly.
 
     this.logger = new Logger();
@@ -160,19 +168,19 @@ export class App {
         this.logger.log('Heart-rate rebroadcast disabled (auto mode requires two adapters or supported hardware)');
       }
     }
-    
+
     // Optional: Speed sensor (e.g., Wahoo Speed Sensor, any device with Cycling Speed Service 0x181a)
     this.speedSensorEnabled = opts.speedSensorEnabled !== false;  // Enabled by default
     this.speedSensor = null;
-    
+
     // Optional: Cadence sensor (e.g., Wahoo Cadence Sensor, any device with Cycling Cadence Service 0x181b)
     this.cadenceSensorEnabled = opts.cadenceSensorEnabled !== false;  // Enabled by default
     this.cadenceSensor = null;
-    
+
     // Track sensor connection state for health monitoring
     this.speedSensorConnected = false;
     this.cadenceSensorConnected = false;
-    
+
     this.multiRoleInfo = isSingleAdapterMultiRoleCapable();
     this.serverAdapters = resolveServerAdapters(opts, this.multiRoleInfo);
     if (this.serverAdapters.length) {
@@ -201,7 +209,7 @@ export class App {
     this.restartSignal = null;
     this.restartReason = null;
     this.pendingRestartReason = null;
-    
+
     // Modern Bluetooth configuration
     // Teaching note: noble/bleno want a numeric HCI index in the env vars,
     // so convert "hci0" style names before setting them.
@@ -452,6 +460,7 @@ export class App {
       if (this.hrClient) {
         await this.hrClient.disconnect().catch(() => {});
       }
+      await this.stopOptionalSensorDiscovery('bike-connection-stop');
       await this.stopServerAdvertising('bike-connection-stop');
     }
   }
@@ -472,7 +481,7 @@ export class App {
         return;
       }
       let shouldReinitialize = false; // Track whether this attempt should force a noble reinit/fallback adapter hop.
-      
+
       // Teaching note: If adapter is UP at OS level but noble reports unknown,
       // verify scan usability before proceeding; some stacks still fail scans.
       if (this.isAdapterUp(this.opts.bikeAdapter)) {
@@ -485,7 +494,7 @@ export class App {
         this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP but scan probe failed; reinitializing noble instead of proceeding in degraded mode`);
         shouldReinitialize = true;
       }
-      
+
       if (!shouldReinitialize) {
         this.logger.log(`[gym-app] waiting for Bluetooth adapter to become poweredOn (attempt ${attempt}/${maxAttempts}, current state: ${state})`);
         try {
@@ -497,7 +506,7 @@ export class App {
           shouldReinitialize = true;
         } catch (error) {
           this.logger.log(`[gym-app] Bluetooth adapter state timeout after ${timeoutMs}ms; checking if adapter is up...`);
-          
+
           // If adapter is up, only continue if a probe scan succeeds.
           if (this.isAdapterUp(this.opts.bikeAdapter)) {
             const canScan = await this.probeNobleScan(this.opts.bikeAdapter);
@@ -700,13 +709,7 @@ export class App {
     if (this.hrClient) {
       await this.hrClient.disconnect();
     }
-    // Disconnect optional sensors
-    if (this.speedSensor) {
-      await this.speedSensor.disconnect().catch(() => {});
-    }
-    if (this.cadenceSensor) {
-      await this.cadenceSensor.disconnect().catch(() => {});
-    }
+    await this.stopOptionalSensorDiscovery('app-stop');
     if (this.healthMonitor?.stop) {
       // Shutting down the periodic monitor prevents Node from holding the event
       // loop open and ensures repeated starts (during development or CLI
@@ -769,11 +772,11 @@ export class App {
           if (this.antEnabled) { // Only talk to the ANT+ stick when the user opted in.
             this.startAnt(); // Fire up ANT+ broadcasting (no-op if the stick is missing).
           }
-          
+
           // Multi-sensor parallel startup (critical feature)
           // Launch all optional sensor discovery concurrently so they connect faster
           await this.startOptionalSensors();
-          
+
           this.pingInterval.reset(); // Kick off the BLE keep-alive timer so Zwift sees data even when you pause pedaling.
           this.statsTimeout.reset(); // Start the "bike telemetry" watchdog so we can log when stats go stale.
           // Teaching note: stay in the loop and wait for a disconnect/timeout so
@@ -802,64 +805,55 @@ export class App {
   }
 
   /**
-   * Start all optional sensors in parallel (critical feature for multi-sensor support).
-   * 
-   * This launches HR + speed + cadence discovery concurrently so they all connect faster.
-   * Uses Promise.allSettled() so failures don't block other sensors:
-   * - If HR fails to connect, app continues with bike + speed + cadence
-   * - If speed sensor fails, app continues with bike + HR + cadence
-   * - If cadence sensor fails, app continues with bike + HR + speed
-   * 
-   * Only the BIKE connection is mandatory (already successful at this point).
+   * Start optional sensors after the required bike/server path is already live.
+   *
+   * Speed and cadence accessory scans are serialized to avoid overlapping noble
+   * and hcitool activity on low-end Raspberry Pi hardware. Bike-derived cadence
+   * and speed output does not depend on these optional clients.
    */
   async startOptionalSensors() {
-    const sensorStartups = [];
+    const enabledCount = [
+      this.hrClient ? 1 : 0,
+      this.speedSensorEnabled ? 1 : 0,
+      this.cadenceSensorEnabled ? 1 : 0,
+    ].reduce((a, b) => a + b, 0);
 
-    // Launch HR client if enabled
+    if (enabledCount === 0) {
+      return;
+    }
+
+    if (this.sensorDiscoveryDelayMs > 0) {
+      this.logger.log(`[sensors] waiting ${this.sensorDiscoveryDelayMs}ms before optional sensor discovery`);
+      await this.sleep(this.sensorDiscoveryDelayMs);
+    }
+
+    this.logger.log(`[sensors] starting ${enabledCount} optional sensor(s) conservatively...`);
+
     if (this.hrClient) {
-      sensorStartups.push(
-        this.connectHeartRateSensor()
-          .catch((err) => {
-            this.logger.warn(`Heart-rate sensor startup failed: ${err.message}`);
-          })
-      );
+      await this.connectHeartRateSensor().catch((err) => {
+        this.logger.warn(`Heart-rate sensor startup failed: ${err.message}`);
+      });
     }
 
-    // Launch speed sensor if enabled
     if (this.speedSensorEnabled) {
-      sensorStartups.push(
-        this.connectSpeedSensor()
-          .catch((err) => {
-            this.logger.warn(`Speed sensor startup failed: ${err.message}`);
-          })
-      );
+      await this.connectSpeedSensor().catch((err) => {
+        this.logger.warn(`Speed sensor startup failed: ${err.message}`);
+      });
     }
 
-    // Launch cadence sensor if enabled
     if (this.cadenceSensorEnabled) {
-      sensorStartups.push(
-        this.connectCadenceSensor()
-          .catch((err) => {
-            this.logger.warn(`Cadence sensor startup failed: ${err.message}`);
-          })
-      );
+      await this.connectCadenceSensor().catch((err) => {
+        this.logger.warn(`Cadence sensor startup failed: ${err.message}`);
+      });
     }
 
-    if (sensorStartups.length > 0) {
-      this.logger.log(`[sensors] starting ${sensorStartups.length} optional sensor(s) in parallel...`);
-      
-      // Wait for all sensors to either connect or fail
-      // Using Promise.all instead of allSettled since we're already catching in each startup promise
-      await Promise.all(sensorStartups);
-      
-      const connectedCount = [
-        this.hrClient ? 1 : 0,
-        this.speedSensorConnected ? 1 : 0,
-        this.cadenceSensorConnected ? 1 : 0,
-      ].reduce((a, b) => a + b, 0);
-      
-      this.logger.log(`[sensors] optional sensor startup complete: ${connectedCount} connected`);
-    }
+    const connectedCount = [
+      this.hrClient?.connected ? 1 : 0,
+      this.speedSensorConnected ? 1 : 0,
+      this.cadenceSensorConnected ? 1 : 0,
+    ].reduce((a, b) => a + b, 0);
+
+    this.logger.log(`[sensors] optional sensor startup complete: ${connectedCount} connected`);
   }
 
   /**
@@ -869,8 +863,7 @@ export class App {
   async connectHeartRateSensor() {
     try {
       await this.hrClient.connect();
-      this.logger.log('[HeartRate] sensor connected');
-      this.hrClient.on('heartRate', this.onHeartRateBound);
+      this.logger.log('[HeartRate] sensor discovery started');
     } catch (err) {
       this.logger.error(`[HeartRate] connection failed: ${err.message}`);
       await this.hrClient.disconnect().catch(() => {});
@@ -886,11 +879,14 @@ export class App {
     if (!this.speedSensorEnabled || this.speedSensor) return;  // Already attempted
 
     try {
-      this.speedSensor = new SpeedSensorClient(this.noble, {
+      this.speedSensor = new this.SpeedSensorClient(this.noble, {
         logger: this.logger,
         connectionManager: this.connectionManager,
-        connectTimeout: this.opts.sensorConnectTimeout || 30,
+        connectTimeout: this.opts.sensorConnectTimeout ?? sharedDefaults.sensorConnectTimeout,
         statTimeout: this.opts.sensorStatTimeout || 5000,
+        retryDelay: this.opts.sensorRetryDelay ?? DEFAULT_SENSOR_RETRY_DELAY_MS,
+        maxRetryDelay: this.opts.sensorMaxRetryDelay ?? DEFAULT_SENSOR_MAX_RETRY_DELAY_MS,
+        maxConnectRetries: this.opts.sensorMaxConnectRetries,
       });
 
       this.speedSensor.on('stats', this.onSpeedSensorStatsBound);
@@ -925,11 +921,14 @@ export class App {
     if (!this.cadenceSensorEnabled || this.cadenceSensor) return;  // Already attempted
 
     try {
-      this.cadenceSensor = new CadenceSensorClient(this.noble, {
+      this.cadenceSensor = new this.CadenceSensorClient(this.noble, {
         logger: this.logger,
         connectionManager: this.connectionManager,
-        connectTimeout: this.opts.sensorConnectTimeout || 30,
+        connectTimeout: this.opts.sensorConnectTimeout ?? sharedDefaults.sensorConnectTimeout,
         statTimeout: this.opts.sensorStatTimeout || 5000,
+        retryDelay: this.opts.sensorRetryDelay ?? DEFAULT_SENSOR_RETRY_DELAY_MS,
+        maxRetryDelay: this.opts.sensorMaxRetryDelay ?? DEFAULT_SENSOR_MAX_RETRY_DELAY_MS,
+        maxConnectRetries: this.opts.sensorMaxConnectRetries,
       });
 
       this.cadenceSensor.on('stats', this.onCadenceSensorStatsBound);
@@ -953,6 +952,42 @@ export class App {
         await this.cadenceSensor.disconnect().catch(() => {});
         this.cadenceSensor = null;
       }
+    }
+  }
+
+  async stopOptionalSensorDiscovery(reason = 'unspecified') {
+    const stops = [];
+    if (this.speedSensor) {
+      const sensor = this.speedSensor;
+      this.speedSensor = null;
+      this.speedSensorConnected = false;
+      stops.push(
+        sensor.disconnect()
+          .catch((err) => this.logger.warn(`[SpeedSensor] failed to stop during ${reason}: ${err.message}`))
+          .finally(() => {
+            if (typeof sensor.removeAllListeners === 'function') {
+              sensor.removeAllListeners();
+            }
+          })
+      );
+    }
+    if (this.cadenceSensor) {
+      const sensor = this.cadenceSensor;
+      this.cadenceSensor = null;
+      this.cadenceSensorConnected = false;
+      stops.push(
+        sensor.disconnect()
+          .catch((err) => this.logger.warn(`[CadenceSensor] failed to stop during ${reason}: ${err.message}`))
+          .finally(() => {
+            if (typeof sensor.removeAllListeners === 'function') {
+              sensor.removeAllListeners();
+            }
+          })
+      );
+    }
+    if (stops.length) {
+      this.logger.log(`[sensors] stopping optional speed/cadence discovery (${reason})`);
+      await Promise.all(stops);
     }
   }
 
@@ -1032,7 +1067,7 @@ export class App {
   /**
    * Handle speed sensor data (from Wahoo Speed Sensor or equivalent).
    * Format: { wheelRevolutions, revolutionsSinceLastEvent, timeSinceLastEvent, timestamp }
-   * 
+   *
    * For now: Just log it (metric blending not yet implemented).
    * Future: Use to supplement or replace cadence-based speed estimation.
    */
@@ -1045,7 +1080,7 @@ export class App {
   /**
    * Handle cadence sensor data (from Wahoo Cadence Sensor or equivalent).
    * Format: { crankRevolutions, revolutionsSinceLastEvent, timeSinceLastEvent, cadenceRpm, timestamp }
-   * 
+   *
    * For now: Just log it (metric blending not yet implemented).
    * Future: Use to supplement or replace bike-reported cadence.
    */
@@ -1101,6 +1136,7 @@ export class App {
     if (this.hrClient) {
       this.hrClient.disconnect().catch(() => {});
     }
+    this.stopOptionalSensorDiscovery('bike-stats-timeout').catch(() => {});
     // Teaching note: stop advertising asynchronously so we only broadcast when
     // a bike is actively connected.
     this.stopServerAdvertising('bike-stats-timeout').catch(() => {});
@@ -1122,6 +1158,7 @@ export class App {
     if (this.hrClient) {
       this.hrClient.disconnect().catch(() => {});
     }
+    this.stopOptionalSensorDiscovery('bike-disconnect').catch(() => {});
     // Teaching note: stop advertising so clients do not see a phantom sensor.
     this.stopServerAdvertising('bike-disconnect').catch(() => {});
     this.requestRestart('bike-disconnect');
@@ -1140,6 +1177,7 @@ export class App {
     if (this.hrClient) {
       this.hrClient.disconnect().catch(() => {});
     }
+    this.stopOptionalSensorDiscovery('bike-connect-timeout').catch(() => {});
     // Teaching note: stop advertising during connection failures so we only
     // broadcast once a bike is actually connected.
     this.stopServerAdvertising('bike-connect-timeout').catch(() => {});

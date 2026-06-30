@@ -1,5 +1,7 @@
+import {EventEmitter} from 'events';
+
 import test from '../support/tape.js';
-import {createFilter, createNameFilter, createAddressFilter} from '../../util/ble-scan.js';
+import {createFilter, createNameFilter, createAddressFilter, scan} from '../../util/ble-scan.js';
 
 // peripherals
 const match = {address: '11-11-11-11-11-11', advertisement: { localName: 'Match'}};
@@ -32,4 +34,27 @@ test('createAddressFilter()', t => {
   t.ok(filter(match), 'true when address matches');
   t.notOk(filter(other), 'false when address does not match');
   t.notOk(filter(empty), 'false when address given but peripheral address is missing');
+});
+
+test('scan() can timeout without falling back to hcitool', async (t) => {
+  const noble = new EventEmitter();
+  let startCalls = 0;
+  let stopCalls = 0;
+  noble.startScanningAsync = async () => {
+    startCalls += 1;
+  };
+  noble.stopScanningAsync = async () => {
+    stopCalls += 1;
+  };
+
+  const result = await scan(noble, ['181a'], () => false, {
+    timeoutMs: 1,
+    stopScanOnTimeout: true,
+    fallbackOnTimeout: false,
+  });
+
+  t.equal(result, null, 'returns null when the noble scan times out');
+  t.equal(startCalls, 1, 'starts a noble scan');
+  t.equal(stopCalls, 1, 'stops the noble scan on timeout');
+  t.end();
 });
