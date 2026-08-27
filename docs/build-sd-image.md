@@ -90,3 +90,22 @@ Before publishing an image:
 4. Confirm `sudo systemctl status gymnasticon`.
 5. Pair a training app with `GymnasticonV2`.
 6. Save the service log if anything behaves unexpectedly.
+
+## Publish a GitHub Release
+
+Build both supported images into a dedicated asset directory:
+
+```bash
+scripts/build-release-images.sh release-assets
+```
+
+After testing the images and pushing the matching Git tag, create or update the
+GitHub release with both images and their checksums:
+
+```bash
+scripts/create-release-from-image.sh v2.0.3 release-assets
+```
+
+Add `--draft` to create a draft release. The uploader verifies every checksum
+before publishing and refuses to create a release unless its tag already exists
+on GitHub.
