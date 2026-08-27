@@ -9,7 +9,9 @@ if [ ! -f "${CONFIG_FILE}" ]; then
   echo "Config file not found: ${CONFIG_FILE}" >&2
   exit 1
 fi
-RELEASE="$(grep '^RELEASE=' "${CONFIG_FILE}" | tail -n1 | cut -d= -f2)"
+# Config files may come from a Windows checkout, so strip CR before using the
+# value to choose the pinned pi-gen branch.
+RELEASE="$(grep '^RELEASE=' "${CONFIG_FILE}" | tail -n1 | cut -d= -f2 | tr -d '\r')"
 PI_GEN_BRANCH=""
 if [ "${RELEASE}" = "buster" ]; then
   PI_GEN_BRANCH="2020-02-13-raspbian-buster"
@@ -32,10 +34,9 @@ if [ "${RELEASE}" = "bookworm" ]; then
   fi
 fi
 
-# Normalise Buster mirrors separately so we can enforce a primary+fallback pair.
+# Normalise Buster mirrors separately to the live legacy archive.
 if [ "${RELEASE}" = "buster" ]; then
-  PRIMARY_BUSTER_MIRROR="https://archive.raspbian.org/raspbian/"
-  FALLBACK_BUSTER_MIRROR="https://raspbian.mirror.constant.com/raspbian/"
+  PRIMARY_BUSTER_MIRROR="https://legacy.raspbian.org/raspbian/"
 
   if grep -Eq '^MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^MIRROR=https?://raspbian\.raspberrypi\.(org|com)/raspbian/?$' "${CONFIG_FILE}"; then
     sed -i "s|^MIRROR=.*|MIRROR=${PRIMARY_BUSTER_MIRROR}|" "${CONFIG_FILE}"
@@ -67,16 +68,67 @@ if [ -n "${PI_GEN_BRANCH}" ]; then
   git fetch --tags
   git checkout "${PI_GEN_BRANCH}"
 fi
-# Ensure the Docker image that runs pi-gen can generate .bmap files during export
-# (required for the export-image stage). The stock Dockerfile occasionally omits
-# bmap-tools; force it into the install set if missing.
+# Keep the pi-gen host container on Debian Bookworm. Newer Trixie images use a
+# stricter OpenPGP verifier that rejects the Raspberry Pi archive key's historic
+# SHA-1 binding signature before debootstrap can create the target filesystem.
+# Also ensure the container can generate .bmap files during image export.
 python3 - <<'PY'
 from pathlib import Path
 dockerfile = Path("Dockerfile")
 text = dockerfile.read_text()
+text = text.replace("FROM i386/debian:trixie", "FROM i386/debian:bookworm", 1)
+text = text.replace("FROM debian:trixie", "FROM debian:bookworm", 1)
 needle = "git vim parted"
 if needle in text and "bmap-tools" not in text:
-    dockerfile.write_text(text.replace(needle, f"{needle} bmap-tools", 1))
+    text = text.replace(needle, f"{needle} bmap-tools", 1)
+dockerfile.write_text(text)
+
+docker_build = Path("build-docker.sh")
+docker_build_text = docker_build.read_text()
+docker_build_text = docker_build_text.replace("debian:trixie", "debian:bookworm")
+docker_build_text = docker_build_text.replace(
+    "dpkg-reconfigure qemu-user-binfmt",
+    "dpkg-reconfigure qemu-user-static",
+)
+docker_build.write_text(docker_build_text)
+
+depends = Path("depends")
+depends.write_text(
+    depends.read_text().replace(
+        "qemu-arm:qemu-user-binfmt",
+        "qemu-arm-static:qemu-user-static",
+    )
+)
+
+# These optional utilities disappeared from the Bookworm repositories after the
+# pi-gen tag was published and are not needed by a headless Gymnasticon image.
+stage2_packages = Path("stage2/01-sys-tweaks/00-packages")
+if stage2_packages.exists():
+    stage2_text = stage2_packages.read_text()
+    stage2_text = stage2_text.replace("rpi-swap rpi-loop-utils\n", "")
+    stage2_text = stage2_text.replace("rpi-usb-gadget modemmanager-\n", "modemmanager-\n")
+    stage2_packages.write_text(stage2_text)
+
+# The removed loop utility owned this unit. Gymnasticon's first-boot service
+# already expands the root filesystem, so enable the pi-gen unit only if present.
+stage2_tweaks = Path("stage2/01-sys-tweaks/01-run.sh")
+if stage2_tweaks.exists():
+    stage2_tweaks.write_text(
+        stage2_tweaks.read_text().replace(
+            "\tsystemctl enable rpi-resize\n",
+            "\tif [ -e /lib/systemd/system/rpi-resize.service ]; then\n"
+            "\t\tsystemctl enable rpi-resize\n"
+            "\tfi\n",
+        )
+    )
+
+# Keep standard cloud-init support, but drop the optional Raspberry Pi helper
+# package that disappeared from the Bookworm repository after this pi-gen tag.
+cloud_init_packages = Path("stage2/04-cloud-init/00-packages")
+if cloud_init_packages.exists():
+    cloud_init_packages.write_text(
+        cloud_init_packages.read_text().replace("rpi-cloud-init-mods\n", "")
+    )
 PY
 if [ "${RELEASE}" = "buster" ]; then
 python3 - <<'PY' # rewrite the Dockerfile so apt pulls from the Debian archive mirrors and ignores expired Release metadata for legacy Buster builds
@@ -95,9 +147,9 @@ if needle not in original: # bail out early if the Dockerfile structure changes 
     raise SystemExit('Expected apt-get stanza not found in Dockerfile')
 dockerfile.write_text(original.replace(needle, replacement, 1)) # write the patched Dockerfile back to disk
 
-# Prefer archive.raspbian.org for Buster (authoritative), with constant.com as fallback.
-primary = "https://archive.raspbian.org/raspbian/"
-fallback = "https://raspbian.mirror.constant.com/raspbian/"
+# Use the official legacy archive; the old archive.raspbian.org Buster path
+# now returns 404 and cannot bootstrap a fresh image.
+primary = "https://legacy.raspbian.org/raspbian/"
 mirror = primary
 Path("stage0/prerun.sh").write_text(
     '#!/bin/bash -e\n\n'
@@ -107,7 +159,6 @@ Path("stage0/prerun.sh").write_text(
 )
 sources_list = (
     f"deb {primary} buster main contrib non-free rpi\n"
-    f"deb {fallback} buster main contrib non-free rpi\n"
     f"#deb-src {primary} buster main contrib non-free rpi\n"
 )
 Path("stage0/00-configure-apt/files/sources.list").write_text(sources_list)
@@ -153,13 +204,13 @@ for stage in ("stage1", "stage2"):
 
 sys_tweaks_run = Path("stage2/01-sys-tweaks/01-run.sh")
 ensure_snippet = """
-# Ensure the apt sources keep the preferred Buster mirror ordering (primary archive.raspbian.org, fallback constant.com)
+# Ensure the apt sources continue using the live Buster legacy archive.
 on_chroot <<'EOF'
 set -e
-sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|archive.raspbian.org/raspbian|g' /etc/apt/sources.list
-sed -i 's|https://raspbian\\.raspberrypi\\.org|https://archive.raspbian.org|g' /etc/apt/sources.list
+sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|legacy.raspbian.org/raspbian|g' /etc/apt/sources.list
+sed -i 's|https://raspbian\\.raspberrypi\\.org|https://legacy.raspbian.org|g' /etc/apt/sources.list
 if [ -d /etc/apt/sources.list.d ]; then
-  find /etc/apt/sources.list.d -type f -name '*.list' -exec sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|archive.raspbian.org/raspbian|g' {} \\;
+  find /etc/apt/sources.list.d -type f -name '*.list' -exec sed -i 's|raspbian\\.raspberrypi\\.org/raspbian|legacy.raspbian.org/raspbian|g' {} \\;
 fi
 cat >/etc/apt/apt.conf.d/99archive-tweaks <<'APTCONF'
 Acquire::Check-Valid-Until "false";
@@ -247,6 +298,26 @@ if [ ! -d "${SRC_STAGE_DIR}" ]; then
   exit 1
 fi
 cp -a "${SRC_STAGE_DIR}" stage-gymnasticon
+# Recent Bookworm images omit dphys-swapfile. The image still needs swap
+# disabled when the utility is present, while its absence is already the
+# desired state and must not abort the appliance build.
+python3 - <<'PY'
+from pathlib import Path
+
+install_script = Path("stage-gymnasticon/00-install-gymnasticon/01-run.sh")
+install_text = install_script.read_text()
+install_text = install_text.replace(
+    "dphys-swapfile swapoff\n"
+    "dphys-swapfile uninstall\n"
+    "systemctl disable dphys-swapfile.service\n",
+    "if command -v dphys-swapfile >/dev/null 2>&1; then\n"
+    "  dphys-swapfile swapoff\n"
+    "  dphys-swapfile uninstall\n"
+    "  systemctl disable dphys-swapfile.service\n"
+    "fi\n",
+)
+install_script.write_text(install_text)
+PY
 # Mirror any pre-packaged firmware blobs (e.g., Broadcom Bluetooth patches) into
 # the stage files tree so the image ships them even without Internet access.
 FIRMWARE_SRC="${REPO_ROOT}/deploy/firmware"

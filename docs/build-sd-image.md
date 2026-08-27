@@ -42,10 +42,11 @@ GYM_CONFIG=config.bookworm bash scripts/build-pi-image.sh
 
 # Legacy Buster image for Pi Zero / Zero W with a USB BLE dongle
 GYM_CONFIG=config.buster bash scripts/build-pi-image.sh
-
-# Build both images
-deploy/pi-sdcard/build-all.sh
 ```
+
+Run both commands sequentially to build both release images. Each build recreates
+the `pi-gen` workspace, so copy or publish the first artifact before starting the
+second build.
 
 The build usually takes 20-40 minutes depending on host performance and network speed.
 

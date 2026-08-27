@@ -1,4 +1,4 @@
-IMG_NAME=Gymnasticon
+IMG_NAME=Gymnasticon-legacy
 RELEASE=buster
 LOCALE_DEFAULT=en_US.UTF-8
 TARGET_HOSTNAME=gymnasticon
@@ -11,8 +11,8 @@ ENABLE_SSH=1
 STAGE_LIST="stage0 stage1 stage2 stage-gymnasticon"
 
 # Mirror settings
-APT_MIRROR=https://archive.raspbian.org/raspbian/
-MIRROR=https://archive.raspbian.org/raspbian/
+APT_MIRROR=https://legacy.raspbian.org/raspbian/
+MIRROR=https://legacy.raspbian.org/raspbian/
 
 # Release version
 RELEASE_VERSION=2020-02-13

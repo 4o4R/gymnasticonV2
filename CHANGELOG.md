@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.0.3] - 2026-08-26
 ### Changed
 - Expanded the IC4 Bluetooth matcher to also recognize Schwinn 290 advertising names (shared FTMS payload).
 - Hardened noble MTU handling to avoid crashes on rapid disconnect/reconnect.
@@ -8,6 +8,7 @@
 - Made hcitool fallback respect the configured adapter and emit clearer setup errors.
 - Fixed automatic BLE role assignment on Pi Zero-class dual-radio installs so the onboard adapter scans for the bike while USB BLE dongles advertise to apps; single-adapter installs still fall back to reduced-feature mode.
 - Fixed Pi Zero install/image setup by using the actual Node.js path in the systemd service, enabling SSH in generated images, and routing the deprecated Pi Zero setup script through the maintained installer.
+- Published modern Bookworm and legacy Buster Raspberry Pi images as release assets.
 
 ## 1.4.0
 
