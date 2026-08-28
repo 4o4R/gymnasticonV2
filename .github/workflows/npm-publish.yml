@@ -64,8 +64,17 @@ jobs:
           npm install -g node-gyp@9.4.1
           echo "npm_config_node_gyp=$(npm root -g)/node-gyp/bin/node-gyp.js" >> $GITHUB_ENV
       - run: npm ci
+      - name: Check npm credentials
+        id: npm-auth
+        run: |
+          if npm whoami >/dev/null 2>&1; then
+            echo "authenticated=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "authenticated=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::NPM_TOKEN is not usable; skipping npmjs.org publish"
+          fi
       - name: Publish to npm
-        if: env.NODE_AUTH_TOKEN != ''
+        if: steps.npm-auth.outputs.authenticated == 'true'
         run: |
           package_spec=$(node -p "const p = require('./package.json'); p.name + '@' + p.version")
           if npm view "$package_spec" version >/dev/null 2>&1; then
@@ -73,9 +82,6 @@ jobs:
           else
             npm publish --access public
           fi
-      - name: Skip npm publish when no token is configured
-        if: env.NODE_AUTH_TOKEN == ''
-        run: echo "NPM_TOKEN is not configured; skipping npmjs.org publish"
 
   publish-gpr:
     needs: build
