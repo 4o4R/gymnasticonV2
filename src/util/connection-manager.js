@@ -43,6 +43,9 @@ export class BluetoothConnectionManager {
           return true;
         } catch (error) {
           connection.retryCount++;
+          if (error.retryable === false) {
+            throw new Error(`Connection aborted because cleanup failed: ${error.message}`);
+          }
           if (connection.retryCount >= this.maxRetries) {
             throw new Error(`Connection failed after ${this.maxRetries} retries: ${error.message}`);
           }
@@ -55,97 +58,78 @@ export class BluetoothConnectionManager {
       }
       throw new Error('Max connection retries exceeded');
     } finally {
-      // Teaching note: nothing reads this map; drop the entry so a long-running
-      // process doesn't accumulate one dead record per connect attempt.
+      // Drop completed attempts so a long-running process does not accumulate
+      // one dead record per peripheral.
       this.connections.delete(peripheral.id);
     }
   }
 
   async attemptConnection(connection) {
-    // FIX #55: Handle noble crash on disconnect during MTU/feature exchange
-    // Issue: Race condition when peripheral disconnects while updating MTU
-    // Solution: Wrap in try/catch and clean up properly
-    
     let timeoutId = null;
     const peripheral = connection.peripheral;
-    let isConnected = false;
+    let onDisconnect;
 
     const timeoutPromise = new Promise((_, reject) => {
       timeoutId = setTimeout(() => reject(new Error('Connection timeout')), this.connectionTimeout);
     });
+    const disconnectPromise = new Promise((_, reject) => {
+      onDisconnect = () => reject(new Error('Peripheral disconnected during connection attempt'));
+      peripheral.once?.('disconnect', onDisconnect);
+    });
 
-    let connectPromise = null;
     try {
-      // FIX #55: Add disconnect listener BEFORE connecting to catch race conditions
-      const onDisconnect = () => {
-        console.log(`[connection-manager] ⚠ Peripheral disconnected during connection attempt`);
-        if (timeoutId) clearTimeout(timeoutId);
-      };
+      const connectionWork = (async () => {
+        await peripheral.connectAsync();
 
-      if (peripheral.once) {
-        peripheral.once('disconnect', onDisconnect);
-      }
-
-      try {
-        // Race the connection against a timer; whichever resolves first wins.
-        connectPromise = peripheral.connectAsync();
-        await Promise.race([
-          connectPromise,
-          timeoutPromise
-        ]);
-        isConnected = true;
-        
-        // FIX #55: Safe MTU update with error handling
-        // Only attempt MTU update if connected and supported
-        if (isConnected && typeof peripheral.requestMTUAsync === 'function') {
+        if (typeof peripheral.requestMTUAsync === 'function') {
           try {
-            // Delay MTU request slightly to allow connection to stabilize
             await new Promise(resolve => setTimeout(resolve, 100));
-            await peripheral.requestMTUAsync(247);  // Request max BLE MTU
+            await peripheral.requestMTUAsync(247);
           } catch (mtuError) {
-            // MTU request failures are non-fatal (some devices don't support it)
             console.log(`[connection-manager] ℹ MTU update skipped: ${mtuError.message}`);
           }
         }
-      } catch (connectError) {
-        // FIX #55: If connection fails, ensure we're not left in half-connected state
-        if (connectError?.message === 'Connection timeout' && isConnected === false) {
-          // Promise.race does not cancel the loser, so the original connectAsync
-          // may still be in flight. Give it a moment to settle, then disconnect
-          // only if the link actually came up, so we never race disconnectAsync
-          // against a pending connect nor double-connect on the retry.
-          try {
-            await Promise.race([
-              connectPromise ? connectPromise.catch(() => {}) : Promise.resolve(),
-              new Promise(resolve => setTimeout(resolve, 1000)),
-            ]);
-          } catch (e) {
-            // ignore settlement failures
-          }
-          if (peripheral?.disconnectAsync && peripheral.state === 'connected') {
-            try {
-              await peripheral.disconnectAsync();
-            } catch (e) {
-              // Ignore disconnect errors if connect already failed
-            }
-          }
-        }
-        throw connectError;
-      } finally {
-        // Remove disconnect listener
-        if (peripheral.removeListener) {
-          peripheral.removeListener('disconnect', onDisconnect);
-        }
-      }
+      })();
+
+      await Promise.race([connectionWork, timeoutPromise, disconnectPromise]);
 
       connection.connected = true;
     } catch (error) {
       connection.connected = false;
+      const disconnected = await this.cancelConnectionAttempt(peripheral);
+      if (!disconnected) {
+        error.retryable = false;
+        error.message = `${error.message}; unable to confirm connection cancellation`;
+      }
       throw error;
     } finally {
-      // Always clear the timer so it cannot reject later
       if (timeoutId) {
         clearTimeout(timeoutId);
+      }
+      peripheral.removeListener?.('disconnect', onDisconnect);
+    }
+  }
+
+  async cancelConnectionAttempt(peripheral) {
+    if (!peripheral || peripheral.state === 'disconnected' || peripheral.state === 'error') {
+      return true;
+    }
+    if (typeof peripheral.disconnectAsync !== 'function') {
+      return false;
+    }
+
+    let cleanupTimer;
+    try {
+      const disconnected = await Promise.race([
+        peripheral.disconnectAsync().then(() => true, () => false),
+        new Promise(resolve => {
+          cleanupTimer = setTimeout(() => resolve(false), 1000);
+        }),
+      ]);
+      return disconnected || peripheral.state === 'disconnected';
+    } finally {
+      if (cleanupTimer) {
+        clearTimeout(cleanupTimer);
       }
     }
   }

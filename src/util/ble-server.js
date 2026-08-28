@@ -52,25 +52,43 @@ export class BleServer extends EventEmitter {
       await this.bleno.startAdvertisingAsync(this.name, this.uuids);
       await this.bleno.setServicesAsync(this.services);
     } catch (err) {
-      // Teaching note: reset state so a later start() can retry instead of
-      // throwing 'already started' forever, leaving the server wedged.
-      this.state = 'stopped';
+      await this.cleanupFailedStart();
       throw err;
     }
     this.state = 'started';
   }
 
+  async cleanupFailedStart() {
+    // setServices can fail after the controller has begun advertising. Stop it
+    // explicitly before allowing another start attempt, otherwise the next
+    // attempt races a live advertiser that our state no longer represents.
+    try {
+      await this.bleno.stopAdvertisingAsync();
+    } catch (_error) {
+      // Preserve the original startup error; stopping an inactive advertiser
+      // is allowed to fail on some bleno backends.
+    } finally {
+      this.state = 'stopped';
+      this.connectionCount = 0;
+    }
+  }
+
   /** Disconnect any active connections and stop advertising. */
   async stop() {
-    if (this.state === 'stopped') return;
+    if (this.state === 'stopped' || this.state === 'stopping') return;
 
-    await this.bleno.stopAdvertisingAsync();
-    // Teaching note: avoid disconnect calls when no centrals are connected to
-    // prevent "unknown handle" warnings on some BlueZ stacks.
-    if (this.connectionCount > 0) {
-      this.bleno.disconnect();
+    this.state = 'stopping';
+    try {
+      await this.bleno.stopAdvertisingAsync();
+      // Avoid disconnect calls when no centrals are connected to prevent
+      // "unknown handle" warnings on some BlueZ stacks.
+      if (this.connectionCount > 0) {
+        this.bleno.disconnect();
+      }
+    } finally {
+      this.connectionCount = 0;
+      this.state = 'stopped';
     }
-    this.state = 'stopped';
   }
 
   onAccept(address) {

@@ -190,10 +190,7 @@ export class GymnasticonServer extends BleServer {
 
       await this.bleno.setServicesAsync(this.services); // Commit the service list to the adapter now that advertising is live.
     } catch (err) {
-      // Teaching note: reset state so a later start() can retry instead of
-      // throwing 'already started' forever, leaving the server wedged (and a
-      // potential zombie advertiser if advertising succeeded but services failed).
-      this.state = 'stopped';
+      await this.cleanupFailedStart();
       throw err;
     }
     this.state = 'started';

@@ -1,11 +1,24 @@
 import {EventEmitter} from 'events';
 import {createRequire} from 'module';
 import {execSync} from 'child_process';
+import path from 'path';
 import {loadDependency, toDefaultExport} from './optional-deps.js';
 import {normalizeAdapterId} from './adapter-id.js';
 
 const requireFromWrapper = createRequire(import.meta.url);
 const NOBLE_REQUEST = '@abandonware/noble';
+
+function clearDependencyCache(request) {
+  const entryPath = requireFromWrapper.resolve(request);
+  const packageRoot = path.dirname(requireFromWrapper.resolve(`${request}/package.json`));
+  const packagePrefix = `${packageRoot}${path.sep}`;
+
+  for (const cachedPath of Object.keys(requireFromWrapper.cache)) {
+    if (cachedPath === entryPath || cachedPath.startsWith(packagePrefix)) {
+      delete requireFromWrapper.cache[cachedPath];
+    }
+  }
+}
 
 function patchNobleMtu(noble) {
   // Guard against the noble MTU race (#55) where a peripheral drops mid-update.
@@ -176,8 +189,10 @@ export const initializeBluetooth = async (adapter = 'hci0', options = {}) => {
 
   if (forceNewInstance) {
     try {
-      const cachedPath = requireFromWrapper.resolve(NOBLE_REQUEST);
-      delete require.cache[cachedPath]; // Clear the cache so we get a new instance bound to the new adapter.
+      // Noble's entry point, bindings, HCI, and GAP modules all cache singleton
+      // state. Evict the whole package so the new client owns a distinct HCI
+      // socket instead of wrapping the original adapter's binding again.
+      clearDependencyCache(NOBLE_REQUEST);
     } catch (error) {
       // Module may not be installed yet; skip cache cleanup in that case.
     }
