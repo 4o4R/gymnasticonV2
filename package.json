@@ -17,6 +17,7 @@
     "preinstall": "node scripts/check-node-version.cjs",
     "build": "node scripts/rebuild-native.cjs",
     "postinstall": "node scripts/rebuild-native.cjs",
+    "lint": "eslint src scripts --ext .js,.cjs",
     "test": "node scripts/run-tests.mjs",
     "dev": "node src/app/cli.js --bike bot --bot-power 150 --bot-cadence 80",
     "clean": "rm -rf node_modules package-lock.json"

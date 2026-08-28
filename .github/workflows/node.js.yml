@@ -68,4 +68,5 @@ jobs:
     
     # Step 7: Run your project's tests defined in package.json
     # This will fail the workflow if any tests fail
+    - run: npm run lint
     - run: npm test
