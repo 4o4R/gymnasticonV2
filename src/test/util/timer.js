@@ -3,10 +3,8 @@ import {Timer} from '../../util/timer.js';
 
 test('Timer keeps repeating even when a listener throws', t => {
   t.plan(1);
-  // Swallow the propagated error so it doesn't fail the run; we only care that
-  // the repeating timer keeps scheduling its next tick despite the throw.
-  const onUncaught = () => {};
-  process.on('uncaughtException', onUncaught);
+  const originalConsoleError = console.error;
+  console.error = () => {};
 
   let count = 0;
   const timer = new Timer(0.01); // 10ms, repeats by default
@@ -18,10 +16,25 @@ test('Timer keeps repeating even when a listener throws', t => {
 
   setTimeout(() => {
     timer.cancel();
-    process.removeListener('uncaughtException', onUncaught);
+    console.error = originalConsoleError;
     t.ok(count >= 3, `timer survived throwing listener (fired ${count} times)`);
     t.end();
   }, 60);
+});
+
+test('Timer contains a listener exception', t => {
+  const timer = new Timer(1, {repeats: false});
+  const originalConsoleError = console.error;
+  let logged = 0;
+  console.error = () => { logged += 1; };
+  timer.on('timeout', () => {
+    throw new Error('boom');
+  });
+
+  t.doesNotThrow(() => timer.onExpire(), 'listener error does not escape the timer');
+  console.error = originalConsoleError;
+  t.equal(logged, 1, 'listener error is logged once');
+  t.end();
 });
 
 test('Timer supports an immediate first tick', t => {

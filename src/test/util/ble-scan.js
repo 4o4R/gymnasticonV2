@@ -36,7 +36,7 @@ test('createAddressFilter()', t => {
   t.notOk(filter(empty), 'false when address given but peripheral address is missing');
 });
 
-test('scan() can timeout without falling back to hcitool', async (t) => {
+test('scan() stops and returns null on timeout', async (t) => {
   const noble = new EventEmitter();
   let startCalls = 0;
   let stopCalls = 0;
@@ -50,11 +50,25 @@ test('scan() can timeout without falling back to hcitool', async (t) => {
   const result = await scan(noble, ['181a'], () => false, {
     timeoutMs: 1,
     stopScanOnTimeout: true,
-    fallbackOnTimeout: false,
   });
 
   t.equal(result, null, 'returns null when the noble scan times out');
   t.equal(startCalls, 1, 'starts a noble scan');
   t.equal(stopCalls, 1, 'stops the noble scan on timeout');
+  t.end();
+});
+
+test('scan() preserves noble startup failures', async t => {
+  const noble = new EventEmitter();
+  noble.startScanningAsync = async () => {
+    throw new Error('scan-start-failed');
+  };
+
+  try {
+    await scan(noble, [], () => false, {timeoutMs: 1});
+    t.fail('scan should reject');
+  } catch (error) {
+    t.equal(error.message, 'scan-start-failed', 'caller can reinitialize the failed noble adapter');
+  }
   t.end();
 });
