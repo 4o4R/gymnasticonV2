@@ -4,6 +4,7 @@ import test from '../support/tape.js';
 import {App} from '../../app/app.js';
 import {HeartRateClient} from '../../hr/heart-rate-client.js';
 import {BleServer} from '../../util/ble-server.js';
+import {stopBluetoothStack} from '../../util/bluetooth-shutdown.js';
 import {BluetoothConnectionManager} from '../../util/connection-manager.js';
 
 test('BluetoothConnectionManager cancels a timed-out physical connection', async t => {
@@ -87,5 +88,83 @@ test('App.cleanup removes its process-level error handlers', async t => {
   await app.cleanup();
   t.notOk(process.listeners('uncaughtException').includes(app.errorHandler), 'handler is removed during cleanup');
   t.notOk(process.listeners('unhandledRejection').includes(app.errorHandler), 'rejection handler is also removed');
+  t.end();
+});
+
+test('stopBluetoothStack releases a native HCI handle once', t => {
+  let stopCalls = 0;
+  const stack = {
+    _bindings: {
+      _hci: {
+        _socket: {
+          stop() {
+            stopCalls += 1;
+          },
+        },
+      },
+    },
+  };
+
+  t.equal(stopBluetoothStack(stack), true, 'releases an active native socket');
+  t.equal(stopBluetoothStack(stack), false, 'repeated shutdown is a no-op');
+  t.equal(stopCalls, 1, 'calls the native stop method once');
+  t.equal(stopBluetoothStack(new EventEmitter()), false, 'accepts stubs without native bindings');
+  t.end();
+});
+
+test('App.stop releases noble and every bleno binding after a cleanup error', async t => {
+  const createStack = () => {
+    const stack = new EventEmitter();
+    stack.state = 'poweredOn';
+    stack.stopCalls = 0;
+    stack._bindings = {
+      _hci: {
+        _socket: {
+          stop() {
+            stack.stopCalls += 1;
+          },
+        },
+      },
+    };
+    return stack;
+  };
+  const noble = createStack();
+  const dedicatedHeartRateNoble = createStack();
+  const firstBleno = createStack();
+  const secondBleno = createStack();
+  const healthMonitor = {on() {}, stop() {}, recordMetric() {}};
+  const app = new App({
+    noble,
+    heartRateNoble: dedicatedHeartRateNoble,
+    antEnabled: false,
+    healthMonitor,
+    bleMultiOutput: false,
+    serverAdapters: ['hci0'],
+  });
+  app.bike = {
+    async disconnect() {
+      throw new Error('bike-disconnect-failed');
+    },
+  };
+  app.server = {
+    entries: [
+      {server: {bleno: firstBleno}},
+      {server: {bleno: secondBleno}},
+    ],
+  };
+
+  try {
+    await app.stop();
+    t.fail('reports the first cleanup error');
+  } catch (error) {
+    t.equal(error.message, 'bike-disconnect-failed', 'preserves the cleanup failure');
+  }
+  t.equal(noble.stopCalls, 1, 'releases the bike noble binding');
+  t.equal(dedicatedHeartRateNoble.stopCalls, 1, 'releases the dedicated heart-rate binding');
+  t.equal(firstBleno.stopCalls, 1, 'releases the first advertising binding');
+  t.equal(secondBleno.stopCalls, 1, 'releases the second advertising binding');
+
+  process.removeListener('unhandledRejection', app.errorHandler);
+  process.removeListener('uncaughtException', app.errorHandler);
   t.end();
 });

@@ -25,6 +25,7 @@ import {HealthMonitor} from '../util/health-monitor.js';
 import {BluetoothConnectionManager} from '../util/connection-manager.js';
 import {initializeBluetooth} from '../util/noble-wrapper.js';
 import {initializeBleno} from '../util/bleno-wrapper.js';
+import {stopBluetoothStack} from '../util/bluetooth-shutdown.js';
 import {normalizeAdapterId, normalizeAdapterName} from '../util/adapter-id.js';
 import {detectAdapters, supportsExtendedScan} from '../util/adapter-detect.js';
 import {isSingleAdapterMultiRoleCapable} from '../util/hardware-info.js';
@@ -646,6 +647,7 @@ export class App {
   async reinitializeNoble(reason) {
     // Teaching note: force a fresh noble instance so the HCI socket is reopened.
     this.logger.log(`[gym-app] reinitializing noble (${reason})`);
+    const previousNoble = this.noble;
     const { noble } = await initializeBluetooth(this.opts.bikeAdapter, { forceNewInstance: true });
     this.noble = noble;
     this.opts.noble = noble;
@@ -655,7 +657,15 @@ export class App {
       timeout: this.opts.connectionTimeout,
       maxRetries: this.opts.connectionRetries,
     });
-    await this.rebuildHeartRateClient();
+    try {
+      await this.rebuildHeartRateClient();
+    } finally {
+      // The abandoned native poll handle otherwise survives every fallback and
+      // eventually prevents a clean process exit.
+      if (previousNoble !== noble) {
+        stopBluetoothStack(previousNoble);
+      }
+    }
   }
 
   async rebuildHeartRateClient() {
@@ -704,21 +714,53 @@ export class App {
     this.pingInterval.cancel();
     this.statsTimeout.cancel();
     this.connectTimeout.cancel();
-    if (this.bike && this.bike.disconnect) {
-      await this.bike.disconnect();
+
+    let firstError;
+    const stopSafely = async (label, action) => {
+      try {
+        await action();
+      } catch (error) {
+        if (!firstError) {
+          firstError = error;
+        }
+        this.logger.error(`[gym-app] failed to stop ${label}:`, error);
+      }
+    };
+
+    if (this.bike?.disconnect) {
+      await stopSafely('bike connection', () => this.bike.disconnect());
     }
     // Teaching note: use the helper so the internal flag stays in sync.
-    await this.stopServerAdvertising('app-stop');
-    this.stopAnt();
+    await stopSafely('BLE advertising', () => this.stopServerAdvertising('app-stop'));
+    await stopSafely('ANT+ broadcaster', () => this.stopAnt());
     if (this.hrClient) {
-      await this.hrClient.disconnect();
+      await stopSafely('heart-rate client', () => this.hrClient.disconnect());
     }
-    await this.stopOptionalSensorDiscovery('app-stop');
+    await stopSafely('optional sensor discovery', () => this.stopOptionalSensorDiscovery('app-stop'));
     if (this.healthMonitor?.stop) {
-      // Shutting down the periodic monitor prevents Node from holding the event
-      // loop open and ensures repeated starts (during development or CLI
-      // restarts) do not create leaked intervals.
-      this.healthMonitor.stop();
+      await stopSafely('health monitor', () => this.healthMonitor.stop());
+    }
+    this.releaseBluetoothResources();
+
+    if (firstError) {
+      throw firstError;
+    }
+  }
+
+  releaseBluetoothResources() {
+    const stacks = new Set([this.noble, this.heartRateNoble]);
+    for (const {server} of this.server?.entries || []) {
+      stacks.add(server?.bleno);
+    }
+
+    for (const stack of stacks) {
+      try {
+        stopBluetoothStack(stack);
+      } catch (error) {
+        // Continue releasing the remaining radios if one native binding is
+        // already damaged or has been closed by the operating system.
+        this.logger.error('[gym-app] failed to release Bluetooth HCI socket:', error);
+      }
     }
   }
 
