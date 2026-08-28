@@ -108,6 +108,10 @@ export const options = {
     describe: 'force-enable ANT+ broadcasting regardless of auto detection',
     type: 'boolean',
   },
+  'ant-enabled': {
+    describe: 'explicitly enable or disable ANT+ broadcasting',
+    type: 'boolean',
+  },
   'power-scale': {
     describe: '<value> scale watts by this multiplier',
     type: 'number',

@@ -1,4 +1,5 @@
 import {EventEmitter} from 'events';
+import {existsSync, readFileSync} from 'fs';
 
 import test from '../support/tape.js';
 import {App} from '../../app/app.js';
@@ -166,5 +167,19 @@ test('App.stop releases noble and every bleno binding after a cleanup error', as
 
   process.removeListener('unhandledRejection', app.errorHandler);
   process.removeListener('uncaughtException', app.errorHandler);
+  t.end();
+});
+
+test('image and manual installers share the canonical systemd service', t => {
+  const serviceUrl = new URL('../../../deploy/gymnasticon.service', import.meta.url);
+  const obsoleteImageServiceUrl = new URL(
+    '../../../deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon.service',
+    import.meta.url
+  );
+  const service = readFileSync(serviceUrl, 'utf8');
+
+  t.match(service, /ExecStart=\/opt\/gymnasticon\/bin\/gymnasticon/, 'canonical unit uses the cross-layout wrapper');
+  t.match(service, /\/usr\/sbin:\/usr\/bin:\/sbin:\/bin/, 'canonical unit exposes system Bluetooth tools');
+  t.notOk(existsSync(obsoleteImageServiceUrl), 'no divergent image-only unit remains');
   t.end();
 });

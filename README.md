@@ -96,7 +96,9 @@ export CXXFLAGS=-std=gnu++14
 sudo env npm_config_node_gyp="$NODE_GYP_BIN" npm_config_python=/usr/bin/python3 CXXFLAGS=-std=gnu++14 npm install --omit=dev
 sudo setcap cap_net_raw+eip "$(command -v node)"
 
-sudo cp deploy/gymnasticon.service /etc/systemd/system/
+sudo install -d -m 755 /opt/gymnasticon/bin
+sudo install -m 755 deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon-wrapper.sh /opt/gymnasticon/bin/gymnasticon
+sudo install -m 644 deploy/gymnasticon.service /etc/systemd/system/gymnasticon.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now gymnasticon
 ```
@@ -134,7 +136,7 @@ Common options:
 | `bikeAdapter` | Bluetooth adapter used to connect to the bike, for example `hci0`. |
 | `serverAdapter` / `serverAdapters` | Bluetooth adapter or adapters used to advertise Gymnasticon. |
 | `bleMultiOutput` | Mirror BLE output across multiple adapters when available. |
-| `antAuto` / `antEnabled` | Automatically or explicitly enable ANT+ output. |
+| `antAuto` / `antEnabled` | Automatically or explicitly enable ANT+ output (`--ant-auto` / `--ant-enabled`; `--ant-plus` remains supported). |
 | `powerScale` / `powerOffset` | Calibrate reported wattage. |
 | `heartRateEnabled` / `heartRateAdapter` | Control heart-rate rebroadcast behavior. |
 

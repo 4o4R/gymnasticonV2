@@ -3,6 +3,7 @@ import {EventEmitter} from 'events';
 import test from '../support/tape.js';
 import {App, resolveServerAdapters} from '../../app/app.js';
 import {options as cliOptions} from '../../app/cli-options.js';
+import {resolveAntOptions} from '../../app/ant-options.js';
 import {DEFAULT_NAME as DEFAULT_SERVER_NAME} from '../../servers/ble/index.js';
 import {chooseAdapterRoles} from '../../util/adapter-detect.js';
 
@@ -440,6 +441,32 @@ test('CLI adapter options stay unset so hardware detection can split dual radios
   t.equal(cliOptions['bike-adapter'].default, undefined, 'bike adapter has no yargs default');
   t.equal(cliOptions['server-adapter'].default, undefined, 'server adapter has no yargs default');
   t.equal(cliOptions['sensor-connect-timeout'].default, 8, 'optional speed/cadence sensor scan window defaults to 8 seconds');
+  t.end();
+});
+
+test('resolveAntOptions gives explicit CLI flags precedence over JSON and auto mode', (t) => {
+  t.deepEqual(resolveAntOptions({
+    antEnabled: false,
+    antPlus: true,
+    antAuto: true,
+    providedOptions: new Set(['antEnabled', 'antPlus']),
+  }), {antAuto: true, antEnabled: false, antEnabledExplicit: true}, '--ant-enabled wins when both CLI spellings are present');
+
+  t.deepEqual(resolveAntOptions({
+    antEnabled: false,
+    antPlus: true,
+    antAuto: false,
+    providedOptions: new Set(['antPlus']),
+  }), {antAuto: false, antEnabled: true, antEnabledExplicit: true}, 'legacy --ant-plus still overrides JSON');
+
+  t.deepEqual(resolveAntOptions({
+    antEnabled: false,
+    antAuto: true,
+  }), {antAuto: true, antEnabled: false, antEnabledExplicit: false}, 'JSON antEnabled overrides automatic detection');
+
+  t.deepEqual(resolveAntOptions({
+    antAuto: false,
+  }), {antAuto: false, antEnabled: false, antEnabledExplicit: false}, 'auto mode supplies the fallback when no explicit value exists');
   t.end();
 });
 

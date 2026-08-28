@@ -5,9 +5,11 @@
 - Release noble and bleno native HCI poll handles during graceful shutdown so SIGINT/SIGTERM can exit cleanly on Raspberry Pi hardware.
 - Release abandoned noble bindings during adapter reinitialization instead of leaking one native handle per fallback attempt.
 - Continue shutting down the remaining bike, BLE, ANT+, sensor, and monitor resources when one cleanup step fails.
+- Add `--ant-enabled` / `--no-ant-enabled` CLI parity with the `antEnabled` JSON setting while retaining `--ant-plus` compatibility.
+- Use one canonical systemd service for image and manual installs, with a wrapper that understands both install layouts.
 
 ### Tests
-- Added regressions for idempotent native HCI teardown and multi-radio cleanup after an earlier shutdown failure; the suite now contains 193 passing assertions.
+- Added regressions for HCI teardown, multi-radio cleanup, ANT+ option precedence, and the canonical service; the suite now contains 200 passing assertions.
 
 ## [2.0.6] - 2026-08-28
 ### Fixed

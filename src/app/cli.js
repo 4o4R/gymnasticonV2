@@ -33,6 +33,7 @@ import { detectAdapters, supportsExtendedScan } from '../util/adapter-detect.js'
 import { initializeBluetooth } from '../util/noble-wrapper.js'; // Bluetooth initialization (runs after we set adapter env vars)
 import { normalizeAdapterId, normalizeAdapterName } from '../util/adapter-id.js'; // Normalize hci0 -> 0 for noble/bleno env vars
 import { isSingleAdapterMultiRoleCapable } from '../util/hardware-info.js'; // Decide when bike adapter can safely advertise too
+import { resolveAntOptions } from './ant-options.js'; // Normalize JSON and legacy/new ANT+ CLI switches in one tested place.
 
 /**
  * Convert a kebab-case CLI option name into the camelCase property that yargs
@@ -266,6 +267,9 @@ const main = async () => {
     if (!providedOptions.has('sensorConnectTimeout') && configOverrides.sensorConnectTimeout !== undefined) {
         argv.sensorConnectTimeout = configOverrides.sensorConnectTimeout;
     }
+    if (!providedOptions.has('antEnabled') && configOverrides.antEnabled !== undefined) {
+        argv.antEnabled = configOverrides.antEnabled;
+    }
     const serverAdapterExplicit = providedOptions.has('serverAdapter') || Boolean(configOverrides.serverAdapter);
 
     const discovery = detectAdapters(); // Gather available adapters and ANT+ presence for sensible defaults.
@@ -301,15 +305,18 @@ const main = async () => {
     }
     argv.serverAdapterExplicit = serverAdapterExplicit;
 
-    const antFlag = typeof argv.antPlus === 'boolean' ? argv.antPlus : undefined; // Track whether the caller explicitly passed --ant-plus / --no-ant-plus.
-    const antAuto = argv.antAuto === undefined ? true : argv.antAuto; // Treat auto mode as enabled unless the config/CLI disabled it.
-    argv.antAuto = antAuto; // Persist the normalized boolean so the runtime can inspect the actual setting later.
-    if (antFlag !== undefined) { // Respect explicit user intent first.
-        argv.antEnabled = antFlag; // Use the exact value supplied on the CLI/config.
-    } else if (antAuto) { // Auto mode active (default): always attempt to broadcast and let hardware detection happen inside the ANT stack.
-        argv.antEnabled = true; // Turn on ANT+ broadcasting proactively; startAnt() will quietly skip if no stick is present.
-    } else {
-        argv.antEnabled = false; // Auto mode disabled and no explicit override, so keep ANT+ off.
+    const antOptions = resolveAntOptions({
+        antEnabled: argv.antEnabled,
+        antPlus: argv.antPlus,
+        antAuto: argv.antAuto,
+        providedOptions,
+    });
+    argv.antAuto = antOptions.antAuto;
+    argv.antEnabled = antOptions.antEnabled;
+    if (antOptions.antEnabledExplicit) {
+        // GymnasticonApp merges JSON later; mark the normalized key explicit so
+        // a legacy --ant-plus flag still overrides antEnabled from that file.
+        providedOptions.add('antEnabled');
     }
 
     argv.speedFallback = { // Collect speed estimation overrides into a single object consumed by the App.
@@ -318,7 +325,7 @@ const main = async () => {
         min: argv.speedMin,
         max: argv.speedMax
     };
-    delete argv.antPlus; // Drop intermediate flags so the App receives only the consolidated antEnabled switch.
+    delete argv.antPlus; // Drop the legacy alias so the App receives only the consolidated antEnabled switch.
     delete argv.speedCircumference; // Remove raw CLI fields now that they have been normalized.
     delete argv.speedGearFactor;
     delete argv.speedMin;
