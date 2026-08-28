@@ -97,8 +97,6 @@ export class CadenceSensorClient extends EventEmitter {
           timeoutMs,
           stopScanOnMatch: true,
           stopScanOnTimeout: true,
-          fallbackOnTimeout: false,
-          hcitoolReset: false,
         }
       );
 
@@ -171,7 +169,7 @@ export class CadenceSensorClient extends EventEmitter {
   /**
    * Check if a peripheral matches our search criteria.
    * Matches if: device advertises cadence service AND (no name filter OR name matches).
-   * If service UUIDs are missing (hcitool fallback), name matching is used when provided.
+   * If service UUIDs are absent, an explicit name filter can still match.
    */
   matchesFilter(peripheral) {
     const localName = peripheral?.advertisement?.localName || '';
