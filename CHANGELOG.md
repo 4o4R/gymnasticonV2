@@ -8,6 +8,7 @@
 - Reject truncated 16-bit heart-rate events and contain timer listener exceptions.
 - Register SIGINT/SIGTERM cleanup before the long-running application loop.
 - Restore system utilities to the Raspberry Pi service `PATH` and make native-build failures fail CI.
+- Pin and verify the ARMv6 Node.js runtime downloaded while building Raspberry Pi images.
 
 ### Changed
 - Removed the non-connectable `hcitool` scan fallback, obsolete installers, and stale image-build debris.

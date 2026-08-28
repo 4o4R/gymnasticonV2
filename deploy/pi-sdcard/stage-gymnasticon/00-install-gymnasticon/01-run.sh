@@ -3,7 +3,7 @@
 # helpers, watchdog, and systemd services so the flashed disk boots ready to ride.
 
 NODE_VERSION=14.21.3  # Node.js build compatible with Pi Zero/Zero W (ARMv6)
-NODE_SHASUM256=       # optional checksum when we want to verify downloads again
+NODE_SHASUM256=6f526790724dce3693eefdf7d23f2c82da4403dd76b9d4bbd384d733ea44a7f6
 NODE_ARCHIVE="node-v${NODE_VERSION}-linux-armv6l.tar.xz"
 NODE_URL="https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/${NODE_ARCHIVE}"
 GYMNASTICON_USER=${FIRST_USER_NAME}  # default pi-gen user
@@ -17,12 +17,8 @@ fi
 if [ ! -x "${ROOTFS_DIR}/opt/gymnasticon/node/bin/node" ] ; then
   TMPD=$(mktemp -d)
   trap 'rm -rf $TMPD' EXIT
-  curl -Lo "$TMPD/node.tar.xz" "${NODE_URL}"
-  if [ -n "$NODE_SHASUM256" ]; then
-    sha256sum -c <(echo "$NODE_SHASUM256 $TMPD/node.tar.xz")
-  else
-    echo "Skipping Node.js tarball checksum verification (no hash provided)"
-  fi
+  curl --fail --location --output "$TMPD/node.tar.xz" "${NODE_URL}"
+  printf '%s  %s\n' "$NODE_SHASUM256" "$TMPD/node.tar.xz" | sha256sum --check --strict -
   install -v -m 644 "$TMPD/node.tar.xz" "${ROOTFS_DIR}/tmp/node.tar.xz"
   on_chroot <<'NODE_EOF'
     mkdir -p /opt/gymnasticon/node
