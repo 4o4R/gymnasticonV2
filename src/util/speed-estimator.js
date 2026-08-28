@@ -8,7 +8,7 @@ export function estimateSpeedMps(cadenceRpm, options = {}) { // Main export that
     max = 25 // Upper clamp around 90 km/h which covers aggressive sprinting.
   } = options;
 
-  const safeCadence = Math.max(0, cadenceRpm); // Ensure we ignore bogus negative cadence readings.
+  const safeCadence = Number.isFinite(cadenceRpm) ? Math.max(0, cadenceRpm) : 0; // Ensure we ignore bogus negative/NaN cadence readings.
   const revPerSecond = safeCadence / 60; // Convert cadence to crank revolutions per second.
   const wheelRevsPerSecond = revPerSecond * gearFactor; // Scale by the virtual gear ratio to emulate wheel spin.
   const speed = wheelRevsPerSecond * circumferenceM; // Convert wheel revolutions to meters per second using circumference.

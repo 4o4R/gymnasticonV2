@@ -215,7 +215,8 @@ async function testMultiSensorStartup() {
   
   // Listen to all events for 10 seconds
   bike.on('stats', (stats) => {
-    console.log(`[Events] Bike: power=${Math.round(stats.power)}W, cadence=${Math.round(stats.cadence)}RPM, speed=${stats.speed.toFixed(1)}m/s`);
+    const speedText = Number.isFinite(stats.speed) ? stats.speed.toFixed(1) : 'n/a';
+    console.log(`[Events] Bike: power=${Math.round(stats.power)}W, cadence=${Math.round(stats.cadence)}RPM, speed=${speedText}m/s`);
   });
   
   await new Promise(resolve => setTimeout(resolve, 10000));

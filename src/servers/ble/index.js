@@ -173,22 +173,29 @@ export class GymnasticonServer extends BleServer {
       state = next;
     }
 
-    if (this.advertisingOptions) {
-      const { advertisementData, scanData } = buildAdvertisingPayload(this.name, this.advertisingOptions, this.uuids);
-      await new Promise((resolve, reject) => {
-        this.bleno.startAdvertisingWithEIRData(advertisementData, scanData, (err) => {
-          if (err) {
-            this.state = 'stopped';
-            return reject(err);
-          }
-          resolve();
+    try {
+      if (this.advertisingOptions) {
+        const { advertisementData, scanData } = buildAdvertisingPayload(this.name, this.advertisingOptions, this.uuids);
+        await new Promise((resolve, reject) => {
+          this.bleno.startAdvertisingWithEIRData(advertisementData, scanData, (err) => {
+            if (err) {
+              return reject(err);
+            }
+            resolve();
+          });
         });
-      });
-    } else {
-      await this.bleno.startAdvertisingAsync(this.name, this.uuids);
-    }
+      } else {
+        await this.bleno.startAdvertisingAsync(this.name, this.uuids);
+      }
 
-    await this.bleno.setServicesAsync(this.services); // Commit the service list to the adapter now that advertising is live.
+      await this.bleno.setServicesAsync(this.services); // Commit the service list to the adapter now that advertising is live.
+    } catch (err) {
+      // Teaching note: reset state so a later start() can retry instead of
+      // throwing 'already started' forever, leaving the server wedged (and a
+      // potential zombie advertiser if advertising succeeded but services failed).
+      this.state = 'stopped';
+      throw err;
+    }
     this.state = 'started';
   }
 }

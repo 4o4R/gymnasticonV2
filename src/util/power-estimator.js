@@ -12,7 +12,7 @@ export function estimatePower(rpm, resistance, opts = {}) { // Exported function
   const k = 0.35; // Empirical constant picked so the polynomial produces reasonable wattage for common RPMs.
   const safeResistance = clamp(resistance, 0, 1); // Limit resistance to the expected 0..1 range even if caller sends noisy data.
   const resFactor = 0.4 + 0.6 * safeResistance; // Blend between two constants so resistance influences the power curve smoothly.
-  const safeRpm = Math.max(0, rpm); // Guard against negative cadences that can leak in from sensors as bikes spin down.
+  const safeRpm = Number.isFinite(rpm) ? Math.max(0, rpm) : 0; // Guard against negative/NaN cadences that can leak in from sensors.
   const cadenceTerm = Math.pow(safeRpm, 1.75); // Non-linear cadence term that grows slightly faster than a square relationship.
   const baseWatts = k * cadenceTerm * resFactor; // Combine cadence curve, resistance factor, and constant multiplier to get the base estimate.
   const adjusted = baseWatts * scale + offset; // Apply user-provided calibration so different bikes can be tuned without code changes.
@@ -28,6 +28,9 @@ export class Ewma { // Lightweight exponential weighted moving average used to s
   }
 
   push(sample) { // Feed a new sample into the smoother and return the updated value.
+    if (!Number.isFinite(sample)) { // Ignore garbage samples so a single NaN doesn't poison the smoother forever.
+      return Math.round(this.value);
+    }
     if (!this.initialized) { // First sample simply seeds the accumulator.
       this.value = sample; // Set the running value to the first measurement directly.
       this.initialized = true; // Flip the flag so future samples follow the EWMA formula.
@@ -39,5 +42,8 @@ export class Ewma { // Lightweight exponential weighted moving average used to s
 }
 
 function clamp(value, lo, hi) { // Helper that keeps a number between a lower and upper bound.
+  if (!Number.isFinite(value)) { // Coerce NaN/Infinity to the lower bound instead of propagating NaN.
+    return lo;
+  }
   return Math.min(hi, Math.max(lo, value)); // Use Math helpers to perform the clamp in a single expression.
 }

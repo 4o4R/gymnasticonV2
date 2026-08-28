@@ -5,7 +5,7 @@ import fs from 'fs';
 import path from 'path';
 
 const BLUETOOTH_SYSFS = '/sys/class/bluetooth';
-const HCI_VERSION_REGEX = /HCI Version:\s*([0-9.]+)/i;
+const HCI_VERSION_REGEX = /HCI Version:\s*(?:0x([0-9a-f]+)|(\d+))/i;
 
 function discoverAdapters() {
   if (!fs.existsSync(BLUETOOTH_SYSFS)) {
@@ -125,7 +125,9 @@ export function getHciVersion(adapterName) {
     if (!match) {
       return null;
     }
-    const version = Number.parseFloat(match[1]);
+    // hciconfig prints the HCI version code in either hex ("0x0b (11)") or
+    // decimal ("9 (0x09)") form depending on the BlueZ build; parse both.
+    const version = match[1] !== undefined ? parseInt(match[1], 16) : Number(match[2]);
     return Number.isFinite(version) ? version : null;
   } catch (_error) {
     return null; // If hciconfig is missing or fails, treat version as unknown.
@@ -134,14 +136,15 @@ export function getHciVersion(adapterName) {
 
 export function supportsExtendedScan(adapterName) {
   // Teaching note: Extended scanning is a Bluetooth 5.0+ feature, so only
-  // enable it when the controller advertises HCI >= 5.0.
+  // enable it when the controller advertises HCI version >= 9 (BLE 5.0).
   const version = getHciVersion(adapterName);
   if (version === null) {
     return { supported: false, version: null, reason: 'unknown-version' };
   }
+  const supported = version >= 9;
   return {
-    supported: version >= 5.0,
+    supported,
     version,
-    reason: version >= 5.0 ? 'hci-5-plus' : 'hci-legacy'
+    reason: supported ? 'hci-5-plus' : 'hci-legacy'
   };
 }

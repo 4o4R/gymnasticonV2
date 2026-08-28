@@ -1,4 +1,4 @@
-import {Characteristic, Descriptor} from '../../../bleno-deps.js'; // reuse the centralized bleno exports so stub resolution stays consistent
+import {Characteristic} from '../../../bleno-deps.js'; // reuse the centralized bleno exports so stub resolution stays consistent
 
 /**
  * Bluetooth LE Heart Rate Measurement characteristic.
@@ -7,10 +7,7 @@ export class HeartRateMeasurementCharacteristic extends Characteristic {
   constructor() {
     super({
       uuid: '2a37',
-      properties: ['notify'],
-      descriptors: [
-        new Descriptor({ uuid: '2903', value: Buffer.alloc(2) })
-      ]
+      properties: ['notify'] // bleno auto-adds the 0x2902 CCCD for notify characteristics.
     });
   }
 

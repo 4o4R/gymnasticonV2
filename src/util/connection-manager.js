@@ -35,24 +35,30 @@ export class BluetoothConnectionManager {
 
     this.connections.set(peripheral.id, connection);
 
-    while (connection.retryCount < this.maxRetries) {
-      try {
-        await this.attemptConnection(connection);
-        connection.connected = true;
-        return true;
-      } catch (error) {
-        connection.retryCount++;
-        if (connection.retryCount >= this.maxRetries) {
-          throw new Error(`Connection failed after ${this.maxRetries} retries: ${error.message}`);
+    try {
+      while (connection.retryCount < this.maxRetries) {
+        try {
+          await this.attemptConnection(connection);
+          connection.connected = true;
+          return true;
+        } catch (error) {
+          connection.retryCount++;
+          if (connection.retryCount >= this.maxRetries) {
+            throw new Error(`Connection failed after ${this.maxRetries} retries: ${error.message}`);
+          }
+
+          // FIX #95: Use intelligent backoff instead of fixed delay
+          const backoffMs = this.calculateBackoff(connection.retryCount);
+          console.log(`[connection-manager] Retry ${connection.retryCount}/${this.maxRetries} after ${backoffMs}ms backoff`);
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
         }
-        
-        // FIX #95: Use intelligent backoff instead of fixed delay
-        const backoffMs = this.calculateBackoff(connection.retryCount);
-        console.log(`[connection-manager] Retry ${connection.retryCount}/${this.maxRetries} after ${backoffMs}ms backoff`);
-        await new Promise(resolve => setTimeout(resolve, backoffMs));
       }
+      throw new Error('Max connection retries exceeded');
+    } finally {
+      // Teaching note: nothing reads this map; drop the entry so a long-running
+      // process doesn't accumulate one dead record per connect attempt.
+      this.connections.delete(peripheral.id);
     }
-    throw new Error('Max connection retries exceeded');
   }
 
   async attemptConnection(connection) {
@@ -68,6 +74,7 @@ export class BluetoothConnectionManager {
       timeoutId = setTimeout(() => reject(new Error('Connection timeout')), this.connectionTimeout);
     });
 
+    let connectPromise = null;
     try {
       // FIX #55: Add disconnect listener BEFORE connecting to catch race conditions
       const onDisconnect = () => {
@@ -81,8 +88,9 @@ export class BluetoothConnectionManager {
 
       try {
         // Race the connection against a timer; whichever resolves first wins.
+        connectPromise = peripheral.connectAsync();
         await Promise.race([
-          peripheral.connectAsync(),
+          connectPromise,
           timeoutPromise
         ]);
         isConnected = true;
@@ -102,8 +110,19 @@ export class BluetoothConnectionManager {
       } catch (connectError) {
         // FIX #55: If connection fails, ensure we're not left in half-connected state
         if (connectError?.message === 'Connection timeout' && isConnected === false) {
-          // Try to disconnect cleanly
-          if (peripheral?.disconnectAsync) {
+          // Promise.race does not cancel the loser, so the original connectAsync
+          // may still be in flight. Give it a moment to settle, then disconnect
+          // only if the link actually came up, so we never race disconnectAsync
+          // against a pending connect nor double-connect on the retry.
+          try {
+            await Promise.race([
+              connectPromise ? connectPromise.catch(() => {}) : Promise.resolve(),
+              new Promise(resolve => setTimeout(resolve, 1000)),
+            ]);
+          } catch (e) {
+            // ignore settlement failures
+          }
+          if (peripheral?.disconnectAsync && peripheral.state === 'connected') {
             try {
               await peripheral.disconnectAsync();
             } catch (e) {

@@ -214,6 +214,12 @@ export function parse(data) {
   //
   // So we can simplify the decoding to:
   if (data.indexOf(IBD_VALUE_MAGIC) === 0) {
+    // Teaching note: a short/fragmented frame must be rejected gracefully.
+    // Reading past the end would throw RangeError, which onReceive does not
+    // swallow (it only filters "unable to parse message"), crashing the app.
+    if (data.length < IBD_VALUE_IDX_POWER + 2) {
+      throw new Error('unable to parse message');
+    }
     const power = data.readInt16LE(IBD_VALUE_IDX_POWER); // Power is reported as a signed 16-bit integer (watts).
     const cadence = Math.round(data.readUInt16LE(IBD_VALUE_IDX_CADENCE) / 2); // Cadence is expressed in half RPM increments.
     const speedRaw = data.readUInt16LE(IBD_VALUE_IDX_SPEED); // Instantaneous speed in 0.01 km/h per FTMS specification.

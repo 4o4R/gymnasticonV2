@@ -1,4 +1,4 @@
-import {Characteristic, Descriptor} from '../../../bleno-deps.js'; // grab the shared bleno exports via our centralized helper so every characteristic finds the right stub
+import {Characteristic} from '../../../bleno-deps.js'; // grab the shared bleno exports via our centralized helper so every characteristic finds the right stub
 
 const FLAG_HASCRANKDATA = (1<<5);
 const CRANK_TIMESTAMP_SCALE = 1024; // convert seconds into the BLE spec's 1/1024th of a second resolution
@@ -10,13 +10,7 @@ export class CyclingPowerMeasurementCharacteristic extends Characteristic {
   constructor() {
     super({
       uuid: '2a63',
-      properties: ['notify'],
-      descriptors: [
-        new Descriptor({
-          uuid: '2903',
-          value: Buffer.alloc(2)
-        })
-      ]
+      properties: ['notify'] // bleno auto-adds the 0x2902 CCCD for notify characteristics.
     })
   }
 
@@ -33,6 +27,7 @@ export class CyclingPowerMeasurementCharacteristic extends Characteristic {
 
     const value = Buffer.alloc(8);
     value.writeInt16LE(power, 2);
+    let offset = 4;
 
     // include crank data if provided
     if (crank) {
@@ -40,15 +35,17 @@ export class CyclingPowerMeasurementCharacteristic extends Characteristic {
       // Teaching note: integrateKinematics() stores timestamps in whole seconds so
       // we multiply by 1024 here to match the CPS requirement of 1/1024s units.
       const timestamp16bit = Math.round(crank.timestamp * CRANK_TIMESTAMP_SCALE) & 0xffff;
-      value.writeUInt16LE(revolutions16bit, 4);
-      value.writeUInt16LE(timestamp16bit, 6);
+      value.writeUInt16LE(revolutions16bit, offset); offset += 2;
+      value.writeUInt16LE(timestamp16bit, offset); offset += 2;
       flags |= FLAG_HASCRANKDATA;
     }
 
     value.writeUInt16LE(flags, 0);
 
+    // Teaching note: only notify the populated bytes (flags + power when no
+    // crank data is present) so the payload length matches the flag bits.
     if (this.updateValueCallback) {
-      this.updateValueCallback(value)
+      this.updateValueCallback(value.slice(0, offset))
     }
   }
 }

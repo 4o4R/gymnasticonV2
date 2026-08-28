@@ -1,5 +1,6 @@
 import '../src/test/app/simulation.js';
 import '../src/test/app/app.js';
+import '../src/test/bikes/bot.js';
 import '../src/test/bikes/flywheel.js';
 import '../src/test/bikes/ic4.js';
 import '../src/test/bikes/keiser.js';
@@ -7,6 +8,7 @@ import '../src/test/bikes/peloton.js';
 import '../src/test/util/ble-scan.js';
 import '../src/test/util/dropout-filter.js';
 import '../src/test/util/mac-address.js';
+import '../src/test/util/timer.js';
 
 import tape from '../src/test/support/tape.js';
 

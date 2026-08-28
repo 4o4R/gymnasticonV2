@@ -4,7 +4,9 @@ export class HealthMonitor extends EventEmitter {
   constructor(checkInterval = 5000) {
     super();
     this.metrics = new Map();
-    this.checkInterval = checkInterval;
+    // Teaching note: clamp the interval to a sane minimum so a 0/negative
+    // value can't spin checkHealth() in a tight loop where everything is stale.
+    this.checkInterval = Number.isFinite(checkInterval) && checkInterval > 0 ? checkInterval : 5000;
     this._intervalHandle = null; // Track the Node timer so we can cleanly tear it down when the app stops.
     this.startMonitoring();
   }
@@ -35,15 +37,23 @@ export class HealthMonitor extends EventEmitter {
   recordMetric(name, value) {
     this.metrics.set(name, {
       value,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      staleEmitted: false
     });
   }
 
   checkHealth() {
     const now = Date.now();
     for (const [name, metric] of this.metrics) {
-      if (now - metric.timestamp > this.checkInterval * 2) {
+      const stale = now - metric.timestamp > this.checkInterval * 2;
+      // Teaching note: emit 'stale' only on the transition into staleness, and
+      // clear it when data flows again, so consumers don't get a full teardown
+      // request every single interval during a long outage.
+      if (stale && !metric.staleEmitted) {
+        metric.staleEmitted = true;
         this.emit('stale', name);
+      } else if (!stale && metric.staleEmitted) {
+        metric.staleEmitted = false;
       }
     }
   }

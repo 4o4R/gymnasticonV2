@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.0.5] - 2026-08-28
+### Fixed
+- **Process-crash fixes** — several code paths could kill the whole service via the global `uncaughtException → process.exit(1)` handler:
+  - Bot mode: a non-JSON (or `null`) UDP control packet no longer crashes the process; the handler bails out gracefully and the leftover debug logging was removed.
+  - Peloton: serial write/drain failures are surfaced as a disconnect instead of throwing from inside the write callback.
+  - IC4 and Flywheel: truncated protocol frames are rejected with a graceful parse error instead of a `RangeError` crash.
+- **ANT+ broadcasting**
+  - The ANT+ server now waits for the stick's async `startup` handshake (instead of configuring the channel before the network key is set), so ANT+ broadcasting actually works on real hardware.
+  - The broadcaster fires its first tick immediately and removed dead/ignored timer options.
+- **BLE server robustness**
+  - A failed `startAdvertising`/`setServices` now resets server state so retries can succeed instead of wedging the server in `starting` forever (which also left a potential zombie advertiser).
+  - Removed the nonstandard `0x2903` CCCD descriptors from the notify characteristics (bleno auto-adds the spec-correct `0x2902`).
+  - Cycling Power notifications are now trimmed to the populated payload length so the byte count matches the flag bits.
+  - The CSC Feature characteristic now updates its value buffer in place, so clients always read the current capability bits.
+- **Reconnect robustness**
+  - Speed/cadence sensor clients: the stats watchdog now tears down the physical BLE link before reconnecting, preventing an endless "already connected" retry loop.
+  - Connection manager: timeout handling no longer races the in-flight `connectAsync`, and the internal connection map no longer leaks entries.
+  - IC8: added peripheral-disconnect handling so the app stops advertising stale power/cadence when the bike drops; `disconnect()` now resets crank state.
+  - Health monitor: `stale` events are emitted only on the transition into staleness (with recovery on fresh data) instead of every interval, and a zero/negative interval no longer spins a tight loop.
+- **Sensor / protocol correctness**
+  - Fixed HCI-version parsing in adapter detection (hex `0x0b` and decimal codes) and the extended-scan threshold, so `NOBLE_EXTENDED_SCAN` is only enabled on Bluetooth 5.0+ radios.
+  - Keiser: no longer accepts arbitrary nameless BLE devices that merely share the ubiquitous `02 01` advertisement prefix.
+  - Peloton: truncated telemetry frames no longer emit `NaN` power/cadence.
+  - Power/speed estimators now guard against `NaN` inputs instead of propagating them.
+- **Timers**
+  - A throwing timer listener no longer kills a repeating timer (the next tick is always scheduled).
+  - `Timer` now supports an `immediate` first tick (used by the ANT+ broadcaster).
+- **Tests**
+  - Added regression tests for the crash paths (short IC4/Flywheel frames, malformed bot UDP messages, truncated Peloton frames, timer throw-safety/immediate) and corrected the ANT+ startup test to model real stick behavior.
+
 ## [2.0.4] - 2026-08-27
 ### Fixed
 - Put first-boot customization files on the macOS-visible `bootfs` partition for Bookworm images.

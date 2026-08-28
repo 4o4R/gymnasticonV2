@@ -39,6 +39,7 @@ export class PelotonBikeClient extends EventEmitter {
   constructor(path) {
     super();
     this.path = path;
+    this.state = 'disconnected';
 
     this.onStatsUpdate = this.onStatsUpdate.bind(this);
     this.onSerialMessage = this.onSerialMessage.bind(this);
@@ -85,6 +86,33 @@ export class PelotonBikeClient extends EventEmitter {
     // Begin sending polling requests to the Peloton bike
     this.intervalHandles['poll'] = setInterval(this.pollMetric, POLL_RATE, this._port);
     tracelog("Serial Connected");
+  }
+
+  /**
+   * Close the serial port and stop polling so the app can tear the bike down
+   * on shutdown or reconnect without leaving the device open and a timer running.
+   */
+  async disconnect() {
+    if (this.state === 'disconnected' || this.state === 'disconnecting') {
+      return;
+    }
+    this.state = 'disconnecting';
+    if (this.intervalHandles['poll']) {
+      clearInterval(this.intervalHandles['poll']);
+      delete this.intervalHandles['poll'];
+    }
+    const address = this.address;
+    if (this._port) {
+      this._port.removeListener('close', this.onSerialClose);
+      try {
+        await new Promise((resolve) => this._port.close(resolve));
+      } catch (err) {
+        debuglog('error closing Peloton serial port', err.message);
+      }
+      this._port = null;
+    }
+    this.state = 'disconnected';
+    this.emit('disconnect', {address});
   }
 
   /**
@@ -165,6 +193,7 @@ export class PelotonBikeClient extends EventEmitter {
   }
 
   onSerialClose() {
+    this.state = 'disconnected';
     this.emit('disconnect', {address: this.address});
     clearInterval(this.intervalHandles['poll']);
     tracelog("Serial Closed");
@@ -180,10 +209,21 @@ export class PelotonBikeClient extends EventEmitter {
   pollMetric(port) {
     let metric = Object.keys(MEASUREMENTS_HEX_ENUM)[this.nextMetric];
 
-    port.write(MEASUREMENTS_HEX_ENUM[metric], function(err) {
-      if (err) { throw new Error(`Error requesting ${metric}: ${err.message}`); }
-    })
-    port.drain();
+    // Teaching note: never throw inside the serial write callback - an
+    // uncaught exception there kills the whole process. Surface the failure
+    // as a disconnect so the app's reconnect loop can take over.
+    port.write(MEASUREMENTS_HEX_ENUM[metric], (err) => {
+      if (err) {
+        debuglog('error requesting', metric, err.message);
+        this.disconnect();
+      }
+    });
+    port.drain((err) => {
+      if (err) {
+        debuglog('error draining serial port', err.message);
+        this.disconnect();
+      }
+    });
 
     if (this.nextMetric === Object.keys(MEASUREMENTS_HEX_ENUM).length -1) {
       this.nextMetric = 0;
@@ -201,7 +241,12 @@ export function decodePeloton(bufferArray, byteLength, isPower) {
   let iteratorOffset = 3;
 
   for (let iteratorTemp = iteratorOffset; iteratorTemp < iteratorOffset + byteLength; iteratorTemp++) {
-    let offsetVal = bufferArray[iteratorTemp] - 48;
+    const rawByte = bufferArray[iteratorTemp];
+    if (!Number.isInteger(rawByte)) {
+      debuglog("invalid value detected (truncated frame): ", rawByte);
+      return;
+    }
+    const offsetVal = rawByte - 48;
     if (offsetVal < 0 || offsetVal > 9) {
       debuglog("invalid value detected: ", offsetVal);
       return;

@@ -23,7 +23,11 @@ export class CscFeatureCharacteristic extends Characteristic { // Characteristic
       return;
     }
     this.capabilities = { ...capabilities }; // Persist the new capabilities for future comparisons.
-    this.value = nextValue; // Update the characteristic's value so future reads reflect the new support flags.
+    // Teaching note: mutate the existing buffer in place as well as storing the
+    // new one, so servers that snapshot characteristic.value at setServices time
+    // still observe the updated feature bits on later reads.
+    nextValue.copy(this.value);
+    this.value = nextValue;
   }
 }
 

@@ -379,7 +379,10 @@ test('App.startAnt() treats ANT+ as USB transport independent from BLE adapter a
 
     app.setBikeAdapter('hci1', 'test-fallback');
     app.startAnt();
-
+    t.equal(started, 0, 'ANT+ server does not start until the stick signals startup');
+    // Simulate the stick completing its init handshake (the gd-ant-plus
+    // 'startup' event fires asynchronously after open(), not on open()).
+    app.onAntStickStartup();
     t.equal(started, 1, 'ANT+ server starts even after bike BLE adapter is reassigned');
     t.ok(
       logs.some(line => line.includes('BLE adapter selection does not affect ANT+ USB transport')),

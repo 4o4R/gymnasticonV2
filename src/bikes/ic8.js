@@ -33,8 +33,10 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
     this.log = log; // Logger interface (console by default).
     this.config = config; // Optional calibration config for power estimation.
     this.device = null; // Active noble peripheral once connected.
+    this.characteristics = []; // Track subscribed characteristics so disconnect() can detach listeners.
     this.state = { rpm: 0, resistance: 0, watts: 0 }; // Track the latest cadence/resistance/power values.
     this.powerFilter = new Ewma(0.25); // Smooth power readings to reduce jitter for downstream apps.
+    this.onPeripheralDisconnectBound = this.onPeripheralDisconnect.bind(this); // Keep a stable ref so we can remove the listener cleanly.
   }
 
   static get label() { // Friendly identifier shown in logs and UI.
@@ -57,11 +59,15 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
     this.device = peripheral;
     await peripheral.connectAsync();
     this.log.info?.('Connected to IC8 peripheral', peripheral.address);
+    // Teaching note: without a peripheral disconnect listener the app would
+    // keep broadcasting the last power/cadence after the bike drops.
+    peripheral.on('disconnect', this.onPeripheralDisconnectBound);
 
     const { characteristics } = await peripheral.discoverSomeServicesAndCharacteristicsAsync(
       [CSC_SERVICE_UUID, FTMS_SERVICE_UUID],
       []
     );
+    this.characteristics = characteristics;
 
     const cscMeasurement = characteristics.find(ch => ch.uuid === CSC_MEASUREMENT_UUID);
     if (!cscMeasurement) {
@@ -81,14 +87,29 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
 
   async disconnect() { // Disconnect cleanly when the app shuts down.
     try {
+      if (this.characteristics.length) {
+        for (const ch of this.characteristics) {
+          ch.removeAllListeners('data');
+        }
+        this.characteristics = [];
+      }
       if (this.device) {
+        this.device.removeListener('disconnect', this.onPeripheralDisconnectBound);
         await this.device.disconnectAsync();
       }
     } catch (error) {
       debug('error during IC8 disconnect', error);
     } finally {
       this.device = null;
+      this.lastCrank = undefined; // Reset stale crank state so a same-instance reconnect starts clean.
     }
+  }
+
+  onPeripheralDisconnect() { // Emit a disconnect event so the app stops advertising stale data.
+    this.log.warn?.('IC8 peripheral disconnected');
+    const address = this.device?.address;
+    this.device = null;
+    this.emit('disconnect', { address });
   }
 
   onResistance(buf) { // Parse vendor resistance payload and update estimated power.

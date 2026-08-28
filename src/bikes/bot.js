@@ -59,13 +59,19 @@ export class BotBikeClient extends EventEmitter {
    * @private
    */
   onUdpMessage(msg) {
-    let j
+    let j;
     try {
       j = JSON.parse(msg);
     } catch (e) {
-      console.error(e);
+      // Teaching note: a non-JSON packet must not crash the service - bail out
+      // of the handler instead of destructuring an undefined value later.
+      console.error('bot control: ignoring invalid JSON:', msg.toString());
+      return;
     }
-    console.log(j);
+    if (!j || typeof j !== 'object') {
+      console.error('bot control: ignoring non-object message:', msg.toString());
+      return;
+    }
     const {power, cadence} = j;
     if (Number.isInteger(power) && power >= 0) {
       this.power = power;
@@ -78,7 +84,29 @@ export class BotBikeClient extends EventEmitter {
   /**
    * @private
    */
-  onUdpError() {
-    this.emit('disconnect', {address: this._address})
+  onUdpError(err) {
+    console.error('bot control: UDP socket error:', err && err.message);
+    this.disconnect();
+  }
+
+  /**
+   * Tear down the UDP socket and stats timer so the app can reconnect without
+   * leaving the port bound (EADDRINUSE) or a timer running forever.
+   */
+  disconnect() {
+    if (this._timer) {
+      this._timer.cancel();
+    }
+    if (this._udpServer) {
+      this._udpServer.removeAllListeners('message');
+      this._udpServer.removeAllListeners('error');
+      try {
+        this._udpServer.close();
+      } catch (e) {
+        // socket may already be closed
+      }
+      this._udpServer = null;
+    }
+    this.emit('disconnect', {address: this._address});
   }
 }

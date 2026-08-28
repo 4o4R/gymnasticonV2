@@ -33,17 +33,10 @@ export class AntServer {
     const opts = {...defaults, ...options};
     this.stick = antStick;
     this.deviceId = opts.deviceId;
-    
-    // Add retry mechanism for ANT+ connections
-    this.maxRetries = 3;
-    this.retryDelay = 1000;
-    this.currentRetry = 0;
-    
-    // Modern timing parameters
-    this.broadcastInterval = new Timer(BROADCAST_INTERVAL, {
-      immediate: true,
-      precision: true
-    });
+
+    // Broadcast at ~4 Hz; the first tick fires immediately so a head unit sees
+    // data right away instead of after one full interval.
+    this.broadcastInterval = new Timer(BROADCAST_INTERVAL, { immediate: true });
 
     this.eventCount = 0;
     this.accumulatedPower = 0;

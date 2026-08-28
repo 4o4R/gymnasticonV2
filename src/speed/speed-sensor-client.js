@@ -389,7 +389,14 @@ export class SpeedSensorClient extends EventEmitter {
     }
     if (this.peripheral) {
       this.peripheral.removeListener('disconnect', this.onDisconnectBound);
+      const peripheral = this.peripheral;
       this.peripheral = null;
+      // Teaching note: the stats watchdog may fire while the link is still up
+      // (the sensor is merely silent). Tear the connection down proactively so
+      // the reconnect path doesn't hit "already connected" against the same device.
+      if (peripheral.state === 'connected' && typeof peripheral.disconnectAsync === 'function') {
+        peripheral.disconnectAsync().catch(() => {});
+      }
     }
   }
 }

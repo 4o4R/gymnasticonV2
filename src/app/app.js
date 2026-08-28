@@ -1206,7 +1206,13 @@ export class App {
       this.logger.log('[gym-app] ANT+ stick detected; BLE adapter selection does not affect ANT+ USB transport');
       this.antStickClosed = false;
       const hasEventEmitter = typeof this.antStick.on === 'function';
-      if (!hasEventEmitter || opened === true) {
+      // Teaching note: gd-ant-plus fires the 'startup' event only after its
+      // init handshake (reset -> capabilities -> network key) completes. If
+      // the stick exposes that async signal we must wait for it; configuring
+      // the channel before then gets dropped by the stick, so ANT+ would
+      // silently never broadcast. The direct call is only for sticks that
+      // have no event emitter at all.
+      if (!hasEventEmitter) {
         this.onAntStickStartup();
       }
     } catch (err) {

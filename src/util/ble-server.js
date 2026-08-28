@@ -35,15 +35,28 @@ export class BleServer extends EventEmitter {
     this.connectionCount = 0; // Teaching note: reset connection tracking on each start.
 
     if (this.bleno.state !== 'poweredOn') {
-      const [state] = await once(this.bleno, 'stateChange');
-      if (state !== 'poweredOn') {
-        this.state = 'stopped';
-        throw new Error(`Bluetooth adapter failed to power on: ${state}`);
+      // Teaching note: keep waiting across intermediate states (poweredOff,
+      // resetting) until the adapter reaches poweredOn; giving up after the
+      // first stateChange event aborts startup prematurely.
+      const fatalStates = new Set(['unauthorized', 'unsupported']);
+      while (this.bleno.state !== 'poweredOn') {
+        const [state] = await once(this.bleno, 'stateChange');
+        if (state && fatalStates.has(state)) {
+          this.state = 'stopped';
+          throw new Error(`Bluetooth adapter failed to power on: ${state}`);
+        }
       }
     }
 
-    await this.bleno.startAdvertisingAsync(this.name, this.uuids);
-    await this.bleno.setServicesAsync(this.services);
+    try {
+      await this.bleno.startAdvertisingAsync(this.name, this.uuids);
+      await this.bleno.setServicesAsync(this.services);
+    } catch (err) {
+      // Teaching note: reset state so a later start() can retry instead of
+      // throwing 'already started' forever, leaving the server wedged.
+      this.state = 'stopped';
+      throw err;
+    }
     this.state = 'started';
   }
 

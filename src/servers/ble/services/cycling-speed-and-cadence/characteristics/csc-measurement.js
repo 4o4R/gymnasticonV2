@@ -1,4 +1,4 @@
-import {Characteristic, Descriptor} from '../../../bleno-deps.js'; // Import shared bleno helpers so stub resolution is centralized.
+import {Characteristic} from '../../../bleno-deps.js'; // Import shared bleno helpers so stub resolution is centralized.
 
 const FLAG_WHEEL = 1 << 0; // BLE Spec 2A5B flag indicating wheel revolution data follows.
 const FLAG_CRANK = 1 << 1; // BLE Spec 2A5B flag indicating crank revolution data follows.
@@ -10,10 +10,7 @@ export class CscMeasurementCharacteristic extends Characteristic { // Measuremen
   constructor() {
     super({
       uuid: '2a5b', // UUID for Cycling Speed and Cadence Measurement.
-      properties: ['notify'], // Measurements are notifications, not reads.
-      descriptors: [ // Provide a descriptor so tools describe the characteristic clearly.
-        new Descriptor({ uuid: '2903', value: Buffer.alloc(2) }) // CCC descriptor placeholder required by many stacks.
-      ]
+      properties: ['notify'] // Measurements are notifications, not reads. bleno auto-adds the 0x2902 CCCD for notify characteristics.
     });
   }
 

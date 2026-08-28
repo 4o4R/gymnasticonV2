@@ -219,6 +219,11 @@ export class FlywheelBikeClient extends EventEmitter {
  */
 export function parse(data) {
   if (data.indexOf(STATS_PKT_MAGIC) === 0) {
+    // Teaching note: a truncated stats packet must fail gracefully (onReceive
+    // only swallows "unable to parse message") instead of throwing RangeError.
+    if (data.length < STATS_PKT_IDX_CADENCE + 1) {
+      throw new Error('unable to parse message');
+    }
     const power = data.readUInt16BE(STATS_PKT_IDX_POWER);
     const cadence = data.readUInt8(STATS_PKT_IDX_CADENCE);
     return {type: 'stats', payload: {power, cadence}};

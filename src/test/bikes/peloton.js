@@ -10,3 +10,10 @@ test('decodePeloton() parses Peloton stats messages', t => {
   t.equal(power, 233.6, 'power (watts)');
   t.equal(cadence, 92, 'cadence (rpm)');
 });
+
+test('decodePeloton() returns undefined on truncated frames instead of NaN', t => {
+  t.plan(1);
+  // Power message claims 5 digits but only 3 bytes are present.
+  const truncated = Buffer.from('f14405363332', 'hex');
+  t.equal(decodePeloton(truncated, truncated[2], true), undefined, 'no NaN propagation');
+});

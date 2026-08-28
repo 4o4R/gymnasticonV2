@@ -9,3 +9,10 @@ test('parse() parses Flywheel stats messages', t => {
   t.equal(power, 290, 'power (watts)');
   t.equal(cadence, 90, 'cadence (rpm)');
 });
+
+test('parse() rejects short Flywheel frames gracefully (no RangeError crash)', t => {
+  t.plan(1);
+  // Stats magic prefix followed by a truncated payload.
+  const buf = Buffer.from('ff1f0c0122', 'hex');
+  t.throws(() => parse(buf), /unable to parse message/, 'throws the graceful parse error, not RangeError');
+});

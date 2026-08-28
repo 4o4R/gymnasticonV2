@@ -438,9 +438,12 @@ export class KeiserBikeClient extends EventEmitter {
         return true;
       }
     }
-    // Teaching note: last-resort acceptance when name is missing but payload
-    // matches Keiser format; this avoids dropping stats entirely.
-    return !peripheral?.advertisement?.localName;
+    // Teaching note: previously we accepted any nameless device whose payload
+    // started with the Keiser magic prefix. That prefix (02 01) is also the
+    // ubiquitous BLE "Flags" AD structure, so this matched arbitrary devices.
+    // Without a matching name, address, id, or captured payload signature we
+    // cannot safely identify the bike, so we no longer guess here.
+    return false;
   }
 }
 
