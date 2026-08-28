@@ -47,6 +47,8 @@ jobs:
     needs: build
     if: needs.build.outputs.package-version == needs.build.outputs.release-version
     runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -62,9 +64,18 @@ jobs:
           npm install -g node-gyp@9.4.1
           echo "npm_config_node_gyp=$(npm root -g)/node-gyp/bin/node-gyp.js" >> $GITHUB_ENV
       - run: npm ci
-      - run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to npm
+        if: env.NODE_AUTH_TOKEN != ''
+        run: |
+          package_spec=$(node -p "const p = require('./package.json'); p.name + '@' + p.version")
+          if npm view "$package_spec" version >/dev/null 2>&1; then
+            echo "$package_spec is already published to npm"
+          else
+            npm publish --access public
+          fi
+      - name: Skip npm publish when no token is configured
+        if: env.NODE_AUTH_TOKEN == ''
+        run: echo "NPM_TOKEN is not configured; skipping npmjs.org publish"
 
   publish-gpr:
     needs: build
@@ -88,6 +99,13 @@ jobs:
           npm install -g node-gyp@9.4.1
           echo "npm_config_node_gyp=$(npm root -g)/node-gyp/bin/node-gyp.js" >> $GITHUB_ENV
       - run: npm ci
-      - run: npm publish
+      - name: Publish to GitHub Packages
         env:
-          NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          package_spec=$(node -p "const p = require('./package.json'); p.name + '@' + p.version")
+          if npm view "$package_spec" version --registry=https://npm.pkg.github.com/ >/dev/null 2>&1; then
+            echo "$package_spec is already published to GitHub Packages"
+          else
+            npm publish
+          fi
