@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.0.6] - 2026-08-28
+### Fixed
+- Give each Noble/Bleno adapter its own HCI binding instead of sharing cached radio state.
+- Cancel timed-out BLE connections cleanly and stop advertising after failed GATT setup.
+- Bound bike autodetection so it reaches the configured fallback instead of scanning forever.
+- Reject truncated 16-bit heart-rate events and contain timer listener exceptions.
+- Register SIGINT/SIGTERM cleanup before the long-running application loop.
+- Restore system utilities to the Raspberry Pi service `PATH` and make native-build failures fail CI.
+
+### Changed
+- Removed the non-connectable `hcitool` scan fallback, obsolete installers, and stale image-build debris.
+- Added lint gates and lifecycle regressions; the suite now contains 184 passing assertions.
+
 ## [2.0.5] - 2026-08-28
 ### Fixed
 - **Process-crash fixes** — several code paths could kill the whole service via the global `uncaughtException → process.exit(1)` handler:

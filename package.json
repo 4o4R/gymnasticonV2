@@ -1,7 +1,7 @@
 {
   "name": "@4o4r/gymnasticon",
-  "version": "2.0.5",
-  "description": "Enables the Flywheel Home Bike to work with Zwift and other training apps.",
+  "version": "2.0.6",
+  "description": "Bridges supported indoor bikes to BLE and ANT+ fitness apps and devices.",
   "engines": {
     "node": ">=14.21.3 <15"
   },
