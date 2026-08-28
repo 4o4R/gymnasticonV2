@@ -193,8 +193,6 @@ export class App {
       this.healthMonitor.on('stale', this.onHealthMetricStale.bind(this));
     }
 
-    this.onSigInt = this.onSigInt.bind(this);
-    this.onExit = this.onExit.bind(this);
     // Teaching note: keep stable references to bike event handlers so we can
     // attach/detach listeners safely across reconnect attempts.
     this.onBikeDisconnectBound = this.onBikeDisconnect.bind(this);
@@ -223,6 +221,7 @@ export class App {
     this.configureMultiRole();
 
     // Enhanced error handling
+    this.fatalErrorHandled = false;
     this.errorHandler = this.handleError.bind(this);
     process.on('unhandledRejection', this.errorHandler);
     process.on('uncaughtException', this.errorHandler);
@@ -679,9 +678,14 @@ export class App {
   }
 
   handleError(error) {
+    if (this.fatalErrorHandled) {
+      return;
+    }
+    this.fatalErrorHandled = true;
     this.logger.error('Fatal error:', error);
-    this.cleanup();
-    process.exit(1);
+    void this.cleanup().finally(() => {
+      process.exit(1);
+    });
   }
 
   async start() {
@@ -736,13 +740,12 @@ export class App {
         this.logger.error('Error closing ANT+ stick', e);
       }
     }
+    process.removeListener('unhandledRejection', this.errorHandler);
+    process.removeListener('uncaughtException', this.errorHandler);
   }
 
   async run() {
     try {
-      process.on('SIGINT', this.onSigInt);
-      process.on('exit', this.onExit);
-
       const state = this.noble?.state;
       this.logger.log(`[gym-app] checking Bluetooth adapter state: ${state ?? 'unknown'}`);
       this.attachNobleDiagnostics(); // Teaching note: log noble warnings/errors right away.
@@ -800,7 +803,8 @@ export class App {
       }
     } catch (e) {
       this.logger.error(e);
-      process.exit(1);
+      await this.cleanup();
+      throw e;
     }
   }
 
@@ -808,8 +812,8 @@ export class App {
    * Start optional sensors after the required bike/server path is already live.
    *
    * Speed and cadence accessory scans are serialized to avoid overlapping noble
-   * and hcitool activity on low-end Raspberry Pi hardware. Bike-derived cadence
-   * and speed output does not depend on these optional clients.
+   * activity on low-end Raspberry Pi hardware. Bike-derived cadence and speed
+   * output does not depend on these optional clients.
    */
   async startOptionalSensors() {
     const enabledCount = [
@@ -1264,19 +1268,6 @@ export class App {
       } catch (err) {
         this.logger.error('failed to close ANT+ stick', err);
       }
-    }
-  }
-
-  onSigInt() {
-    const listeners = process.listeners('SIGINT');
-    if (listeners[listeners.length-1] === this.onSigInt) {
-      process.exit(0);
-    }
-  }
-
-  onExit() {
-    if (this.antServer?.isRunning) { // Ensure ANT+ broadcasting stops cleanly on process exit.
-      this.stopAnt();
     }
   }
 

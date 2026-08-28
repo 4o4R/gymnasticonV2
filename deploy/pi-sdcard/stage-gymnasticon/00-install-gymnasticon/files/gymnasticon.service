@@ -6,7 +6,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-Environment=PATH=/opt/gymnasticon/node/bin
+Environment=PATH=/opt/gymnasticon/node/bin:/opt/gymnasticon/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 WorkingDirectory=/opt/gymnasticon
 User=pi
 Group=pi

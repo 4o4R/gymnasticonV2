@@ -437,49 +437,33 @@ const main = async () => {
     };
     const app = new GymnasticonApp(appOptions);
 
-    // Start the application (connects to bike, starts BLE server)
-    await app.start();
-
-    // Keep Process Alive
-    // -----------------
-    // Prevent Node.js from exiting by resuming stdin
-    // This is needed because we're running a server process
-    process.stdin.resume();
-
-    /**
-     * Graceful Shutdown Handler
-     * ------------------------
-     * This function ensures we clean up resources before exiting:
-     * - Disconnects from the bike
-     * - Stops the BLE server
-     * - Closes Bluetooth connections
-     */
-    const shutdown = async () => {
-        try {
-            // Attempt to stop the application gracefully
-            await app.stop();
-        } finally {
-            // Always exit the process, even if cleanup fails
-            process.exit(0);
+    let shutdownPromise;
+    const shutdown = (signal) => {
+        if (!shutdownPromise) {
+            console.log(`[gym-cli] ${signal} received; shutting down...`);
+            shutdownPromise = app.stop().catch((error) => {
+                console.error('[gym-cli] shutdown failed:', error);
+                process.exitCode = 1;
+            });
         }
+        return shutdownPromise;
     };
 
-    // Register Shutdown Handlers
-    // ------------------------
-    // Listen for termination signals:
-    // SIGINT  - Sent when user presses Ctrl+C
-    // SIGTERM - Sent when system requests graceful termination
     ['SIGINT', 'SIGTERM'].forEach((signal) => {
-        process.on(signal, shutdown);
+        process.once(signal, () => {
+            void shutdown(signal);
+        });
     });
+
+    // start() owns the long-running connection loop, so signal handlers must
+    // be active before awaiting it.
+    await app.start();
 };
 
 // Run the Application
 // -----------------
 // Call our main function and handle any unhandled errors
 main().catch((err) => {
-    // Log the error to stderr
     console.error(err);
-    // Exit with error code 1 to indicate failure
-    process.exit(1);
+    process.exitCode = 1;
 });

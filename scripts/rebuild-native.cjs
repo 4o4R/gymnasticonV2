@@ -5,6 +5,8 @@ const fs = require('fs'); // load the filesystem module to check if dependencies
 
 const nodeVersion = process.versions.node; // capture the current Node runtime version string (e.g. "14.21.3")
 const nodeMajor = Number(nodeVersion.split('.')[0]); // extract the major version number to allow conditional logic per runtime
+const npmCommand = 'npm';
+const npmSpawnOptions = process.platform === 'win32' ? {shell: true} : {};
 
 // Teaching note: the README guarantees Node 14 compatibility, so we only refresh
 // bluetooth-hci-socket when a maintainer explicitly opts in *and* the runtime
@@ -14,11 +16,12 @@ if (refreshHciSocket && nodeMajor >= 16) {
   try {
     console.log('\nRefreshing @abandonware/bluetooth-hci-socket from upstream...');
     const installResult = spawnSync(
-      'npm',
+      npmCommand,
       ['install', '--no-save', '--unsafe-perm', 'github:abandonware/node-bluetooth-hci-socket#master'],
       {
         stdio: 'inherit',
-        env: { ...process.env, npm_config_build_from_source: 'true' }
+        env: { ...process.env, npm_config_build_from_source: 'true' },
+        ...npmSpawnOptions
       }
     );
     if (installResult.status !== 0) {
@@ -39,6 +42,7 @@ const modulesToRebuild = [
 ]; // collect the native modules that should be rebuilt for the active Node version
 
 console.log(`Rebuilding native modules for the Node ${nodeMajor} runtime...`); // inform the user which Node major version triggered this rebuild pass
+const failures = [];
 
 // Ensure node-gyp is available globally (best-effort)
 try {
@@ -63,16 +67,24 @@ modulesToRebuild.forEach(moduleName => {
     env.CXXFLAGS = '-std=gnu++14';
   }
 
-  const result = spawnSync('npm', ['rebuild', moduleName, '--build-from-source'], {
+  const result = spawnSync(npmCommand, ['rebuild', moduleName, '--build-from-source'], {
     stdio: 'inherit',
-    env
+    env,
+    ...npmSpawnOptions
   });
 
-  if (result.status !== 0) {
-    console.error(`Failed to rebuild ${moduleName} (exit ${result.status})`);
+  if (result.error || result.status !== 0) {
+    const detail = result.error?.message || `exit ${result.status}`;
+    failures.push(`${moduleName} (${detail})`);
+    console.error(`Failed to rebuild ${moduleName} (${detail})`);
   } else {
     console.log(`Successfully rebuilt ${moduleName}`);
   }
 });
 
-console.log('\nNative module rebuild complete');
+if (failures.length) {
+  console.error(`\nNative module rebuild failed: ${failures.join(', ')}`);
+  process.exitCode = 1;
+} else {
+  console.log('\nNative module rebuild complete');
+}

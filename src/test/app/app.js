@@ -28,8 +28,6 @@ function createTestApp() {
 function destroyTestApp(app) {
   process.removeListener('unhandledRejection', app.errorHandler);
   process.removeListener('uncaughtException', app.errorHandler);
-  process.removeListener('SIGINT', app.onSigInt);
-  process.removeListener('exit', app.onExit);
 }
 
 test('App.onBikeDisconnect() tolerates an early disconnect before BLE startup', (t) => {
