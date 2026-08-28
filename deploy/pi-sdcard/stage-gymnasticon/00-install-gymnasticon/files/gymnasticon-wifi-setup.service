@@ -3,7 +3,7 @@
 Description=Gymnasticon headless Wi-Fi bootstrapper
 # Run before the generic dependency tree so we can configure radios early.
 DefaultDependencies=no
-# Wait until /boot mounts so /boot/gymnasticon-wifi.env is readable.
+# Wait until the Bookworm or Buster boot partition mounts.
 After=local-fs.target
 # Configure Wi-Fi before any network daemons (or the overlay) start.
 Before=network-pre.target dhcpcd.service wpa_supplicant.service lockrootfs.service
@@ -11,7 +11,7 @@ Before=network-pre.target dhcpcd.service wpa_supplicant.service lockrootfs.servi
 [Service]
 # Run the helper exactly once per boot; it is fast and idempotent.
 Type=oneshot
-# Execute the annotated shell script that copies /boot settings into /etc.
+# Execute the helper that reads settings from the mounted boot partition.
 ExecStart=/usr/local/sbin/gymnasticon-wifi-setup.sh
 # Mirror stdout/stderr to HDMI and the journal for easy debugging.
 StandardOutput=journal+console

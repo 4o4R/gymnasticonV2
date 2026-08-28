@@ -1,5 +1,5 @@
 {
-  "_comment": "Ship universal defaults so any supported bike works out-of-the-box; users can still drop /boot/gymnasticon.json to override.",
+  "_comment": "Universal defaults; place gymnasticon.json at the top level of bootfs to override them.",
   "bike": "autodetect",
   "defaultBike": "keiser",
   "serverName": "GymnasticonV2",

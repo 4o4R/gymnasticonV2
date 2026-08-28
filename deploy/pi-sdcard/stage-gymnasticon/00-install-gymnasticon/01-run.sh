@@ -8,6 +8,10 @@ NODE_ARCHIVE="node-v${NODE_VERSION}-linux-armv6l.tar.xz"
 NODE_URL="https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/${NODE_ARCHIVE}"
 GYMNASTICON_USER=${FIRST_USER_NAME}  # default pi-gen user
 GYMNASTICON_GROUP=${FIRST_USER_NAME} # keep npm install permissions aligned
+BOOTFS_DIR="${ROOTFS_DIR}/boot" # Buster mounts the FAT boot partition here.
+if [ -d "${ROOTFS_DIR}/boot/firmware" ]; then
+  BOOTFS_DIR="${ROOTFS_DIR}/boot/firmware" # Bookworm moved the FAT partition here.
+fi
 
 # Download and extract Node.js into /opt/gymnasticon/node when missing.
 if [ ! -x "${ROOTFS_DIR}/opt/gymnasticon/node/bin/node" ] ; then
@@ -62,7 +66,7 @@ install -v -m 644 files/gymnasticon.service "${ROOTFS_DIR}/etc/systemd/system/gy
 install -v -m 644 files/gymnasticon-mods.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon-mods.service"
 install -v -m 755 files/gymnasticon-wifi-setup.sh "${ROOTFS_DIR}/usr/local/sbin/gymnasticon-wifi-setup.sh"
 install -v -m 644 files/gymnasticon-wifi-setup.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon-wifi-setup.service"
-install -v -m 644 files/gymnasticon-wifi.env.example "${ROOTFS_DIR}/boot/gymnasticon-wifi.env.example"
+install -v -m 644 files/gymnasticon-wifi.env.example "${BOOTFS_DIR}/gymnasticon-wifi.env.example"
 install -d -m 755 "${ROOTFS_DIR}/lib/firmware/brcm"
 install -v -m 644 files/firmware/brcm/BCM20702A1-0a5c-21e8.hcd "${ROOTFS_DIR}/lib/firmware/brcm/"
 install -v -m 644 files/btusb.conf "${ROOTFS_DIR}/etc/modprobe.d/btusb.conf"
@@ -85,7 +89,7 @@ ln -sf /lib/firmware "${ROOTFS_DIR}/etc/firmware" || true
 # Detect availability of the miniuart BT overlay so we only turn on onboard BT when the dtbo exists (modern images).
 MINIUART_OVERLAY="miniuart-bt"
 ENABLE_MINIUART_BT=0
-if [ -f "${ROOTFS_DIR}/boot/overlays/${MINIUART_OVERLAY}.dtbo" ]; then
+if [ -f "${BOOTFS_DIR}/overlays/${MINIUART_OVERLAY}.dtbo" ]; then
   ENABLE_MINIUART_BT=1
 else
   echo "Skipping ${MINIUART_OVERLAY} overlay (dtbo missing in this release); relying on USB BT only."
@@ -93,7 +97,9 @@ fi
 
 # Configure Bluetooth, watchdog, and system settings from inside the chroot.
 ENABLE_MINIUART_BT=${ENABLE_MINIUART_BT} MINIUART_OVERLAY=${MINIUART_OVERLAY} on_chroot <<'CHROOT_EOF'
-echo 'dtparam=watchdog=on' >> /boot/config.txt
+BOOT_DIR=/boot
+[ -d /boot/firmware ] && BOOT_DIR=/boot/firmware
+echo 'dtparam=watchdog=on' >> "${BOOT_DIR}/config.txt"
 systemctl enable watchdog
 
 systemctl enable bluetooth
@@ -137,8 +143,8 @@ systemctl daemon-reload
 
 raspi-config nonint do_wifi_country "${WIFI_COUNTRY}" || true
 rfkill unblock all || true
-if [ -f /boot/cmdline.txt ]; then
-  sed -i 's/[[:space:]]*console=ttyAMA0,[0-9]\\+//g; s/[[:space:]]*console=serial0,[0-9]\\+//g' /boot/cmdline.txt
+if [ -f "${BOOT_DIR}/cmdline.txt" ]; then
+  sed -i 's/[[:space:]]*console=ttyAMA0,[0-9]\\+//g; s/[[:space:]]*console=serial0,[0-9]\\+//g' "${BOOT_DIR}/cmdline.txt"
 fi
 CHROOT_EOF
 
@@ -192,9 +198,9 @@ systemctl enable gymnasticon-bt-reprobe.service
 CHROOT_ENABLE
 
 # Ensure the UART overlay lines remain in the read-only boot partition.
-if [ -f "${ROOTFS_DIR}/boot/config.txt" ] && [ "${ENABLE_MINIUART_BT}" = "1" ]; then
-  grep -q '^enable_uart=1' "${ROOTFS_DIR}/boot/config.txt" || printf '\nenable_uart=1\n' >> "${ROOTFS_DIR}/boot/config.txt"
-  grep -q "^dtoverlay=${MINIUART_OVERLAY}" "${ROOTFS_DIR}/boot/config.txt" || printf "dtoverlay=${MINIUART_OVERLAY}\n" >> "${ROOTFS_DIR}/boot/config.txt"
+if [ -f "${BOOTFS_DIR}/config.txt" ] && [ "${ENABLE_MINIUART_BT}" = "1" ]; then
+  grep -q '^enable_uart=1' "${BOOTFS_DIR}/config.txt" || printf '\nenable_uart=1\n' >> "${BOOTFS_DIR}/config.txt"
+  grep -q "^dtoverlay=${MINIUART_OVERLAY}" "${BOOTFS_DIR}/config.txt" || printf "dtoverlay=${MINIUART_OVERLAY}\n" >> "${BOOTFS_DIR}/config.txt"
 fi
 
 install -v -m 644 files/motd "${ROOTFS_DIR}/etc/motd"

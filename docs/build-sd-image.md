@@ -1,10 +1,10 @@
 # Build a Raspberry Pi Image
 
-Use this guide to build Gymnasticon Raspberry Pi images locally with WSL2 or Linux. The build wraps Raspberry Pi `pi-gen`, applies the Gymnasticon image stage, and writes compressed `.img.xz` files suitable for flashing.
+Use this guide to build Gymnasticon Raspberry Pi images on Linux. The build wraps Raspberry Pi `pi-gen`, applies the Gymnasticon image stage, and writes compressed `.img.xz` files suitable for flashing from Linux, Windows, or macOS.
 
 ## Requirements
 
-- Windows 10/11 with WSL2, or a Linux host.
+- A Linux host, Windows 10/11 with WSL2, or a Mac running an x86_64 Linux VM.
 - Docker Desktop 4.x or newer on Windows, with WSL integration enabled.
 - At least 15 GB of free space inside the Linux filesystem.
 - The repository cloned inside the Linux filesystem.
@@ -16,6 +16,17 @@ On WSL, prefer a path like:
 ```
 
 Avoid building from `/mnt/c/...`; `pi-gen` writes many small files and the NTFS bridge significantly slows the build.
+
+### Building from a Mac
+
+The supported Mac-hosted route is an x86_64 Ubuntu VM or remote x86_64 Linux
+machine. Install Docker inside Linux, clone this repository onto the VM's Linux
+filesystem, and run the same commands below. Do not clone into a macOS shared
+folder; `pi-gen` needs Linux filesystem semantics, loop devices, and `binfmt`
+support. Native Docker Desktop builds on macOS are not currently supported.
+
+The build output still targets Raspberry Pi hardware. Copy the completed
+`.img.xz` back to macOS and flash it with Raspberry Pi Imager or balenaEtcher.
 
 ## Prepare Docker
 
@@ -73,7 +84,12 @@ Flash the `.img.xz` with Raspberry Pi Imager, balenaEtcher, or `dd`.
 
 ## First-Boot Customization
 
-Before first boot, mount the boot partition and optionally add:
+Before first boot, open the FAT partition named `bootfs`. This is normally the
+only partition macOS displays; the Linux root partition is intentionally hidden.
+The same FAT partition is mounted at `/boot/firmware` on Bookworm and `/boot` on
+Buster.
+
+At the top level of `bootfs`, optionally add:
 
 - `gymnasticon-wifi.env` for Wi-Fi credentials.
 - `gymnasticon.json` for bike-specific Gymnasticon settings.
@@ -103,7 +119,7 @@ After testing the images and pushing the matching Git tag, create or update the
 GitHub release with both images and their checksums:
 
 ```bash
-scripts/create-release-from-image.sh v2.0.3 release-assets
+scripts/create-release-from-image.sh v2.0.4 release-assets
 ```
 
 Add `--draft` to create a draft release. The uploader verifies every checksum

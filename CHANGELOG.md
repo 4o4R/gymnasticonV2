@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.0.4] - 2026-08-27
+### Fixed
+- Put first-boot customization files on the macOS-visible `bootfs` partition for Bookworm images.
+- Configure Wi-Fi through NetworkManager on Bookworm while retaining the Buster `wpa_supplicant` fallback.
+- Handle both `/boot/firmware` and `/boot` in image setup and read-only boot services.
+
 ## [2.0.3] - 2026-08-26
 ### Changed
 - Expanded the IC4 Bluetooth matcher to also recognize Schwinn 290 advertising names (shared FTMS payload).

@@ -40,8 +40,8 @@ Use this path for the fastest appliance-style setup.
    sha256sum Gymnasticon-*-*.img.xz
    ```
 3. Flash the `.img.xz` with Raspberry Pi Imager, balenaEtcher, or `dd`.
-4. Optional: copy `gymnasticon-wifi.env.example` from the boot partition to `gymnasticon-wifi.env` and set `WIFI_COUNTRY`, `WIFI_SSID`, and `WIFI_PSK`.
-5. Optional: copy `gymnasticon.json` to the boot partition to override the default bike profile.
+4. Open the FAT partition named `bootfs` (the only partition macOS normally shows). Copy `gymnasticon-wifi.env.example` to `gymnasticon-wifi.env`, then set `WIFI_COUNTRY`, `WIFI_SSID`, and `WIFI_PSK`.
+5. Optional: copy `gymnasticon.json` to the top level of `bootfs` to override the default bike profile.
 6. Boot the Pi, power on the bike, and pair your app with `GymnasticonV2`.
 
 Check the service:
@@ -109,7 +109,7 @@ For release work or customized Raspberry Pi images, use the WSL/Linux image buil
 
 ## Configuration
 
-Installed systems read `/etc/gymnasticon.json`. Image-based installs can also accept a `gymnasticon.json` file placed on the boot partition before first boot.
+Installed systems read `/etc/gymnasticon.json`. Image-based installs can also accept a `gymnasticon.json` file placed at the top level of the macOS-visible `bootfs` partition before first boot. On the running Pi, that same partition is mounted at `/boot/firmware` on Bookworm or `/boot` on Buster.
 
 Default configuration:
 

@@ -1,12 +1,12 @@
 [Unit]
 Description=Copy user gymnasticon.json
-ConditionPathExists=/boot/gymnasticon.json
 Before=gymnasticon.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/sh -c 'install -o pi -g pi -m 644 /boot/gymnasticon.json /etc/gymnasticon.json'
+ExecCondition=/bin/sh -c 'test -f /boot/firmware/gymnasticon.json || test -f /boot/gymnasticon.json'
+ExecStart=/bin/sh -c 'src=/boot/gymnasticon.json; test -f /boot/firmware/gymnasticon.json && src=/boot/firmware/gymnasticon.json; install -o pi -g pi -m 644 "$src" /etc/gymnasticon.json'
 
 [Install]
 WantedBy=multi-user.target
