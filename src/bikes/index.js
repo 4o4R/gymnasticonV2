@@ -114,7 +114,16 @@ async function autodetectBikeClient(options, noble) { // Attempt to identify the
   }
 
   const detector = new BikeAutoDetector(noble, NAME_MATCHERS); // Reuse the shared detector so matcher updates live in one place.
-  const match = await detector.detectBike(); // Perform an active BLE scan until any known bike advertisement appears.
+  const configuredTimeout = Number(options.bikeConnectTimeout);
+  const scanTimeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0
+    ? configuredTimeout * 1000
+    : 30000;
+  const match = await detector.detectBike(null, {
+    allowDuplicates: true,
+    active: true,
+    timeoutMs: scanTimeoutMs,
+    stopScanOnTimeout: true,
+  });
 
   if (match && match.type) { // When a peripheral was discovered, map it to the matching profile factory.
     const factory = factories[match.type];

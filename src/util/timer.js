@@ -64,9 +64,12 @@ export class Timer extends EventEmitter {
      */
     try {
       this.emit('timeout', this._interval);
+    } catch (error) {
+      // Timer callbacks run outside the caller's promise chain. Contain a bad
+      // listener here so the process-level uncaughtException handler does not
+      // terminate the service.
+      console.error('[timer] timeout listener failed:', error);
     } finally {
-      // Teaching note: a throwing listener must not kill a repeating timer;
-      // schedule the next tick regardless so the loop stays alive.
       if (this._repeats) {
         this.reset();
       }

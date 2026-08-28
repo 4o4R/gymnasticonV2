@@ -144,6 +144,9 @@ export class HeartRateClient extends EventEmitter {
     }
     const flags = data.readUInt8(0);
     const has16Bit = Boolean(flags & 0x01); // Bit 0 indicates whether HR is 16-bit.
+    if (has16Bit && data.length < 3) {
+      return; // A 16-bit measurement needs both bytes after the flags field.
+    }
     const heartRate = has16Bit
       ? data.readUInt16LE(1) // Little-endian 16-bit heart rate.
       : data.readUInt8(1); // 8-bit heart rate.
