@@ -1,18 +1,22 @@
 [Unit]
 Description=Gymnasticon Bike Bridge
-After=bluetooth.target network.target
-Wants=bluetooth.target
+After=bluetooth.target network-online.target
+Requires=bluetooth.target
+Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
+Environment=NODE_ENV=production
+Environment=PATH=/opt/gymnasticon/node/bin:/opt/gymnasticon/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WorkingDirectory=/opt/gymnasticon
+ExecStart=/opt/gymnasticon/bin/gymnasticon --config /etc/gymnasticon.json
 Restart=always
 RestartSec=5
-Environment=NODE_ENV=production
-WorkingDirectory=/opt/gymnasticon
-# Mirror runtime logs to the console so HDMI output reflects what Gymnasticon emits during boot.
 StandardOutput=journal+console
 StandardError=journal+console
-ExecStart=/usr/bin/env node /opt/gymnasticon/src/app/cli.js --config /etc/gymnasticon.json
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target

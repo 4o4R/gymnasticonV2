@@ -223,27 +223,9 @@ if [ -f "$APP_DIR/deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd" ]; then
 fi
 sudo install -m 644 "$APP_DIR/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/btusb.conf" /etc/modprobe.d/btusb.conf # force-reset and disable autosuspend for btusb to reduce patch failures on some dongles
 
-# Configure systemd service
-NODE_BIN="$(command -v node)" # Use the active Node path; Pi Zero ARMv6 installs into /usr/local/bin, not /usr/bin.
-sudo tee /etc/systemd/system/gymnasticon.service > /dev/null <<'SERVICE'
-[Unit]
-Description=Gymnasticon Bike Bridge
-After=bluetooth.service
-Requires=bluetooth.service
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/gymnasticon
-ExecStart=__NODE_BIN__ /opt/gymnasticon/src/app/cli.js --config /etc/gymnasticon.json
-Restart=always
-RestartSec=10
-StandardOutput=journal+console
-StandardError=journal+console
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-sudo sed -i "s|__NODE_BIN__|${NODE_BIN}|g" /etc/systemd/system/gymnasticon.service
+# Install the same canonical unit used by release images. The wrapper selects
+# the bundled image runtime or the host Node binary as appropriate.
+sudo install -m 644 "$APP_DIR/deploy/gymnasticon.service" /etc/systemd/system/gymnasticon.service
 
 sudo systemctl daemon-reload
 sudo systemctl enable gymnasticon

@@ -347,6 +347,7 @@ tar \
   stubs \
   scripts \
   types \
+  deploy/gymnasticon.service \
   README.md \
   CHANGELOG.md \
   LICENSE || { echo "Failed to create ${SRC_ARCHIVE} (tar exited with $?)" >&2; exit 1; }

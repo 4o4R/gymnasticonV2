@@ -58,7 +58,10 @@ NPM_EOF
 install -v -m 644 files/gymnasticon.json "${ROOTFS_DIR}/etc/gymnasticon.json"
 install -d -m 755 "${ROOTFS_DIR}/opt/gymnasticon/bin"
 install -v -m 755 files/gymnasticon-wrapper.sh "${ROOTFS_DIR}/opt/gymnasticon/bin/gymnasticon"
-install -v -m 644 files/gymnasticon.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon.service"
+# Install the repository's canonical unit, then add only the image-specific
+# unprivileged account settings. Manual installs use the same unit as root.
+install -v -m 644 "${ROOTFS_DIR}/opt/gymnasticon/app/deploy/gymnasticon.service" "${ROOTFS_DIR}/etc/systemd/system/gymnasticon.service"
+sed -i "/^WorkingDirectory=/a User=${GYMNASTICON_USER}\nGroup=${GYMNASTICON_GROUP}" "${ROOTFS_DIR}/etc/systemd/system/gymnasticon.service"
 install -v -m 644 files/gymnasticon-mods.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon-mods.service"
 install -v -m 755 files/gymnasticon-wifi-setup.sh "${ROOTFS_DIR}/usr/local/sbin/gymnasticon-wifi-setup.sh"
 install -v -m 644 files/gymnasticon-wifi-setup.service "${ROOTFS_DIR}/etc/systemd/system/gymnasticon-wifi-setup.service"
