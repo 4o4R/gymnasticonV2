@@ -10,11 +10,22 @@ import {macAddress} from '../util/mac-address.js'; // MAC normalization helper u
 import {createNameFilter, createAddressFilter} from '../util/ble-scan.js'; // BLE scanning utilities.
 import {Ic8BikeClient} from './ic8.js'; // Schwinn IC8 / Bowflex C6 profile.
 
+const FTMS_SERVICE_UUID = '1826'; // Fitness Machine Service exposed by IC8 / Bowflex C6 bikes.
+const CSC_SERVICE_UUID = '1816'; // Cycling Speed and Cadence service exposed by IC8 / Bowflex C6 bikes.
+
+function advertisesFitnessService(peripheral) { // Match C6/IC8 bikes even when the local name is missing from the advertisement.
+  const uuids = peripheral?.advertisement?.serviceUuids || [];
+  return uuids.some((uuid) => {
+    const normalized = String(uuid).toLowerCase();
+    return normalized === FTMS_SERVICE_UUID || normalized === CSC_SERVICE_UUID;
+  });
+}
+
 const NAME_MATCHERS = { // Heuristics used during autodetect to match advertising names.
   flywheel: createNameFilter(FLYWHEEL_LOCALNAME), // Flywheel bikes advertise a fixed prefix.
   ic4: matchesIc4OrSchwinn290, // Schwinn IC4 advertises "IC Bike" but Schwinn 290 variants reuse the same FTMS payloads.
   ic5: peripheral => /ic5|life ?fitness/i.test(peripheral?.advertisement?.localName ?? ''), // LifeFitness IC5 patterns.
-  ic8: peripheral => /ic8|c6|schwinn|bowflex/i.test(peripheral?.advertisement?.localName ?? ''), // Schwinn IC8 / Bowflex C6 patterns.
+  ic8: peripheral => /ic8|c6|schwinn|bowflex/i.test(peripheral?.advertisement?.localName ?? '') || advertisesFitnessService(peripheral), // Schwinn IC8 / Bowflex C6 patterns (name or FTMS/CSC service).
   keiser: matchesKeiserName, // Keiser M series broadcasts names that start with "M3".
 };
 
@@ -118,11 +129,27 @@ async function autodetectBikeClient(options, noble) { // Attempt to identify the
   const scanTimeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0
     ? configuredTimeout * 1000
     : 30000;
+
+  // Teaching note: count *every* advertisement the radio sees (not just the
+  // ones our matchers like) so a failed autodetect can tell users whether the
+  // scan saw nothing at all (radio/advertising problem) or saw devices that
+  // simply do not match a supported profile (matcher problem).
+  let seenCount = 0;
+  const seenNames = [];
+  const onDiscovery = (peripheral) => {
+    seenCount += 1;
+    const name = peripheral?.advertisement?.localName || '(unnamed)';
+    if (!seenNames.includes(name)) {
+      seenNames.push(name);
+    }
+  };
+
   const match = await detector.detectBike(null, {
     allowDuplicates: true,
     active: true,
     timeoutMs: scanTimeoutMs,
     stopScanOnTimeout: true,
+    onDiscovery,
   });
 
   if (match && match.type) { // When a peripheral was discovered, map it to the matching profile factory.
@@ -140,6 +167,17 @@ async function autodetectBikeClient(options, noble) { // Attempt to identify the
   if (!fallbackFactory) {
     throw new Error(`Unknown default bike type: ${fallback}`);
   }
-  console.log('[gym-cli] Autodetect falling back to default bike:', fallback);
+
+  // Teaching note: a silent timeout is why users think "nothing is happening"
+  // when the bike is turned off or already paired to a phone/watch/tablet.
+  // Spell out what the scan actually saw and what to check before the retry.
+  const seenNamesLabel = seenNames.slice(0, 8).join(', ') || 'none';
+  console.log(`[gym-cli] ⚠ No supported bike found after ${scanTimeoutMs / 1000}s of scanning (${seenCount} BLE device(s) seen: ${seenNamesLabel})`);
+  if (seenCount === 0) {
+    console.log('[gym-cli]   • The radio saw no advertisements at all. Confirm the bike is powered on and pedaled once so it broadcasts, and that no phone/watch/tablet is connected to it (most bikes stop advertising while connected).');
+  } else {
+    console.log('[gym-cli]   • Devices were seen, but none matched a supported bike profile. If your bike advertises under an unexpected name, set "bike" to its type in /etc/gymnasticon.json.');
+  }
+  console.log(`[gym-cli] Autodetect falling back to default bike: ${fallback}`);
   return fallbackFactory(options, noble);
 }

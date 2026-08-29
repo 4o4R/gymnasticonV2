@@ -1,6 +1,6 @@
 {
   "name": "@4o4r/gymnasticon",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "description": "Bridges supported indoor bikes to BLE and ANT+ fitness apps and devices.",
   "engines": {
     "node": ">=14.21.3 <15"

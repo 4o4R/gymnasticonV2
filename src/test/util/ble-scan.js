@@ -72,3 +72,28 @@ test('scan() preserves noble startup failures', async t => {
   }
   t.end();
 });
+
+test('scan() reports every discovered peripheral via onDiscovery', async (t) => {
+  const noble = new EventEmitter();
+  noble.startScanningAsync = async () => {};
+  noble.stopScanningAsync = async () => {};
+
+  const discovered = [];
+  const pending = scan(noble, [], (p) => p.advertisement.localName === 'Target', {
+    timeoutMs: 50,
+    onDiscovery: (p) => discovered.push(p.advertisement.localName),
+  });
+
+  // Defer the discoveries a tick so scan() has attached its listener after
+  // the async startScanningAsync() call.
+  setTimeout(() => {
+    noble.emit('discover', {advertisement: {localName: 'Other1'}});
+    noble.emit('discover', {advertisement: {localName: 'Other2'}});
+    noble.emit('discover', {advertisement: {localName: 'Target'}});
+  }, 0);
+
+  const result = await pending;
+  t.equal(result.advertisement.localName, 'Target', 'returns the first matching peripheral');
+  t.deepEqual(discovered, ['Other1', 'Other2', 'Target'], 'reports matched and unmatched discoveries in order');
+  t.end();
+});

@@ -31,6 +31,11 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
   const timeoutMs = Number.isFinite(options?.timeoutMs) ? options.timeoutMs : null;
   const stopScanOnMatch = options?.stopScanOnMatch !== false;
   const stopScanOnTimeout = options?.stopScanOnTimeout !== false;
+  // Teaching note: optional per-discovery callback so callers (autodetect)
+  // can count/log every advertisement, not just the ones that match. This is
+  // what lets a failed scan distinguish "radio saw nothing" from "radio saw
+  // devices but none matched a supported bike".
+  const onDiscovery = typeof options?.onDiscovery === 'function' ? options.onDiscovery : null;
   let startedScan = false;
 
   try {
@@ -50,6 +55,7 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
     startedScan,
     stopScanOnMatch,
     stopScanOnTimeout,
+    onDiscovery,
   });
 }
 
@@ -186,6 +192,9 @@ function waitForDiscovery(noble, filter, options = {}) {
 
     const onDiscover = (result) => {
       if (settled) return;
+      if (options.onDiscovery) {
+        options.onDiscovery(result);
+      }
       if (filter(result)) {
         finish(result, true);
       }

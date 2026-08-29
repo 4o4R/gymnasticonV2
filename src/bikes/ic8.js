@@ -45,8 +45,16 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
 
   static matchesAdvertisement(peripheral) { // Heuristic used during autodetect to identify IC8/C6 bikes.
     const name = (peripheral?.advertisement?.localName || '').toLowerCase();
-    if (!name) return false;
-    return name.includes('ic8') || name.includes('c6') || name.includes('schwinn') || name.includes('bowflex');
+    if (name && (name.includes('ic8') || name.includes('c6') || name.includes('schwinn') || name.includes('bowflex'))) {
+      return true;
+    }
+    // Some C6/IC8 consoles omit the local name from the advertisement; the
+    // CSC/FTMS service UUIDs are a reliable signature for these bikes.
+    const uuids = peripheral?.advertisement?.serviceUuids || [];
+    return uuids.some((uuid) => {
+      const normalized = String(uuid).toLowerCase();
+      return normalized === '1816' || normalized === '1826';
+    });
   }
 
   async connect() { // Discover and subscribe to the bike's CSC notifications and optional resistance characteristic.

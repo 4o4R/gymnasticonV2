@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.0.8] - 2026-08-29
+### Fixed
+- Autodetect no longer fails silently when no bike is found. After each scan it reports how many BLE devices the radio actually saw (with sample names) and prints actionable guidance: power the bike on, pedal once so it broadcasts, and confirm no phone/watch/tablet is currently connected to it (most bikes stop advertising while connected). This turns a "nothing seems to be happening" scan into a readable diagnostic and is the first thing to check when the Watch/Quest never see `GymnasticonV2`.
+- Schwinn IC8 / Bowflex C6 detection now also matches the CSC (0x1816) and FTMS (0x1826) service UUIDs when the advertisement omits the local name, so these bikes are discovered even when they broadcast without a readable name.
+
+### Tests
+- Added regressions for autodetect no-match feedback, per-scan BLE visibility counting, and IC8/C6 service-UUID matching; the suite now contains 216 passing assertions.
+
 ## [2.0.7] - 2026-08-28
 ### Fixed
 - Release noble and bleno native HCI poll handles during graceful shutdown so SIGINT/SIGTERM can exit cleanly on Raspberry Pi hardware.
