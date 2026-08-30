@@ -43,6 +43,15 @@ docker ps -a | grep pigen_work
 docker rm -v pigen_work
 ```
 
+> **Buster builds on modern kernels (WSL2):** the legacy Buster archive ships an
+> ancient `qemu-user-static` whose emulated `sync()` can hang the build forever
+> (a wedged `qemu-arm-static ... /bin/sync` process in `D` state). `build.sh`
+> now downloads a modern, statically-linked `qemu-arm-static` automatically and
+> injects it into the pi-gen container, so no manual step is needed. If a build
+> ever hangs again at `sync`, terminate the distro (`wsl --terminate Ubuntu`),
+> restart the Docker daemon, remove the stale `pigen_work` container
+> (`docker rm -v pigen_work`), and rerun.
+
 ## Build
 
 From the repository root:

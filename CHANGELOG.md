@@ -8,6 +8,9 @@
 ### Tests
 - Added regressions for autodetect no-match feedback, per-scan BLE visibility counting, and IC8/C6 service-UUID matching; the suite now contains 216 passing assertions.
 
+### Build tooling
+- Buster image builds now swap the archived release's ancient `qemu-user-static` for a modern statically-linked `qemu-arm-static`, fixing the emulated `sync()` hang that wedged Buster builds on modern kernels (WSL2). Applies to all future image builds.
+
 ## [2.0.7] - 2026-08-28
 ### Fixed
 - Release noble and bleno native HCI poll handles during graceful shutdown so SIGINT/SIGTERM can exit cleanly on Raspberry Pi hardware.
