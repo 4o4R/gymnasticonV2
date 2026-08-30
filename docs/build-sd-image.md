@@ -43,15 +43,17 @@ docker ps -a | grep pigen_work
 docker rm -v pigen_work
 ```
 
-> **Buster builds on WSL2 are currently unreliable:** the emulated `sync()`
-> under `qemu-arm-static` can wedge the build indefinitely (a
-> `qemu-arm-static ... /bin/sync` process stuck in `D` state) during debootstrap
-> or kernel-package installs. This reproduced across several qemu versions and
-> is not resolved by swapping the interpreter. The Bookworm (modern) image
-> builds fine. If a Buster build wedges, terminate the distro
-> (`wsl --terminate Ubuntu`), restart the Docker daemon, remove the stale
-> `pigen_work` container (`docker rm -v pigen_work`), and rerun — or build on a
-> native Linux host, where Buster builds complete.
+> **Buster builds on WSL2:** the host kernel's `sync()` syscall can wedge the
+> build (processes stuck in `D` state) during debootstrap, package postinsts,
+> and image export — qemu-user-static emulated syncs hang too because they pass
+> `sync()` through to the host. `build.sh` neutralizes `sync()` during the build
+> automatically: it patches the container's debootstrap, replaces `/bin/sync`
+> and `/usr/bin/sync` in the rootfs with no-ops, and neutralizes the `sync` in
+> pi-gen's `unmount_image()`. The shipped appliance image therefore contains a
+> no-op `sync` (harmless; systemd flushes on shutdown). If a build ever wedges
+> on a stuck `sync`, terminate the distro (`wsl --terminate Ubuntu`), restart the
+> Docker daemon, remove the stale `pigen_work` container (`docker rm -v
+> pigen_work`), and rerun.
 
 ## Build
 

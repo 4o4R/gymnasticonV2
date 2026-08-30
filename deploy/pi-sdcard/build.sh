@@ -263,6 +263,24 @@ net_tweaks_run.write_text(
 net_tweaks_run.chmod(0o755)
 
 PY
+# The emulated sync() syscall under qemu-user-static wedges on modern kernels
+# (observed on WSL2): debootstrap and package postinsts hang forever in D state.
+# Neutralize sync during the Buster build so the legacy image can be produced:
+#  1. Patch the container's debootstrap so its trailing sync cannot hang stage0.
+#  2. Replace /bin/sync + /usr/bin/sync in the rootfs with no-ops so stages 1+
+#     (e.g. the raspberrypi-kernel postinst) cannot hang. The appliance image
+#     does not depend on /bin/sync at runtime (systemd flushes on shutdown).
+sed -i '$a RUN sed -i '"'"'s/^[[:space:]]*sync$/true/'"'"' /usr/sbin/debootstrap' Dockerfile
+mkdir -p stage0/01-sync-noop
+cat > stage0/01-sync-noop/00-run.sh <<'SYNC_SH'
+#!/bin/bash -e
+on_chroot <<'EOF'
+printf '#!/bin/sh\nexit 0\n' > /bin/sync
+printf '#!/bin/sh\nexit 0\n' > /usr/bin/sync
+chmod 755 /bin/sync /usr/bin/sync
+EOF
+SYNC_SH
+chmod +x stage0/01-sync-noop/00-run.sh
 fi
 
 # For Bookworm, pin a direct mirror and keep a fallback to the upstream mirror to avoid
@@ -289,6 +307,13 @@ apt_conf.write_text(
     "Acquire::https::No-Cache \"true\";\n"
 )
 PY
+fi
+
+# The host kernel's sync() can hang on WSL2 (it wedges in D state while flushing
+# every filesystem, including the 9p mounts). Neutralize the sync in pi-gen's
+# unmount_image() so export-image cannot hang before detaching its loop devices.
+if grep -q '^[[:space:]]*sync$' scripts/common; then
+  sed -i 's/^\([[:space:]]*\)sync\([[:space:]]*\)$/\1true\2/' scripts/common
 fi
 
 cp "${CONFIG_FILE}" config
