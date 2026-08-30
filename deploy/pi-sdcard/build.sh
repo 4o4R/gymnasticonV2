@@ -291,25 +291,6 @@ apt_conf.write_text(
 PY
 fi
 
-# The Buster archive ships an ancient qemu-user-static whose emulated sync()
-# wedges the build on modern kernels (observed on WSL2, two identical hangs).
-# Swap in a modern statically-linked qemu-arm-static so debootstrap and package
-# postinsts cannot hang on the emulated filesystem flush.
-if [ "${RELEASE}" = "buster" ]; then
-  STATIC_QEMU_TARBALL="qemu-arm-static.tar.gz"
-  echo "Fetching static qemu-arm-static for Buster emulation..."
-  curl -fSL --retry 3 \
-    "https://github.com/multiarch/qemu-user-static/releases/download/v7.2.0-1/qemu-arm-static.tar.gz" \
-    -o "${STATIC_QEMU_TARBALL}"
-  tar -xzf "${STATIC_QEMU_TARBALL}" -C . qemu-arm-static
-  rm -f "${STATIC_QEMU_TARBALL}"
-  chmod +x qemu-arm-static
-  if ! grep -q '^COPY qemu-arm-static' Dockerfile; then
-    # Put the static interpreter in place before the rest of the pi-gen tree.
-    sed -i '/^COPY \. \/pi-gen\/$/i COPY qemu-arm-static /usr/bin/qemu-arm-static' Dockerfile
-  fi
-fi
-
 cp "${CONFIG_FILE}" config
 SRC_STAGE_DIR="${SCRIPT_DIR}/stage-gymnasticon"
 if [ ! -d "${SRC_STAGE_DIR}" ]; then

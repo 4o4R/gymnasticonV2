@@ -9,7 +9,7 @@
 - Added regressions for autodetect no-match feedback, per-scan BLE visibility counting, and IC8/C6 service-UUID matching; the suite now contains 216 passing assertions.
 
 ### Build tooling
-- Buster image builds now swap the archived release's ancient `qemu-user-static` for a modern statically-linked `qemu-arm-static`, fixing the emulated `sync()` hang that wedged Buster builds on modern kernels (WSL2). Applies to all future image builds.
+- The legacy (Buster) Raspberry Pi image could not be produced in the WSL2 build environment: the emulated `sync()` under `qemu-arm-static` wedges the build (a process stuck in `D` state) during debootstrap and kernel-package installs, across multiple qemu versions. The v2.0.8 release ships the modern (Bookworm) image; the legacy image will be attached once it can be built on a compatible Linux host.
 
 ## [2.0.7] - 2026-08-28
 ### Fixed
