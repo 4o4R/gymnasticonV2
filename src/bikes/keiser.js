@@ -1,6 +1,6 @@
 import {EventEmitter} from 'events';
 import {Timer} from '../util/timer.js';
-import {scan} from '../util/ble-scan.js';
+import {scan, stopScanningSafely} from '../util/ble-scan.js';
 import {macAddress} from '../util/mac-address.js';
 import {createDropoutFilter} from '../util/dropout-filter.js';
 
@@ -363,11 +363,9 @@ export class KeiserBikeClient extends EventEmitter {
     this.noble.off('discover', this.onReceive);
     this.noble.off('scanStop', this.restartScan);
 
-    try {
-      await this.noble.stopScanningAsync();
-    } catch (err) {
-      debuglog('Unable to stop BLE scan', err);
-    }
+    // Bounded stop: stopScanningAsync() can hang forever in noble's "unknown"
+    // state and would wedge disconnect/shutdown.
+    await stopScanningSafely(this.noble);
 
     const address = this.address;
     this.peripheral = null;

@@ -97,3 +97,40 @@ test('scan() reports every discovered peripheral via onDiscovery', async (t) => 
   t.deepEqual(discovered, ['Other1', 'Other2', 'Target'], 'reports matched and unmatched discoveries in order');
   t.end();
 });
+
+test('scan() resolves on timeout even when stopScanningAsync never settles', async (t) => {
+  // Regression for issue #10 follow-up: on some Pi/BlueZ combos noble.state
+  // stays "unknown" and stopScanningAsync() waits forever for a scanStop event,
+  // which wedged autodetect (no "No supported bike found" log, no fallback) and
+  // the app's shutdown path. The result must not wait on the stop.
+  const noble = new EventEmitter();
+  noble.startScanningAsync = async () => {};
+  noble.stopScanningAsync = () => new Promise(() => {}); // never settles
+
+  const result = await scan(noble, [], () => false, {
+    timeoutMs: 5,
+    stopScanOnTimeout: true,
+  });
+
+  t.equal(result, null, 'returns null on timeout without waiting for stopScanningAsync');
+  t.end();
+});
+
+test('scan() resolves on match even when stopScanningAsync never settles', async (t) => {
+  const noble = new EventEmitter();
+  noble.startScanningAsync = async () => {};
+  noble.stopScanningAsync = () => new Promise(() => {}); // never settles
+
+  const pending = scan(noble, [], (p) => p.advertisement.localName === 'Target', {
+    timeoutMs: 50,
+    stopScanOnMatch: true,
+  });
+
+  setTimeout(() => {
+    noble.emit('discover', {advertisement: {localName: 'Target'}});
+  }, 0);
+
+  const result = await pending;
+  t.equal(result.advertisement.localName, 'Target', 'resolves with the match without waiting for stopScanningAsync');
+  t.end();
+});

@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.9] - 2026-08-30
+### Fixed
+- BLE scans no longer hang when noble's state stays `unknown` (seen on some Pi/BlueZ combos): `stopScanningAsync()` could wait forever for a `scanStop` event, which froze autodetect — no "No supported bike found" log, no fallback bike, and no advertising — and also stalled SIGTERM shutdown. Scan results now resolve immediately, and scan-stopping is bounded everywhere (ble-scan, Keiser disconnect, heart-rate client).
+
+### Tests
+- Added regressions for `scan()` resolving on timeout/match even when `stopScanningAsync` never settles; the suite now contains 218 passing assertions.
+
 ## [2.0.8] - 2026-08-29
 ### Fixed
 - Autodetect no longer fails silently when no bike is found. After each scan it reports how many BLE devices the radio actually saw (with sample names) and prints actionable guidance: power the bike on, pedal once so it broadcasts, and confirm no phone/watch/tablet is currently connected to it (most bikes stop advertising while connected). This turns a "nothing seems to be happening" scan into a readable diagnostic and is the first thing to check when the Watch/Quest never see `GymnasticonV2`.

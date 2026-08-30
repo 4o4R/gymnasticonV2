@@ -158,6 +158,36 @@ function tryStartScanViaBindings(noble, serviceUuids, allowDuplicates) {
   }
 }
 
+/**
+ * Stop BLE scanning without ever hanging.
+ *
+ * noble's stopScanningAsync() can wait forever for a scanStop event on some
+ * Pi/BlueZ combos when noble.state stays "unknown" (which is exactly the
+ * degraded mode the bindings-fallback scan uses). Callers must not block
+ * results or shutdown on it, so prefer the synchronous stopScanning() and cap
+ * the async variant with a timeout.
+ */
+export function stopScanningSafely(noble) {
+  if (!noble) {
+    return Promise.resolve();
+  }
+  if (typeof noble.stopScanning === 'function') {
+    try {
+      noble.stopScanning();
+      return Promise.resolve();
+    } catch (_error) {
+      // fall through to the bounded async variant
+    }
+  }
+  if (typeof noble.stopScanningAsync === 'function') {
+    return Promise.race([
+      noble.stopScanningAsync().catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 1000)),
+    ]);
+  }
+  return Promise.resolve();
+}
+
 function waitForDiscovery(noble, filter, options = {}) {
   return new Promise((resolve) => {
     let settled = false;
@@ -177,14 +207,11 @@ function waitForDiscovery(noble, filter, options = {}) {
       );
 
       if (shouldStop) {
-        Promise.resolve()
-          .then(() => noble.stopScanningAsync())
-          .catch((err) => {
-            if (!/not scanning/i.test(String(err?.message || err))) {
-              console.warn(`[ble-scan] ⚠ stopScanning failed: ${err.message}`);
-            }
-          })
-          .finally(() => resolve(peripheral));
+        // Fire-and-forget the stop: it must never delay the result, because
+        // stopScanningAsync() can hang forever in noble's "unknown" state and
+        // that would wedge autodetect and the app's shutdown path.
+        stopScanningSafely(noble);
+        resolve(peripheral);
       } else {
         resolve(peripheral);
       }

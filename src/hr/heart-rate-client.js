@@ -1,5 +1,5 @@
 import {EventEmitter} from 'events';
-import {createNameFilter} from '../util/ble-scan.js';
+import {createNameFilter, stopScanningSafely} from '../util/ble-scan.js';
 import {BluetoothConnectionManager} from '../util/connection-manager.js';
 
 const HEART_RATE_SERVICE = '180d';
@@ -95,7 +95,9 @@ export class HeartRateClient extends EventEmitter {
       return;
     }
     try {
-      await this.noble.stopScanningAsync();
+      // Bounded stop: stopScanningAsync() can hang forever in noble's
+      // "unknown" state, so never await it unbounded.
+      await stopScanningSafely(this.noble);
     } catch (error) {
       if (!/not scanning/i.test(String(error))) {
         throw error;
