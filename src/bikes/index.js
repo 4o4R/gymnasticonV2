@@ -174,7 +174,7 @@ async function autodetectBikeClient(options, noble) { // Attempt to identify the
   const seenNamesLabel = seenNames.slice(0, 8).join(', ') || 'none';
   console.log(`[gym-cli] ⚠ No supported bike found after ${scanTimeoutMs / 1000}s of scanning (${seenCount} BLE device(s) seen: ${seenNamesLabel})`);
   if (seenCount === 0) {
-    console.log('[gym-cli]   • The radio saw no advertisements at all. Confirm the bike is powered on and pedaled once so it broadcasts, and that no phone/watch/tablet is connected to it (most bikes stop advertising while connected).');
+    console.log('[gym-cli]   • The radio saw no advertisements at all. This is a radio/scan issue, not a detection issue — a fixed bike type would see the same. Verify the radio works: run "sudo timeout 10 hcitool lescan"; if it lists nothing, restart Bluetooth (sudo systemctl restart bluetooth) or reset the adapter (sudo hciconfig hci0 down && sudo hciconfig hci0 up). Also confirm the bike is powered on, pedaled once, and not connected to a phone/watch/tablet.');
   } else {
     console.log('[gym-cli]   • Devices were seen, but none matched a supported bike profile. If your bike advertises under an unexpected name, set "bike" to its type in /etc/gymnasticon.json.');
   }
