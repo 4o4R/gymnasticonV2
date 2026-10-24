@@ -47,6 +47,10 @@ export const options = {
   'keiser-address': {
     describe: '<macaddr> optional MAC filter for Keiser discovery',
   },
+  'keiser-equipment-id': {
+    describe: '<0-200> optional Keiser equipment ID filter (survives MAC rotation)',
+    type: 'number',
+  },
   'peloton-path': {
     describe: '<path> usb serial device path',
     type: 'string',

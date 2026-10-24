@@ -147,6 +147,7 @@ Common options:
 | `bleMultiOutput` | Mirror BLE output across multiple adapters when available. |
 | `antAuto` / `antEnabled` | Automatically or explicitly enable ANT+ output (`--ant-auto` / `--ant-enabled`; `--ant-plus` remains supported). |
 | `powerScale` / `powerOffset` | Calibrate reported wattage. |
+| `keiserAddress` / `keiserEquipmentId` | Isolate one Keiser console by MAC address or by the equipment ID printed on the console (0–200). The equipment ID keeps working when the adapter reports no usable address. |
 | `heartRateEnabled` / `heartRateAdapter` | Control heart-rate rebroadcast behavior. |
 
 Most users can leave the defaults in place and rely on autodetection.
@@ -159,13 +160,13 @@ Most users can leave the defaults in place and rely on autodetection.
 | Peloton Bike | USB serial | Requires the active cable setup documented by the original Gymnasticon project. |
 | Schwinn IC4 / IC8 / Bowflex C6 | Bluetooth LE | IC8/C6 prefers native FTMS power when the console publishes it and falls back to cadence + resistance estimation. |
 | Schwinn 290 recumbent | Bluetooth LE FTMS | Auto-detected through the IC4-compatible FTMS profile. Unverified: no capture from a real 290 has been validated yet. |
-| Keiser M Series (M3i, M3i-TBT, M3iX) | Bluetooth broadcast | Can be filtered by MAC address; when a MAC is configured only that console is accepted. |
+| Keiser M Series (M3i, M3i-TBT, M3iX) | Bluetooth broadcast | Can be isolated by MAC address or by the console's equipment ID; an unknown or rotating MAC no longer drops the ride. |
 | LifeFitness IC5 | Bluetooth LE | Uses the FTMS profile and reports native power when the console publishes it. IC5-specific power estimation is not implemented. |
 
 Known limitations:
 
 - IC5 and Schwinn 290 field layouts are only proven against the IC4-compatible FTMS frames this project already handles. Real captures from those consoles are still needed to confirm per-console layouts and whether they publish power at all.
-- With a MAC filter configured, a Keiser console that stops reporting its MAC (`address: unknown`) after discovery is ignored rather than matched by name or payload. That keeps a second console from contaminating a ride.
+- Keiser isolation uses the console's MAC address when the adapter can resolve one; when it cannot (`address: unknown`, or the console rotates its MAC), Gymnasticon falls back to the equipment ID documented by Keiser (`keiserEquipmentId`, byte 5 of the broadcast). Consoles left at the factory-default equipment ID of `0` in the same room are therefore only distinguishable by MAC, so set a unique equipment ID on each console if you run several.
 
 ## Supported Outputs
 

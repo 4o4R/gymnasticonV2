@@ -12,6 +12,8 @@ const KEISER_VALUE_MAGIC_NEW = Buffer.from([0x03]); // newer Keiser data message
 const KEISER_VALUE_IDX_POWER = 10; // 16-bit power (watts) data offset within packet
 const KEISER_VALUE_IDX_CADENCE = 6; // 16-bit cadence (1/10 rpm) data offset within packet
 const KEISER_VALUE_IDX_REALTIME = 4; // Indicates whether the data present is realtime (0, or 128 to 227)
+const KEISER_VALUE_IDX_EQUIPMENT_ID = 5; // 8-bit ordinal equipment identifier documented by Keiser (0..200)
+const KEISER_EQUIPMENT_ID_MAX = 200; // Vendor range: "always be between 0 and 200"
 const KEISER_VALUE_IDX_VER_MAJOR = 2; // 8-bit Version Major data offset within packet
 const KEISER_VALUE_IDX_VER_MINOR = 3; // 8-bit Version Major data offset within packet
 const KEISER_STATS_NEWVER_MINOR = 30; // Version Minor when broadcast interval was changed from ~ 2 sec to ~ 0.3 sec
@@ -68,6 +70,51 @@ function extractKeiserPayload(advertisement) {
   return null;
 }
 
+/**
+ * Normalize an operator-supplied equipment ID.
+ *
+ * Teaching note: Keiser documents the equipment ID as the "primary method of
+ * identifying the equipment" and it survives MAC rotation, so it is the only
+ * signal that still identifies the console when the adapter reports an
+ * "unknown" address.
+ *
+ * @param {*} value - configured equipment ID (number or numeric string).
+ * @returns {number|null} 0..200, or null when unset/invalid.
+ */
+export function normalizeEquipmentId(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const parsed = Number.parseInt(String(value).trim(), 10);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > KEISER_EQUIPMENT_ID_MAX) {
+    return null;
+  }
+  return parsed;
+}
+
+/**
+ * Read the equipment ID from an advertisement's Keiser payload.
+ * @param {object} advertisement - noble advertisement object.
+ * @returns {number|null} the equipment ID, or null when the packet is too short.
+ */
+export function equipmentIdFromAdvertisement(advertisement) {
+  const payload = extractKeiserPayload(advertisement);
+  if (!payload || payload.length <= KEISER_VALUE_IDX_EQUIPMENT_ID) {
+    return null;
+  }
+  return payload.readUInt8(KEISER_VALUE_IDX_EQUIPMENT_ID);
+}
+
+function isUsableAddress(address) {
+  // Teaching note: BlueZ reports "unknown" (or an all-zero address) when it
+  // cannot resolve the advertiser; neither value identifies a console.
+  if (!address) {
+    return false;
+  }
+  const normalized = String(address).toLowerCase();
+  return normalized !== 'unknown' && !/^0{2}([:-]?0{2}){5}$/.test(normalized);
+}
+
 const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta);
 const debuglog = toDefaultExport(debugModule)('gym:bikes:keiser');
 
@@ -113,14 +160,30 @@ export function matchesKeiserName(peripheral) {
  * same "M3i" name and manufacturer magic, so falling back to the name/payload
  * heuristics would happily connect to (and then mix in) the neighbouring ride.
  *
+ * The equipment ID (documented byte 5) is the vendor's primary identifier and
+ * survives MAC rotation, so when it is configured it may select the console on
+ * its own - which is the only way to preselect a bike whose adapter reports no
+ * usable address.
+ *
  * @param {string} [targetAddress] - normalized MAC address to isolate, if any
+ * @param {number|string} [targetEquipmentId] - Keiser equipment ID to isolate, if any
  * @returns {FilterFunction} filter accepting only the configured console
  */
-export function createKeiserPeripheralFilter(targetAddress) {
+export function createKeiserPeripheralFilter(targetAddress, targetEquipmentId) {
   const target = normalizeAddress(targetAddress);
+  const equipmentId = normalizeEquipmentId(targetEquipmentId);
   return (peripheral) => {
+    if (equipmentId !== null) {
+      if (equipmentIdFromAdvertisement(peripheral?.advertisement) === equipmentId) {
+        return true;
+      }
+      // Keep accepting the pinned MAC so a console that omits its ID on some
+      // advertisements is still discoverable.
+      return Boolean(target && isUsableAddress(peripheral?.address) &&
+        normalizeAddress(peripheral.address) === target);
+    }
     if (target) {
-      return normalizeAddress(peripheral?.address) === target;
+      return isUsableAddress(peripheral?.address) && normalizeAddress(peripheral?.address) === target;
     }
     return matchesKeiserName(peripheral);
   };
@@ -137,6 +200,7 @@ export class KeiserBikeClient extends EventEmitter {
     super();
     this.noble = noble;
     this.targetAddress = normalizeAddress(options.address);
+    this.targetEquipmentId = normalizeEquipmentId(options.equipmentId ?? options.keiserEquipmentId);
     this.state = 'disconnected';
     this.onReceive = this.onReceive.bind(this);
     this.restartScan = this.restartScan.bind(this);
@@ -152,6 +216,7 @@ export class KeiserBikeClient extends EventEmitter {
     this.peripheralAddress = null;
     this.peripheralName = null;
     this.peripheralSignature = null; // Teaching note: capture a small signature from the payload to match rotating addresses.
+    this.peripheralEquipmentId = null; // Equipment ID captured at connect; identifies the console when its MAC is unusable.
     this.fixDropout = null;
     this.ignoredPackets = 0; // Teaching note: small counter to avoid log spam when we ignore packets.
   }
@@ -190,14 +255,18 @@ export class KeiserBikeClient extends EventEmitter {
 
     this.state = 'connecting';
 
-    const filter = createKeiserPeripheralFilter(this.targetAddress);
+    const filter = createKeiserPeripheralFilter(this.targetAddress, this.targetEquipmentId);
     
     const scanTimeoutFromEnv = Number.parseInt(process.env.GYMNASTICON_KEISER_SCAN_TIMEOUT_MS || '', 10);
     const scanTimeoutMs = Number.isFinite(scanTimeoutFromEnv) && scanTimeoutFromEnv > 0
       ? scanTimeoutFromEnv
       : 20000;
-    if (this.targetAddress) {
-      console.log(`[keiser] Starting Keiser bike scan (timeout: ${scanTimeoutMs}ms, address=${this.targetAddress})...`);
+    if (this.targetAddress || this.targetEquipmentId !== null) {
+      const selector = [
+        this.targetAddress ? `address=${this.targetAddress}` : null,
+        this.targetEquipmentId !== null ? `equipmentId=${this.targetEquipmentId}` : null,
+      ].filter(Boolean).join(', ');
+      console.log(`[keiser] Starting Keiser bike scan (timeout: ${scanTimeoutMs}ms, ${selector})...`);
     } else {
       console.log(`[keiser] Starting Keiser bike scan (timeout: ${scanTimeoutMs}ms)...`);
     }
@@ -223,6 +292,13 @@ export class KeiserBikeClient extends EventEmitter {
     this.peripheralId = peripheral?.id || null;
     this.peripheralAddress = normalizeAddress(peripheral?.address);
     this.peripheralName = peripheral?.advertisement?.localName || null;
+    // Teaching note: capture the vendor equipment ID now so later advertisements
+    // can still be attributed to this console when the adapter reports an
+    // "unknown" address or the MAC rotates.
+    this.peripheralEquipmentId = equipmentIdFromAdvertisement(peripheral?.advertisement);
+    if (this.peripheralEquipmentId !== null) {
+      debuglog(`Keiser equipment ID: ${this.peripheralEquipmentId}`);
+    }
     // Teaching note: store the first 4 bytes (magic + version) so we can match
     // later packets even if the address rotates or the name disappears.
     const initialPayload = extractKeiserPayload(peripheral?.advertisement);
@@ -386,6 +462,7 @@ export class KeiserBikeClient extends EventEmitter {
     this.peripheralAddress = null;
     this.peripheralName = null;
     this.peripheralSignature = null;
+    this.peripheralEquipmentId = null;
     this.fixDropout = null;
     this.ignoredPackets = 0;
 
@@ -421,45 +498,74 @@ export class KeiserBikeClient extends EventEmitter {
     if (!peripheral) {
       return false;
     }
-    // Teaching note: when the operator pinned a MAC, only that console may feed
-    // this ride. The id/name/signature fallbacks below would let a second
-    // Keiser console (same "M3i" name, same magic payload) contaminate it.
-    if (this.targetAddress) {
-      return normalizeAddress(peripheral.address) === this.targetAddress;
-    }
-    // Teaching note: prefer the stable noble id when available.
-    if (this.peripheralId && peripheral.id === this.peripheralId) {
-      return true;
-    }
-    // Teaching note: fall back to normalized MAC address comparison.
-    const address = normalizeAddress(peripheral.address);
-    if (this.peripheralAddress && address && address === this.peripheralAddress) {
-      return true;
-    }
-    // Teaching note: some adapters report "unknown" addresses; if the local name
-    // still matches and the payload looks like Keiser data, accept it.
+    const address = normalizeAddress(peripheral?.address);
+    const usableAddress = isUsableAddress(peripheral?.address);
     const payload = extractKeiserPayload(peripheral?.advertisement);
-    const hasKeiserMagic = Boolean(payload);
-    if (!hasKeiserMagic) {
-      return false;
+    const equipmentId = equipmentIdFromAdvertisement(peripheral?.advertisement);
+
+    // Teaching note: when the operator pinned a MAC, a *usable* address decides
+    // alone. Two consoles in one room have different MACs, so this is what keeps
+    // a neighbouring ride out of this one.
+    if (this.targetAddress && usableAddress) {
+      return address === this.targetAddress;
     }
-    const nameMatches = this.peripheralName && peripheral?.advertisement?.localName === this.peripheralName;
-    if (nameMatches) {
-      return true;
-    }
-    // Teaching note: if the address rotates or the name disappears, fall back
-    // to the signature match (magic + version bytes).
-    if (this.peripheralSignature && Buffer.isBuffer(payload) && payload.length >= 4) {
-      const signature = payload.slice(0, 4).toString('hex');
-      if (signature === this.peripheralSignature) {
-        return true;
+
+    // The adapter could not resolve an address (BlueZ reports "unknown", and
+    // some consoles rotate theirs). Dropping the ride here is worse than using
+    // the identifier Keiser documents as primary: the equipment ID travels in
+    // every packet and still separates one console from its neighbour.
+    const expectedEquipmentId = this.targetEquipmentId !== null
+      ? this.targetEquipmentId
+      : this.peripheralEquipmentId;
+    if (expectedEquipmentId !== null && expectedEquipmentId !== undefined) {
+      if (equipmentId !== null && equipmentId !== undefined) {
+        return equipmentId === expectedEquipmentId;
       }
     }
-    // Teaching note: previously we accepted any nameless device whose payload
-    // started with the Keiser magic prefix. That prefix (02 01) is also the
-    // ubiquitous BLE "Flags" AD structure, so this matched arbitrary devices.
-    // Without a matching name, address, id, or captured payload signature we
-    // cannot safely identify the bike, so we no longer guess here.
+
+    // No pinned MAC: keep the original best-effort matching for a console that
+    // was picked by name/payload.
+    if (!this.targetAddress) {
+      // Teaching note: prefer the stable noble id when available.
+      if (this.peripheralId && peripheral.id === this.peripheralId) {
+        return true;
+      }
+      // Teaching note: fall back to normalized MAC address comparison.
+      if (this.peripheralAddress && address && address === this.peripheralAddress) {
+        return true;
+      }
+      if (!payload) {
+        return false;
+      }
+      const nameMatches = this.peripheralName && peripheral?.advertisement?.localName === this.peripheralName;
+      if (nameMatches) {
+        return true;
+      }
+      // Teaching note: if the address rotates or the name disappears, fall back
+      // to the signature match (magic + version bytes).
+      if (this.peripheralSignature && Buffer.isBuffer(payload) && payload.length >= 4) {
+        const signature = payload.slice(0, 4).toString('hex');
+        if (signature === this.peripheralSignature) {
+          return true;
+        }
+      }
+      // Teaching note: previously we accepted any nameless device whose payload
+      // started with the Keiser magic prefix. That prefix (02 01) is also the
+      // ubiquitous BLE "Flags" AD structure, so this matched arbitrary devices.
+      // Without a matching name, address, id, or captured payload signature we
+      // cannot safely identify the bike, so we no longer guess here.
+      return false;
+    }
+
+    // Pinned MAC, unusable address, and neither side exposed an equipment ID:
+    // fall back to the payload signature captured at connect rather than
+    // silently dropping every packet.
+    if (!payload) {
+      return false;
+    }
+    if (this.peripheralSignature && Buffer.isBuffer(payload) && payload.length >= 4) {
+      return payload.slice(0, 4).toString('hex') === this.peripheralSignature;
+    }
     return false;
   }
 }
@@ -526,7 +632,10 @@ export function parse(data) {
     // Realtime data received
     const power = data.readUInt16LE(KEISER_VALUE_IDX_POWER);
     const cadence = Math.round(data.readUInt16LE(KEISER_VALUE_IDX_CADENCE) / 10);
-    return {type: 'stats', payload: {power, cadence}};
+    const equipmentId = data.length > KEISER_VALUE_IDX_EQUIPMENT_ID
+      ? data.readUInt8(KEISER_VALUE_IDX_EQUIPMENT_ID)
+      : undefined; // Older/short frames omit the identifier; leave it undefined rather than guessing.
+    return {type: 'stats', payload: {power, cadence, equipmentId}};
   }
   throw new Error('unable to parse message');
 }

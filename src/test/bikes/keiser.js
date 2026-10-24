@@ -1,11 +1,17 @@
 import test from '../support/tape.js';
 import {parse} from '../../bikes/keiser.js';
 import {bikeVersion} from '../../bikes/keiser.js';
-import {KeiserBikeClient, createKeiserPeripheralFilter} from '../../bikes/keiser.js';
+import {
+  KeiserBikeClient,
+  createKeiserPeripheralFilter,
+  equipmentIdFromAdvertisement,
+  normalizeEquipmentId,
+} from '../../bikes/keiser.js';
 
 // A real realtime frame as documented at
 // https://dev.keiser.com/mseries/direct/#data-parse-example
 const KEISER_DATA_HEX = '0201063000383803460573000D00042701000A';
+const DOCUMENTED_EQUIPMENT_ID = 0x38; // Byte 5 of the documented frame ("38" => 56).
 
 /**
  * Clone the documented frame with a different realtime data-type byte.
@@ -19,15 +25,20 @@ function frameWithDataType(realtime) {
 
 /**
  * Fake Keiser console advertisement. Every console in range advertises the same
- * name and manufacturer magic, so only the address can tell them apart.
+ * name and manufacturer magic, so only the address or the documented equipment
+ * ID can tell them apart.
  */
-function fakeConsole({address, id = `id-${address}`, name = 'M3i'} = {}) {
+function fakeConsole({address, id = `id-${address}`, name = 'M3i', equipmentId = DOCUMENTED_EQUIPMENT_ID} = {}) {
+  const manufacturerData = Buffer.from(KEISER_DATA_HEX, 'hex');
+  if (equipmentId !== null) {
+    manufacturerData.writeUInt8(equipmentId, 5); // Byte 5 is the documented equipment ID.
+  }
   return {
     id,
     address,
     advertisement: {
       localName: name,
-      manufacturerData: Buffer.from(KEISER_DATA_HEX, 'hex'),
+      manufacturerData,
     },
   };
 }
@@ -207,5 +218,110 @@ test('KeiserBikeClient.isMatchingPeripheral() keeps the heuristics when no addre
     address: 'unknown',
     advertisement: {localName: 'Other', manufacturerData: Buffer.from(KEISER_DATA_HEX, 'hex')},
   }), 'rejects a device whose name does not match');
+});
+
+test('equipmentIdFromAdvertisement() reads the documented equipment ID byte', t => {
+  t.plan(3);
+  t.equal(
+    equipmentIdFromAdvertisement({manufacturerData: Buffer.from(KEISER_DATA_HEX, 'hex')}),
+    DOCUMENTED_EQUIPMENT_ID,
+    'byte 5 of the documented frame is the equipment ID'
+  );
+  t.equal(
+    equipmentIdFromAdvertisement({manufacturerData: Buffer.from('02010630', 'hex')}),
+    null,
+    'a short frame reports no equipment ID'
+  );
+  t.equal(equipmentIdFromAdvertisement(undefined), null, 'a missing advertisement is tolerated');
+});
+
+test('normalizeEquipmentId() accepts only the documented 0..200 range', t => {
+  t.plan(7);
+  t.equal(normalizeEquipmentId(0), 0, '0 is valid');
+  t.equal(normalizeEquipmentId('200'), 200, '200 (upper bound) is valid');
+  t.equal(normalizeEquipmentId(201), null, '201 is out of range');
+  t.equal(normalizeEquipmentId(-1), null, 'negative values are rejected');
+  t.equal(normalizeEquipmentId('abc'), null, 'non-numeric values are rejected');
+  t.equal(normalizeEquipmentId(''), null, 'an empty string means unset');
+  t.equal(normalizeEquipmentId(undefined), null, 'undefined means unset');
+});
+
+test('parse() exposes the equipment ID alongside power and cadence', t => {
+  t.plan(2);
+  const {payload} = parse(Buffer.from(KEISER_DATA_HEX, 'hex'));
+  t.equal(payload.equipmentId, DOCUMENTED_EQUIPMENT_ID, 'equipment ID is carried through');
+  t.equal(payload.power, 115, 'power still decodes');
+});
+
+test('createKeiserPeripheralFilter() can select a console by equipment ID when the address is unknown', t => {
+  t.plan(3);
+  const filter = createKeiserPeripheralFilter(undefined, DOCUMENTED_EQUIPMENT_ID);
+  t.ok(filter(fakeConsole({address: 'unknown'})), 'accepts the console by equipment ID despite the unknown address');
+  t.notOk(
+    filter(fakeConsole({address: 'unknown', equipmentId: 7})),
+    'rejects a neighbouring console whose equipment ID differs'
+  );
+  t.ok(filter(fakeConsole({address: 'C0:FF:EE:00:00:09'})), 'still accepts the console after a MAC rotation');
+});
+
+test('createKeiserPeripheralFilter() keeps the pinned MAC working alongside an equipment ID', t => {
+  t.plan(2);
+  const filter = createKeiserPeripheralFilter('c0:ff:ee:00:00:01', DOCUMENTED_EQUIPMENT_ID);
+  t.ok(
+    filter(fakeConsole({address: 'C0:FF:EE:00:00:01', equipmentId: 9})),
+    'the pinned MAC still matches even when the console omits its configured ID'
+  );
+  t.notOk(
+    filter(fakeConsole({address: 'C0:FF:EE:00:00:02', equipmentId: 9})),
+    'a different console matches neither selector'
+  );
+});
+
+test('KeiserBikeClient keeps the ride when the pinned console reports an unknown address', t => {
+  t.plan(4);
+  const client = new KeiserBikeClient(undefined, {address: 'c0:ff:ee:00:00:01'});
+  client.peripheral = fakeConsole({address: 'c0:ff:ee:00:00:01'});
+  client.peripheralAddress = 'c0:ff:ee:00:00:01';
+  client.peripheralEquipmentId = DOCUMENTED_EQUIPMENT_ID;
+
+  t.ok(
+    client.isMatchingPeripheral(fakeConsole({address: 'unknown'})),
+    'accepts the same console when the adapter reports "unknown" (equipment ID matches)'
+  );
+  t.notOk(
+    client.isMatchingPeripheral(fakeConsole({address: 'unknown', equipmentId: 7})),
+    'rejects a neighbouring console whose equipment ID differs'
+  );
+  t.notOk(
+    client.isMatchingPeripheral(fakeConsole({address: 'C0:FF:EE:00:00:02'})),
+    'a different usable MAC still loses, even with a matching equipment ID'
+  );
+  t.ok(
+    client.isMatchingPeripheral(fakeConsole({address: 'c0:ff:ee:00:00:01'})),
+    'accepts the pinned console by MAC'
+  );
+});
+
+test('KeiserBikeClient falls back to the captured payload signature when no equipment ID is available', t => {
+  t.plan(2);
+  const client = new KeiserBikeClient(undefined, {address: 'c0:ff:ee:00:00:01'});
+  client.peripheralAddress = 'c0:ff:ee:00:00:01';
+  client.peripheralSignature = '02010630'; // magic + version captured at connect.
+  client.peripheralEquipmentId = null;
+
+  t.ok(
+    client.isMatchingPeripheral({
+      address: 'unknown',
+      advertisement: {localName: 'M3i', manufacturerData: Buffer.from('02010630', 'hex')},
+    }),
+    'accepts the same console when the frame omits the equipment ID'
+  );
+  t.notOk(
+    client.isMatchingPeripheral({
+      address: 'unknown',
+      advertisement: {localName: 'M3i', manufacturerData: Buffer.from('0201064000', 'hex')},
+    }),
+    'rejects a console with a different payload signature'
+  );
 });
 

@@ -55,6 +55,7 @@ function createIc8BikeClient(_options, noble) { // Factory for Schwinn IC8 / Bow
 function createKeiserBikeClient(options, noble) { // Factory for Keiser bikes that broadcast as beacons.
   return new KeiserBikeClient(noble, {
     address: options.keiserAddress,
+    equipmentId: options.keiserEquipmentId,
   });
 }
 

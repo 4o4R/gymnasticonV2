@@ -10,7 +10,7 @@
 - Noble and bleno's recurring `pollIsDevUp` timers are neutralized during shutdown so the process can exit.
 - Each noble instance binds its own HCI adapter at bind time (`hci0`/`hci1` produced `[0, 0]` before), keeping a dedicated heart-rate radio from stealing the bike's adapter.
 - Heart-rate teardown is now intentional-stop aware: it no longer restarts scanning after `disconnect()`, releases a physically connected peripheral after failed GATT setup, and cannot mark an obsolete connection as connected.
-- Keiser selection isolates the configured MAC address; other consoles with the same shared name or Keiser payload are no longer accepted during or after discovery. Realtime `data-type` values are now validated as 0 or 128–227 (228–254 was wrongly accepted, 128 rejected).
+- Keiser selection isolates the configured MAC address; other consoles with the same shared name or Keiser payload are no longer accepted during or after discovery. When the adapter cannot resolve an address, identity falls back to the equipment ID that Keiser documents as the primary identifier (byte 5), so a ride is no longer dropped mid-session. Realtime `data-type` values are now validated as 0 or 128–227 (228–254 was wrongly accepted, 128 rejected).
 - IC8/C6 CSC parsing honours the wheel fields that precede crank data (a valid 60 rpm packet decoded as zero) and reports 0 rpm/power on repeated stationary packets instead of a stale estimate.
 - IC8/C6 now uses native FTMS power/cadence when the console publishes the Indoor Bike Data characteristic, falling back to CSC or to cadence + resistance estimation when it does not. The flag-driven FTMS decoder is shared with IC4.
 - Advertising startup is bounded for every bleno transport: an adapter that never reports `poweredOn` no longer stalls multi-output startup, the base `BleServer` uses the same bound, and remaining adapters keep advertising in an explicitly logged degraded mode.
@@ -22,11 +22,14 @@
 - Image boot helpers no longer rely on `ExecCondition=`, which systemd 241 (Buster) does not support, so the `no_read_only` opt-out and the config-copy gate work again.
 - Boot Bluetooth recovery runs before Gymnasticon and never restarts `hciuart` while it is active, so a working radio is not reset during scanning or riding.
 
+### Added
+- `keiserEquipmentId` config key and `--keiser-equipment-id` CLI flag select a Keiser console by the equipment ID Keiser documents as its primary identifier (0–200). Unlike a MAC filter it still works when the adapter reports no usable address, and `parse()` now exposes the equipment ID it reads for diagnostics.
+
 ### Documentation
-- The supported-bike table no longer claims IC5/Schwinn 290 power estimation that is not implemented, and a "Known limitations" block records the remaining capture gap and the Keiser MAC-filter trade-off.
+- The supported-bike table no longer claims IC5/Schwinn 290 power estimation that is not implemented, and a "Known limitations" block records the remaining capture gap and how Keiser isolation degrades when every console keeps the default equipment ID of 0.
 
 ### Tests
-- Added regressions for every item above; the suite now contains 642 passing assertions on Node 14 and Node 22.
+- Added regressions for every item above; the suite now contains 665 passing assertions on Node 14 and Node 22.
 
 ## [2.0.9] - 2026-08-30
 ### Fixed

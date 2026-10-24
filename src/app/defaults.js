@@ -20,6 +20,7 @@ export const defaults = {
 
   // keiser bike options
   keiserAddress: undefined,      // optional MAC filter for Keiser discovery
+  keiserEquipmentId: undefined,  // optional Keiser equipment ID (0-200) filter; survives MAC rotation
   
 
   // peloton bike options
