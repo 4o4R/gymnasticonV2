@@ -16,22 +16,8 @@ export function matchesIc4OrSchwinn290(peripheral) {
   return name === 'ftms-bike' || (name.includes('schwinn') && name.includes('290'));
 }
 
-// GATT service/characteristic UUIDs
-const FTMS_SERVICE_UUID = '1826';
-const INDOOR_BIKE_DATA_UUID = '2ad2';
-
-// Indoor Bike Data field flags (FTMS 4.9.1). Fields appear in bit order after
-// the 16-bit flag word; bit 0 ("more data") set means instantaneous speed is
-// ABSENT, which is why the flags are inverted compared to the other fields.
-const IBD_FLAG_MORE_DATA = 0x0001;
-const IBD_FLAG_AVERAGE_SPEED = 0x0002;
-const IBD_FLAG_INSTANTANEOUS_CADENCE = 0x0004;
-const IBD_FLAG_AVERAGE_CADENCE = 0x0008;
-const IBD_FLAG_TOTAL_DISTANCE = 0x0010;
-const IBD_FLAG_RESISTANCE_LEVEL = 0x0020;
-const IBD_FLAG_INSTANTANEOUS_POWER = 0x0040;
-
 import {loadDependency, toDefaultExport} from '../util/optional-deps.js';
+import {FTMS_SERVICE_UUID, INDOOR_BIKE_DATA_UUID, parseIndoorBikeData} from './ftms-indoor-bike.js';
 
 const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta);
 const debuglog = toDefaultExport(debugModule)('gym:bikes:ic4');
@@ -208,79 +194,14 @@ export class Ic4BikeClient extends EventEmitter {
  * @returns {number} [message.speed] - instantaneous speed (m/s), absent when the bike omits it
  */
 export function parse(data) {
-  // Teaching note: this characteristic is variable-length. The 16-bit flag word
-  // lists which fields follow, and they are laid out in bit order, so every
-  // offset depends on the flags. Reading fixed offsets (the previous approach)
-  // turned a cadence-only frame into garbage power/cadence values.
-  //
-  // We only walk as far as the last field we report (instantaneous power, bit
-  // 6). Fields after it (energy, heart rate, elapsed time, ...) never shift the
-  // offsets above, so a frame that stops early there is still usable.
-  if (!Buffer.isBuffer(data) || data.length < 2) {
-    throw new Error('unable to parse message');
+  // Teaching note: the flag-driven Indoor Bike Data walk is shared with the
+  // IC8/C6 clients (src/bikes/ftms-indoor-bike.js). This wrapper keeps the
+  // long-standing IC4 contract of always returning power/cadence keys, with
+  // undefined meaning "the flag said the field is absent".
+  const parsed = parseIndoorBikeData(data);
+  const message = {power: parsed.power, cadence: parsed.cadence};
+  if (parsed.speed !== undefined) {
+    message.speed = parsed.speed;
   }
-
-  const flags = data.readUInt16LE(0);
-  let offset = 2;
-  let speed;
-
-  if (!(flags & IBD_FLAG_MORE_DATA)) {
-    const rawSpeed = readField(data, offset, 2);
-    offset += 2;
-    // 0.01 km/h units; 0 means "not reported right now".
-    if (rawSpeed > 0) {
-      speed = (rawSpeed / 100) * (1000 / 3600);
-    }
-  }
-  if (flags & IBD_FLAG_AVERAGE_SPEED) {
-    readField(data, offset, 2);
-    offset += 2;
-  }
-
-  let cadence;
-  if (flags & IBD_FLAG_INSTANTANEOUS_CADENCE) {
-    // Cadence is expressed in half RPM increments.
-    cadence = Math.round(readField(data, offset, 2) / 2);
-    offset += 2;
-  }
-  if (flags & IBD_FLAG_AVERAGE_CADENCE) {
-    readField(data, offset, 2);
-    offset += 2;
-  }
-  if (flags & IBD_FLAG_TOTAL_DISTANCE) {
-    readField(data, offset, 3);
-    offset += 3;
-  }
-  if (flags & IBD_FLAG_RESISTANCE_LEVEL) {
-    readField(data, offset, 2);
-    offset += 2;
-  }
-
-  let power;
-  if (flags & IBD_FLAG_INSTANTANEOUS_POWER) {
-    power = readField(data, offset, 2, true); // Power is a signed 16-bit integer (watts).
-  }
-
-  const parsed = {power, cadence};
-  if (speed !== undefined) {
-    parsed.speed = speed;
-  }
-  return parsed;
-}
-
-/**
- * Read a numeric field, failing gracefully when the frame is truncated.
- * @private
- */
-function readField(data, offset, size, signed = false) {
-  // Teaching note: a short/fragmented frame must be rejected gracefully.
-  // Reading past the end would throw RangeError, which onReceive does not
-  // swallow (it only filters "unable to parse message"), crashing the app.
-  if (offset + size > data.length) {
-    throw new Error('unable to parse message');
-  }
-  if (size === 3) {
-    return data.readUIntLE(offset, 3);
-  }
-  return signed ? data.readInt16LE(offset) : data.readUInt16LE(offset);
+  return message;
 }

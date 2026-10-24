@@ -1,17 +1,23 @@
-import { EventEmitter, once } from 'events';
+import { EventEmitter } from 'events';
 import util from 'util';
+
+import { resolveStartupTimeout, waitForPoweredOn } from './ble-startup.js';
 
 /**
  * Bluetooth LE GATT server helper built on top of bleno.
  */
 export class BleServer extends EventEmitter {
-  constructor(bleno, name, services = []) {
+  constructor(bleno, name, services = [], options = {}) {
     super();
     this.bleno = bleno;
     this.name = name;
     this.services = services;
     this.uuids = services.map(s => s.uuid);
     this.state = 'stopped';
+    // Teaching note: bound the wait for a usable radio. An adapter that never
+    // reaches poweredOn used to hang start() forever for every caller.
+    this.startupTimeoutMs = resolveStartupTimeout(options.startupTimeoutMs);
+    this.adapterLabel = options.adapter ? String(options.adapter) : null;
     // Teaching note: track active connections so we only call bleno.disconnect()
     // when someone is actually connected (this reduces spurious HCI warnings).
     this.connectionCount = 0;
@@ -25,6 +31,10 @@ export class BleServer extends EventEmitter {
     this.bleno.setServicesAsync = util.promisify(this.bleno.setServices);
   }
 
+  get adapterName() {
+    return this.adapterLabel || 'default';
+  }
+
   /** Start advertising and wait for a connection. */
   async start() {
     if (this.state !== 'stopped') {
@@ -34,18 +44,18 @@ export class BleServer extends EventEmitter {
     this.state = 'starting';
     this.connectionCount = 0; // Teaching note: reset connection tracking on each start.
 
-    if (this.bleno.state !== 'poweredOn') {
-      // Teaching note: keep waiting across intermediate states (poweredOff,
-      // resetting) until the adapter reaches poweredOn; giving up after the
-      // first stateChange event aborts startup prematurely.
-      const fatalStates = new Set(['unauthorized', 'unsupported']);
-      while (this.bleno.state !== 'poweredOn') {
-        const [state] = await once(this.bleno, 'stateChange');
-        if (state && fatalStates.has(state)) {
-          this.state = 'stopped';
-          throw new Error(`Bluetooth adapter failed to power on: ${state}`);
-        }
-      }
+    try {
+      // Teaching note: the shared helper keeps waiting across intermediate
+      // states (poweredOff, resetting) but gives up at the bound instead of
+      // blocking startup forever.
+      await waitForPoweredOn(this.bleno, {
+        timeoutMs: this.startupTimeoutMs,
+        adapterName: this.adapterName,
+      });
+    } catch (error) {
+      this.state = 'stopped';
+      this.connectionCount = 0;
+      throw error;
     }
 
     try {

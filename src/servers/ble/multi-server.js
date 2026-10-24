@@ -1,4 +1,4 @@
-import {DEFAULT_STARTUP_TIMEOUT_MS, STARTUP_TIMEOUT_CODE} from './index.js'; // Reuse the per-server bound so multi-output startup cannot hang either.
+import {DEFAULT_STARTUP_TIMEOUT_MS, STARTUP_TIMEOUT_CODE} from '../../util/ble-startup.js'; // Shared bound so multi-output startup cannot hang either.
 
 const STARTUP_GRACE_MS = 100; // Let a server's own bound fire first so its more precise error is the one reported.
 

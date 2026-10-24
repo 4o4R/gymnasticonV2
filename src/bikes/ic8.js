@@ -2,6 +2,7 @@ import {EventEmitter} from 'events'; // Base class so the client can emit measur
 import {scan} from '../util/ble-scan.js'; // Helper that performs BLE scans using noble.
 import {loadDependency, toDefaultExport} from '../util/optional-deps.js'; // Optional dependency loader so we can swap in stubs.
 import {estimatePower, Ewma} from '../util/power-estimator.js'; // Shared helpers for power estimation and smoothing.
+import {FTMS_SERVICE_UUID, INDOOR_BIKE_DATA_UUID, parseIndoorBikeData} from './ftms-indoor-bike.js'; // Shared FTMS Indoor Bike Data decoder.
 
 const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta); // Debug logging helper.
 const debug = toDefaultExport(debugModule)('gym:bikes:ic8');
@@ -22,7 +23,6 @@ function resolveNoble() {
   return NobleSingleton;
 }
 
-const FTMS_SERVICE_UUID = '1826'; // Fitness Machine Service UUID.
 const CSC_SERVICE_UUID = '1816'; // Cycling Speed and Cadence service for cadence data.
 const CSC_MEASUREMENT_UUID = '2a5b'; // CSC Measurement characteristic.
 
@@ -34,7 +34,9 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
     this.config = config; // Optional calibration config for power estimation.
     this.device = null; // Active noble peripheral once connected.
     this.characteristics = []; // Track subscribed characteristics so disconnect() can detach listeners.
-    this.state = { rpm: 0, resistance: 0, watts: 0 }; // Track the latest cadence/resistance/power values.
+    this.state = { rpm: 0, resistance: 0, watts: 0, speed: undefined }; // Track the latest cadence/resistance/power/speed values.
+    this.nativePower = undefined; // Latest instantaneous power reported natively over FTMS (undefined when the console omits it).
+    this.nativeCadence = undefined; // Latest instantaneous cadence reported natively over FTMS.
     this.powerFilter = new Ewma(0.25); // Smooth power readings to reduce jitter for downstream apps.
     this.onPeripheralDisconnectBound = this.onPeripheralDisconnect.bind(this); // Keep a stable ref so we can remove the listener cleanly.
   }
@@ -53,7 +55,7 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
     const uuids = peripheral?.advertisement?.serviceUuids || [];
     return uuids.some((uuid) => {
       const normalized = String(uuid).toLowerCase();
-      return normalized === '1816' || normalized === '1826';
+      return normalized === CSC_SERVICE_UUID || normalized === FTMS_SERVICE_UUID;
     });
   }
 
@@ -78,11 +80,32 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
     this.characteristics = characteristics;
 
     const cscMeasurement = characteristics.find(ch => ch.uuid === CSC_MEASUREMENT_UUID);
-    if (!cscMeasurement) {
+    const indoorBikeData = characteristics.find(ch => ch.uuid === INDOOR_BIKE_DATA_UUID);
+    // Teaching note: a console that publishes power over FTMS must not depend on
+    // CSC, and a console that only publishes CSC must keep working. So CSC is
+    // now a fallback and we only fail when neither source exists.
+    if (!cscMeasurement && !indoorBikeData) {
       throw new Error('CSC Measurement characteristic not found');
     }
-    await cscMeasurement.subscribeAsync();
-    cscMeasurement.on('data', data => this.onCscData(data));
+
+    if (cscMeasurement) {
+      await cscMeasurement.subscribeAsync();
+      cscMeasurement.on('data', data => this.onCscData(data));
+    }
+
+    if (indoorBikeData) {
+      try {
+        await indoorBikeData.subscribeAsync();
+        indoorBikeData.on('data', buf => this.onIndoorBikeData(buf));
+      } catch (error) {
+        // A console can expose 0x2AD2 but refuse notifications; that is only
+        // fatal when CSC is not available as a fallback.
+        if (!cscMeasurement) {
+          throw error;
+        }
+        debug('FTMS Indoor Bike Data subscribe failed, falling back to CSC', error);
+      }
+    }
 
     const resistanceChar = characteristics.find(ch => ch.uuid === 'fff2'); // Community-documented custom characteristic for resistance.
     if (resistanceChar) {
@@ -110,6 +133,10 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
     } finally {
       this.device = null;
       this.lastCrank = undefined; // Reset stale crank state so a same-instance reconnect starts clean.
+      this.nativePower = undefined; // Drop native FTMS values so a reconnect cannot replay the last ride.
+      this.nativeCadence = undefined;
+      this.state = { rpm: 0, resistance: 0, watts: 0, speed: undefined };
+      this.powerFilter.reset();
     }
   }
 
@@ -126,6 +153,26 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
     }
     const level = Math.max(0, Math.min(100, buf.readUInt8(0))); // Normalize the reported resistance level into 0..100 range.
     this.state.resistance = level / 100; // Convert to 0..1 fraction for the estimator.
+    this.publish();
+  }
+
+  onIndoorBikeData(buf) { // Decode FTMS Indoor Bike Data and prefer its native power/cadence over the estimator.
+    let parsed;
+    try {
+      parsed = parseIndoorBikeData(buf);
+    } catch (error) {
+      // A truncated/fragmented frame must never escape into the notification handler.
+      debug('ignoring malformed FTMS Indoor Bike Data frame', error);
+      return;
+    }
+    // Each frame is self-describing, so assign unconditionally: a field the
+    // flags omit clears the native value and the CSC/estimator fallbacks resume.
+    this.nativeCadence = Number.isFinite(parsed.cadence) ? parsed.cadence : undefined;
+    this.nativePower = Number.isFinite(parsed.power) ? parsed.power : undefined;
+    // Keep speed in step with the frames too: a frame without speed clears it so
+    // the app falls back to its cadence-based estimate instead of broadcasting
+    // the last speed forever.
+    this.state.speed = Number.isFinite(parsed.speed) ? parsed.speed : undefined;
     this.publish();
   }
 
@@ -180,22 +227,45 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
 
   publish() { // Emit smoothed power/cadence whenever either input changes.
     const { rpm, resistance } = this.state;
-    if (rpm <= 0) {
+    // Native FTMS cadence wins; CSC-derived rpm is the fallback for consoles
+    // that only publish the CSC service.
+    const cadence = Number.isFinite(this.nativeCadence) ? this.nativeCadence : rpm;
+    const hasNativePower = Number.isFinite(this.nativePower);
+    // Teaching note: with native power available, trust it even when no cadence
+    // source is present. Without it, "no cadence" is the only stationary signal.
+    const pedalling = cadence > 0 || (hasNativePower && this.nativePower > 0);
+    if (!pedalling) {
       // Teaching note: the EWMA would otherwise keep emitting the last smoothed
-      // wattage for many frames after the cranks stopped. Re-seed the smoother
+      // wattage for many frames after the cranks stopped. Reset the smoother
       // so a stationary bike reports 0 W immediately.
-      this.powerFilter = new Ewma(0.25);
+      this.powerFilter.reset();
       this.state.watts = 0;
-      this.emit('stats', { power: 0, cadence: 0 });
+      this.emitStats(0, 0);
       return;
     }
-    const estimated = estimatePower(rpm, resistance, {
-      scale: this.config.powerScale ?? 1.0,
-      offset: this.config.powerOffset ?? 0,
-      minWatts: 0,
-      maxWatts: 2000
-    });
-    this.state.watts = this.powerFilter.push(estimated);
-    this.emit('stats', { power: this.state.watts, cadence: rpm });
+    let watts;
+    if (hasNativePower) {
+      // Power reported by the console itself; still smoothed for downstream apps.
+      watts = this.powerFilter.push(this.nativePower);
+    } else {
+      // No native FTMS power: keep estimating from cadence + resistance.
+      const estimated = estimatePower(cadence, resistance, {
+        scale: this.config.powerScale ?? 1.0,
+        offset: this.config.powerOffset ?? 0,
+        minWatts: 0,
+        maxWatts: 2000
+      });
+      watts = this.powerFilter.push(estimated);
+    }
+    this.state.watts = watts;
+    this.emitStats(watts, cadence);
+  }
+
+  emitStats(power, cadence) { // Emit stats, attaching FTMS speed only when the console reports it.
+    const payload = { power, cadence };
+    if (Number.isFinite(this.state.speed)) {
+      payload.speed = this.state.speed;
+    }
+    this.emit('stats', payload);
   }
 }

@@ -39,6 +39,11 @@ export class Ewma { // Lightweight exponential weighted moving average used to s
     }
     return Math.round(this.value); // Return the smoothed value rounded to an integer for downstream consumers.
   }
+
+  reset() { // Return the smoother to its construction state so a new effort does not inherit old samples.
+    this.initialized = false; // The next push() seeds the accumulator again.
+    this.value = 0; // Drop the accumulated average so a stationary bike cannot keep replaying it.
+  }
 }
 
 function clamp(value, lo, hi) { // Helper that keeps a number between a lower and upper bound.

@@ -1,6 +1,7 @@
 import {CyclingPowerService} from './services/cycling-power/index.js'; // Import the CPS implementation so we can notify power changes.
 import {CyclingSpeedAndCadenceService} from './services/cycling-speed-and-cadence/index.js'; // Import CSC service for wheel/crank updates.
 import {BleServer} from '../../util/ble-server.js'; // Base helper that wires our bleno services together.
+import {DEFAULT_STARTUP_TIMEOUT_MS, STARTUP_TIMEOUT_CODE, waitForPoweredOn} from '../../util/ble-startup.js'; // Shared bounded-startup helpers.
 import {HeartRateService} from './services/heart-rate/index.js'; // Import HR service to forward heart rate metrics.
 
 export const DEFAULT_NAME = 'GymnasticonV2';
@@ -106,20 +107,12 @@ export function createServices({ includeHeartRate = true } = {}) { // Factory th
   return services;
 }
 
-export const DEFAULT_STARTUP_TIMEOUT_MS = 10000; // Upper bound on how long startup may wait for an adapter.
-export const STARTUP_TIMEOUT_CODE = 'BLE_STARTUP_TIMEOUT'; // Marker so callers and tests can recognise a bounded startup failure.
-
-function resolveStartupTimeout(value) { // Accept only usable overrides so a bad option cannot disable the bound.
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    return value;
-  }
-  return DEFAULT_STARTUP_TIMEOUT_MS;
-}
+export {DEFAULT_STARTUP_TIMEOUT_MS, STARTUP_TIMEOUT_CODE}; // Re-exported so existing importers keep one import site.
 
 export class GymnasticonServer extends BleServer {
   constructor(bleno, name = DEFAULT_NAME, options = {}) {
     const services = createServices({ includeHeartRate: options.includeHeartRate }); // Instantiate services before handing them to the base BleServer.
-    super(bleno, name, services);
+    super(bleno, name, services, { startupTimeoutMs: options.startupTimeoutMs, adapter: options.adapter });
 
     this.cpsService = services.find(service => service.uuid === '1818'); // Cache the CPS instance for quick lookups.
     this.cscService = services.find(service => service.uuid === '1816'); // Cache the CSC instance so we can update features dynamically.
@@ -128,15 +121,6 @@ export class GymnasticonServer extends BleServer {
     // Teaching note: rely on bleno's standard startAdvertising path so we match
     // the proven behavior in the original ptx2 project.
     this.advertisingOptions = null;
-    // Teaching note: an adapter that never reports poweredOn used to leave
-    // start() pending forever and stall every other advertising adapter, so the
-    // wait for the radio is bounded and surfaced as an explicit error.
-    this.startupTimeoutMs = resolveStartupTimeout(options.startupTimeoutMs);
-    this.adapterLabel = options.adapter ? String(options.adapter) : null; // Names the adapter in startup errors.
-  }
-
-  get adapterName() {
-    return this.adapterLabel || 'default';
   }
 
   updateHeartRate(hr) { // Push heart rate notifications to subscribed clients.
@@ -214,37 +198,10 @@ export class GymnasticonServer extends BleServer {
     this.state = 'started';
   }
 
-  async waitForPoweredOn() { // Wait until bleno reports poweredOn, failing fast on terminal states and on timeout.
-    const fatalStates = new Set(['unauthorized', 'unsupported']);
-    let state = this.bleno.state;
-    while (state !== 'poweredOn') {
-      if (state && fatalStates.has(state)) {
-        this.state = 'stopped';
-        throw new Error(`Bluetooth adapter ${this.adapterName} failed to power on: ${state}`);
-      }
-      state = await this.nextStateChange(); // Rejects once startupTimeoutMs elapses without a usable state.
-    }
-  }
-
-  nextStateChange() {
-    return new Promise((resolve, reject) => {
-      let timer = null;
-      const onStateChange = (state) => {
-        clearTimeout(timer);
-        resolve(state);
-      };
-      timer = setTimeout(() => {
-        this.bleno.removeListener('stateChange', onStateChange); // Never leave a stale listener behind.
-        const lastState = this.bleno.state || 'unknown';
-        const error = new Error(
-          `BLE adapter ${this.adapterName} did not report poweredOn within ${this.startupTimeoutMs}ms (last state: ${lastState})`
-        );
-        error.code = STARTUP_TIMEOUT_CODE;
-        error.adapter = this.adapterLabel;
-        error.state = lastState;
-        reject(error);
-      }, this.startupTimeoutMs);
-      this.bleno.once('stateChange', onStateChange);
+  async waitForPoweredOn() { // Bounded wait shared with the base BleServer, naming this adapter in errors.
+    await waitForPoweredOn(this.bleno, {
+      timeoutMs: this.startupTimeoutMs,
+      adapterName: this.adapterName,
     });
   }
 

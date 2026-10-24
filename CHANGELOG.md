@@ -12,17 +12,21 @@
 - Heart-rate teardown is now intentional-stop aware: it no longer restarts scanning after `disconnect()`, releases a physically connected peripheral after failed GATT setup, and cannot mark an obsolete connection as connected.
 - Keiser selection isolates the configured MAC address; other consoles with the same shared name or Keiser payload are no longer accepted during or after discovery. Realtime `data-type` values are now validated as 0 or 128–227 (228–254 was wrongly accepted, 128 rejected).
 - IC8/C6 CSC parsing honours the wheel fields that precede crank data (a valid 60 rpm packet decoded as zero) and reports 0 rpm/power on repeated stationary packets instead of a stale estimate.
-- Advertising startup is bounded: an adapter that never reports `poweredOn` no longer stalls multi-output startup, and remaining adapters keep advertising in an explicitly logged degraded mode.
+- IC8/C6 now uses native FTMS power/cadence when the console publishes the Indoor Bike Data characteristic, falling back to CSC or to cadence + resistance estimation when it does not. The flag-driven FTMS decoder is shared with IC4.
+- Advertising startup is bounded for every bleno transport: an adapter that never reports `poweredOn` no longer stalls multi-output startup, the base `BleServer` uses the same bound, and remaining adapters keep advertising in an explicitly logged degraded mode.
 - The CSC service now includes the mandatory SC Control Point characteristic (2A55) alongside wheel/crank support.
 - Native dependency load failures surface as actionable errors in production instead of silently substituting development stubs (a failed ABI load previously produced a fake `poweredOn` adapter). Stubs remain available on Windows and in tests.
 - The packaged npm tarball includes `scripts/`, which `preinstall`/`postinstall` require.
 - Manual installation installs a Node 14 compatible `node-gyp` before deriving `npm_config_node_gyp` instead of referencing a path that does not exist on npm 6.
-- Legacy Buster mirrors use `legacy.raspbian.org` (the retired `archive.raspbian.org` endpoint returns HTTP 404).
+- Legacy Buster mirrors use `legacy.raspbian.org` (the retired `archive.raspbian.org` endpoint returns HTTP 404), including the pi-gen config, installer and image stages.
 - Image boot helpers no longer rely on `ExecCondition=`, which systemd 241 (Buster) does not support, so the `no_read_only` opt-out and the config-copy gate work again.
 - Boot Bluetooth recovery runs before Gymnasticon and never restarts `hciuart` while it is active, so a working radio is not reset during scanning or riding.
 
+### Documentation
+- The supported-bike table no longer claims IC5/Schwinn 290 power estimation that is not implemented, and a "Known limitations" block records the remaining capture gap and the Keiser MAC-filter trade-off.
+
 ### Tests
-- Added regressions for every item above; the suite now contains 548 passing assertions on Node 14 and Node 22.
+- Added regressions for every item above; the suite now contains 642 passing assertions on Node 14 and Node 22.
 
 ## [2.0.9] - 2026-08-30
 ### Fixed
