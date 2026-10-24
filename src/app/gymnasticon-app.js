@@ -39,8 +39,11 @@ export class GymnasticonApp {
     // Instantiate helpers, but allow callers (tests) to inject their own instances when needed.
     this.configManager = this.options.configManager || new ConfigManager(configPath, {
       bike: appDefaults.bike,
+      defaultBike: appDefaults.defaultBike,
       serverName: appDefaults.serverName,
+      bikeReceiveTimeout: appDefaults.bikeReceiveTimeout,
       powerScale: appDefaults.powerScale,
+      powerOffset: appDefaults.powerOffset,
     });
     this.metricsProcessor = this.options.metricsProcessor || new MetricsProcessor({
       smoothingFactor: this.options.powerSmoothing,

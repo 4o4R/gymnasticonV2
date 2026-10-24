@@ -98,6 +98,8 @@ sudo setcap cap_net_raw+eip "$(command -v node)"
 
 sudo install -d -m 755 /opt/gymnasticon/bin
 sudo install -m 755 deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon-wrapper.sh /opt/gymnasticon/bin/gymnasticon
+sudo install -m 644 deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon.json /etc/gymnasticon.json
+sudo ln -sf /etc/gymnasticon.json /opt/gymnasticon/gymnasticon.json
 sudo install -m 644 deploy/gymnasticon.service /etc/systemd/system/gymnasticon.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now gymnasticon

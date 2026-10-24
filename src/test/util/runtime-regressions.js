@@ -3,6 +3,7 @@ import {existsSync, readFileSync} from 'fs';
 
 import test from '../support/tape.js';
 import {App} from '../../app/app.js';
+import {GymnasticonApp} from '../../app/gymnasticon-app.js';
 import {HeartRateClient} from '../../hr/heart-rate-client.js';
 import {BleServer} from '../../util/ble-server.js';
 import {stopBluetoothStack} from '../../util/bluetooth-shutdown.js';
@@ -181,5 +182,38 @@ test('image and manual installers share the canonical systemd service', t => {
   t.match(service, /ExecStart=\/opt\/gymnasticon\/bin\/gymnasticon/, 'canonical unit uses the cross-layout wrapper');
   t.match(service, /\/usr\/sbin:\/usr\/bin:\/sbin:\/bin/, 'canonical unit exposes system Bluetooth tools');
   t.notOk(existsSync(obsoleteImageServiceUrl), 'no divergent image-only unit remains');
+  t.end();
+});
+
+test('manual installer documentation seeds default gymnasticon.json', t => {
+  const readmeUrl = new URL('../../../README.md', import.meta.url);
+  const readme = readFileSync(readmeUrl, 'utf8');
+
+  t.match(
+    readme,
+    /sudo install -m 644 deploy\/pi-sdcard\/stage-gymnasticon\/00-install-gymnasticon\/files\/gymnasticon\.json \/etc\/gymnasticon\.json/,
+    'manual install copies the template config to /etc/gymnasticon.json'
+  );
+  t.match(
+    readme,
+    /sudo ln -sf \/etc\/gymnasticon\.json \/opt\/gymnasticon\/gymnasticon\.json/,
+    'manual install symlinks /etc/gymnasticon.json into repository root'
+  );
+  t.end();
+});
+
+test('GymnasticonApp seeds ConfigManager with documented defaults when config file is missing', t => {
+  const app = new GymnasticonApp({
+    configPath: '/tmp/nonexistent-gymnasticon.json',
+    healthMonitor: { stop() {} },
+  });
+  t.deepEqual(app.configManager.defaults, {
+    bike: 'autodetect',
+    defaultBike: 'keiser',
+    serverName: 'GymnasticonV2',
+    bikeReceiveTimeout: 10,
+    powerScale: 1,
+    powerOffset: 0,
+  }, 'configManager receives the full set of documented defaults');
   t.end();
 });

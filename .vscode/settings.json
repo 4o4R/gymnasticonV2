@@ -5,6 +5,10 @@
     "chatgpt.openOnStartup": true,
     "chat.tools.terminal.autoApprove": {
         "Test-Path": true,
-        "git push": true
+        "git push": true,
+        "/^Write-Host \"=== where node ===\"; where\\.exe node 2>&1; Write-Host \"=== where npm ===\"; where\\.exe npm 2>&1; Write-Host \"=== where npx ===\"; where\\.exe npx 2>&1; Write-Host \"=== node -v ===\"; node -v 2>&1; Write-Host \"=== npm -v ===\"; npm -v 2>&1$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }
