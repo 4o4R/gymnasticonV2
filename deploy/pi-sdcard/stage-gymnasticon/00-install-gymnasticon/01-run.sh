@@ -149,26 +149,52 @@ CHROOT_EOF
 
 # Systemd helper: if fewer than two HCIs exist at boot, restart hciuart and
 # bring both adapters up. This avoids manual unplug/replug when a USB dongle
-# races the onboard UART on Zero/Zero 2.
+# races the onboard UART on Zero/Zero 2. It runs *before* Gymnasticon so a
+# recovery restart of hciuart can never reset the radio while the app is
+# scanning or connected, and it skips the recovery entirely when the adapters
+# that are present are already up.
 cat > "${ROOTFS_DIR}/etc/systemd/system/gymnasticon-bt-reprobe.service" <<'REPROBE'
 [Unit]
 Description=Ensure both Bluetooth HCIs are up for Gymnasticon
 After=bluetooth.service hciuart.service systemd-udevd.service dev-ttyAMA0.device dev-ttyS0.device
 Wants=bluetooth.service hciuart.service dev-ttyAMA0.device dev-ttyS0.device
+# Ordered before the app: the recovery restart of hciuart must finish before
+# Gymnasticon starts scanning or connecting.
+Before=gymnasticon.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 TimeoutStartSec=30
 ExecStart=/bin/sh -c '\
+  if systemctl is-active --quiet gymnasticon; then \
+    echo "[gymnasticon-bt-reprobe] Gymnasticon is running; leaving Bluetooth untouched"; \
+    exit 0; \
+  fi; \
+  count=$(ls /sys/class/bluetooth 2>/dev/null | wc -l); \
+  up=$(for h in /sys/class/bluetooth/hci*; do \
+         [ -e "$h" ] || continue; \
+         hciconfig "$(basename "$h")" 2>/dev/null | grep -q "UP RUNNING" && echo up; \
+       done | wc -l); \
+  if [ "$count" -ge 1 ] && [ "$up" -ge "$count" ]; then \
+    echo "[gymnasticon-bt-reprobe] $count adapter(s) already up; nothing to do"; \
+    exit 0; \
+  fi; \
   modprobe btusb || true; \
   rfkill unblock all || true; \
   udevadm settle --timeout=15 || true; \
   for i in 1 2 3 4 5 6 7; do \
+    if systemctl is-active --quiet gymnasticon; then \
+      echo "[gymnasticon-bt-reprobe] Gymnasticon started; leaving the radio alone"; \
+      exit 0; \
+    fi; \
     count=$(ls /sys/class/bluetooth 2>/dev/null | wc -l); \
-    if [ "$count" -ge 2 ]; then \
-      hciconfig hci0 up || true; \
-      hciconfig hci1 up || true; \
+    up=$(for h in /sys/class/bluetooth/hci*; do \
+           [ -e "$h" ] || continue; \
+           hciconfig "$(basename "$h")" 2>/dev/null | grep -q "UP RUNNING" && echo up; \
+         done | wc -l); \
+    if [ "$count" -ge 1 ] && [ "$up" -ge "$count" ]; then \
+      echo "[gymnasticon-bt-reprobe] $count adapter(s) up after $i attempt(s)"; \
       exit 0; \
     fi; \
     systemctl restart hciuart || true; \
@@ -181,7 +207,7 @@ ExecStart=/bin/sh -c '\
         hciattach "$DEV" bcm43xx 921600 noflow || true; \
       fi; \
     fi; \
-    printf \"[gymnasticon-bt-reprobe] attempt %s, hci count=%s\\n\" \"$i\" \"$count\"; \
+    printf "[gymnasticon-bt-reprobe] attempt %s, hci count=%s up=%s\n" "$i" "$count" "$up"; \
     sleep 3; \
   done; \
   hciconfig hci0 up || true; \

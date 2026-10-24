@@ -129,15 +129,28 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
     this.publish();
   }
 
-  onCscData(buf) { // Parse CSC crank data and update cadence/power estimate.
-    if (!buf || buf.length < 5) {
+  onCscData(buf) { // Parse CSC measurement data and update cadence/power estimate.
+    if (!buf || buf.length < 1) {
       return;
     }
     const flags = buf.readUInt8(0);
     let offset = 1;
+    // Teaching note: CSC field order is fixed by the flags. Wheel revolution
+    // data (uint32 revolutions + uint16 timestamp) sits *before* the crank
+    // data, so a combined wheel+crank packet needs its six bytes skipped;
+    // decoding crank data from offset 1 turned a valid 60 rpm frame into 0.
+    if (flags & 0x01) { // Wheel revolution data present.
+      offset += 6;
+    }
     if (flags & 0x02) { // Crank revolution data present.
-      const crankRevolutions = buf.readUInt16LE(offset); offset += 2;
-      const crankTimestamp = buf.readUInt16LE(offset); offset += 2;
+      if (buf.length < offset + 4) {
+        // Malformed/truncated frame: ignore it rather than reading past the end
+        // (RangeError here would escape into the notification handler).
+        debug('ignoring malformed CSC measurement frame', buf.length);
+        return;
+      }
+      const crankRevolutions = buf.readUInt16LE(offset);
+      const crankTimestamp = buf.readUInt16LE(offset + 2);
       this.updateCadence(crankRevolutions, crankTimestamp);
     }
     this.publish();
@@ -153,7 +166,11 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
     let deltaTime = crankTimestamp - this.lastCrank.timestamp;
     if (deltaTime < 0) deltaTime += 0x10000; // Handle 16-bit wrap.
     this.lastCrank = { revolutions: crankRevolutions, timestamp: crankTimestamp };
-    if (deltaTime === 0) {
+    if (deltaTime === 0 || deltaRevs === 0) {
+      // Teaching note: a repeated packet means the cranks are not turning, so
+      // cadence drops to 0. Keeping the previous value made a stopped rider look
+      // like they were still pedalling.
+      this.state.rpm = 0;
       return;
     }
     const seconds = deltaTime / 1024; // CSC timestamps use 1/1024 second resolution.
@@ -163,6 +180,15 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
 
   publish() { // Emit smoothed power/cadence whenever either input changes.
     const { rpm, resistance } = this.state;
+    if (rpm <= 0) {
+      // Teaching note: the EWMA would otherwise keep emitting the last smoothed
+      // wattage for many frames after the cranks stopped. Re-seed the smoother
+      // so a stationary bike reports 0 W immediately.
+      this.powerFilter = new Ewma(0.25);
+      this.state.watts = 0;
+      this.emit('stats', { power: 0, cadence: 0 });
+      return;
+    }
     const estimated = estimatePower(rpm, resistance, {
       scale: this.config.powerScale ?? 1.0,
       offset: this.config.powerOffset ?? 0,

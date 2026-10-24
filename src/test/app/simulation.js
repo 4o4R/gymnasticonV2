@@ -156,3 +156,80 @@ function testTimeline(timeline, t) {
     clock.restore();
   });
 }
+
+test('stop() cancels the pending pedal timer and latches the emitter off', t => {
+  const clock = sinon.useFakeTimers();
+  const sim = new Simulation();
+  try {
+    let pedals = 0;
+    sim.on('pedal', () => { pedals += 1; });
+
+    sim.cadence = 60;
+    clock.tick(2000);
+    const pedalsBeforeStop = pedals;
+    t.ok(pedalsBeforeStop > 0, 'pedal strokes run before stop()');
+
+    sim.stop();
+    clock.tick(10000);
+    t.equal(pedals, pedalsBeforeStop, 'no pedal event fires after stop()');
+
+    sim.stop();
+    clock.tick(1000);
+    t.equal(pedals, pedalsBeforeStop, 'stop() is idempotent');
+
+    sim.cadence = 120;
+    clock.tick(5000);
+    t.equal(pedals, pedalsBeforeStop, 'a cadence write after stop() must not re-arm the timer');
+    t.equal(sim.cadence, 120, 'the cadence value is still tracked after stop()');
+    t.equal(sim.stopped, true, 'the stopped flag stays latched');
+  } finally {
+    clock.restore();
+  }
+
+  t.end();
+});
+
+test('start() re-arms a stopped emitter', t => {
+  const clock = sinon.useFakeTimers();
+  const sim = new Simulation();
+  try {
+    let pedals = 0;
+    sim.on('pedal', () => { pedals += 1; });
+
+    sim.cadence = 60;
+    clock.tick(1000);
+    sim.stop();
+    clock.tick(5000);
+    const pedalsAfterStop = pedals;
+
+    sim.start();
+    sim.cadence = 60;
+    clock.tick(2000);
+
+    t.ok(pedals > pedalsAfterStop, 'pedal strokes resume after start()');
+    t.equal(sim.stopped, false, 'the stopped flag is cleared by start()');
+  } finally {
+    clock.restore();
+  }
+
+  t.end();
+});
+
+test('mirrorCadence() records cadence without arming the pedal timer', t => {
+  const clock = sinon.useFakeTimers();
+  const sim = new Simulation();
+  try {
+    let pedals = 0;
+    sim.on('pedal', () => { pedals += 1; });
+
+    sim.mirrorCadence(90);
+    clock.tick(10000);
+
+    t.equal(sim.cadence, 90, 'the mirrored cadence is readable');
+    t.equal(pedals, 0, 'mirroring real bike cadence never emits a pedal event');
+  } finally {
+    clock.restore();
+  }
+
+  t.end();
+});

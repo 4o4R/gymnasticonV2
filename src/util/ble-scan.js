@@ -1,5 +1,6 @@
 import {execSync} from 'child_process';
 import {macAddress} from './mac-address.js';
+import {normalizeAdapterName} from './adapter-id.js';
 
 /**
  * Returns true if the given peripheral matches.
@@ -27,7 +28,7 @@ import {macAddress} from './mac-address.js';
  */
 export async function scan(noble, serviceUuids, filter = () => true, options = {}) {
   const allowDuplicates = options?.allowDuplicates ?? true;
-  const adapter = resolveAdapterName(options);
+  const adapter = resolveAdapterName(noble, options);
   const timeoutMs = Number.isFinite(options?.timeoutMs) ? options.timeoutMs : null;
   const stopScanOnMatch = options?.stopScanOnMatch !== false;
   const stopScanOnTimeout = options?.stopScanOnTimeout !== false;
@@ -36,35 +37,31 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
   // what lets a failed scan distinguish "radio saw nothing" from "radio saw
   // devices but none matched a supported bike".
   const onDiscovery = typeof options?.onDiscovery === 'function' ? options.onDiscovery : null;
-  let startedScan = false;
 
-  try {
-    await startScanningWithAdapter(noble, serviceUuids, allowDuplicates, adapter);
-    startedScan = true;
-    console.log('[ble-scan] ✓ Noble scan started successfully');
-  } catch (error) {
-    if (isAlreadyScanningError(error)) {
-      console.log('[ble-scan] Noble scan already running; reusing existing scan');
-    } else {
-      throw error;
-    }
-  }
-
+  // Teaching note: the discovery deadline is armed inside waitForDiscovery()
+  // *before* scanning is started. The pinned noble silently swallows some
+  // controller failures (e.g. "Command Disallowed"), which leaves
+  // startScanningAsync() pending forever; awaiting startup first used to hang
+  // autodetection indefinitely with no watchdog.
   return waitForDiscovery(noble, filter, {
     timeoutMs,
-    startedScan,
     stopScanOnMatch,
     stopScanOnTimeout,
     onDiscovery,
+    startScan: () => startScanningWithAdapter(noble, serviceUuids, allowDuplicates, adapter),
   });
 }
 
-function resolveAdapterName(options = {}) {
+function resolveAdapterName(noble, options = {}) {
   if (options.adapter) {
     return options.adapter;
   }
   if (options.adapterName) {
     return options.adapterName;
+  }
+  const stashed = normalizeAdapterName(noble?.__gymnasticonAdapterId);
+  if (stashed) {
+    return stashed;
   }
   const envAdapter = process.env.NOBLE_HCI_DEVICE_ID;
   if (envAdapter !== undefined && envAdapter !== null) {
@@ -189,41 +186,70 @@ export function stopScanningSafely(noble) {
 }
 
 function waitForDiscovery(noble, filter, options = {}) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let settled = false;
     let timeoutId = null;
+    let scanningStarted = false;
+    // Set when the caller asked for the scan to be stopped but the scan had not
+    // finished starting yet, so the stop has to happen once startup lands.
+    let stopWhenStarted = false;
 
-    const finish = (peripheral, didMatch) => {
-      if (settled) return;
-      settled = true;
-      noble.removeListener('discover', onDiscover);
+    let onDiscover = null;
+
+    const removeListeners = () => {
+      if (onDiscover) {
+        noble.removeListener('discover', onDiscover);
+      }
       if (timeoutId) {
         clearTimeout(timeoutId);
+        timeoutId = null;
       }
+    };
 
-      const shouldStop = options.startedScan && (
-        (didMatch && options.stopScanOnMatch) ||
-        (!didMatch && options.stopScanOnTimeout)
-      );
+    const settle = (peripheral, didMatch) => {
+      if (settled) return;
+      settled = true;
+      removeListeners();
 
-      if (shouldStop) {
+      const shouldStop = (didMatch && options.stopScanOnMatch) ||
+        (!didMatch && options.stopScanOnTimeout);
+
+      if (shouldStop && !scanningStarted) {
+        // Startup is still in flight (e.g. it timed out). Remember to stop the
+        // scan the moment it actually starts instead of leaving it running.
+        stopWhenStarted = true;
+      } else if (shouldStop) {
         // Fire-and-forget the stop: it must never delay the result, because
         // stopScanningAsync() can hang forever in noble's "unknown" state and
         // that would wedge autodetect and the app's shutdown path.
         stopScanningSafely(noble);
-        resolve(peripheral);
-      } else {
-        resolve(peripheral);
       }
+
+      resolve(peripheral);
     };
 
-    const onDiscover = (result) => {
+    const fail = (error) => {
+      if (settled) {
+        // The promise already settled (match/timeout); a late startup failure
+        // has nowhere to go, so surface it in the log instead of swallowing it.
+        console.warn(`[ble-scan] ⚠ Noble scan startup failed after the scan settled: ${error?.message || error}`);
+        return;
+      }
+      settled = true;
+      removeListeners();
+      if (scanningStarted) {
+        stopScanningSafely(noble);
+      }
+      reject(error);
+    };
+
+    onDiscover = (result) => {
       if (settled) return;
       if (options.onDiscovery) {
         options.onDiscovery(result);
       }
       if (filter(result)) {
-        finish(result, true);
+        settle(result, true);
       }
     };
 
@@ -231,9 +257,33 @@ function waitForDiscovery(noble, filter, options = {}) {
 
     if (Number.isFinite(options.timeoutMs) && options.timeoutMs > 0) {
       timeoutId = setTimeout(() => {
-        finish(null, false);
+        settle(null, false);
       }, options.timeoutMs);
     }
+
+    // Start scanning without ever awaiting it in the caller's path: the result
+    // is already bounded by the deadline armed above.
+    Promise.resolve()
+      .then(() => options.startScan())
+      .then(() => {
+        scanningStarted = true;
+        if (stopWhenStarted) {
+          console.log('[ble-scan] scan started after the result settled; stopping it now');
+          stopScanningSafely(noble);
+          return;
+        }
+        if (!settled) {
+          console.log('[ble-scan] ✓ Noble scan started successfully');
+        }
+      })
+      .catch((error) => {
+        if (isAlreadyScanningError(error)) {
+          // Someone else owns the scan: never stop a scan we did not start.
+          console.log('[ble-scan] Noble scan already running; reusing existing scan');
+          return;
+        }
+        fail(error);
+      });
   });
 }
 

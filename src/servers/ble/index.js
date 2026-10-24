@@ -1,7 +1,6 @@
 import {CyclingPowerService} from './services/cycling-power/index.js'; // Import the CPS implementation so we can notify power changes.
 import {CyclingSpeedAndCadenceService} from './services/cycling-speed-and-cadence/index.js'; // Import CSC service for wheel/crank updates.
 import {BleServer} from '../../util/ble-server.js'; // Base helper that wires our bleno services together.
-import {once} from 'events'; // Used to await bleno state changes before advertising.
 import {HeartRateService} from './services/heart-rate/index.js'; // Import HR service to forward heart rate metrics.
 
 export const DEFAULT_NAME = 'GymnasticonV2';
@@ -107,6 +106,16 @@ export function createServices({ includeHeartRate = true } = {}) { // Factory th
   return services;
 }
 
+export const DEFAULT_STARTUP_TIMEOUT_MS = 10000; // Upper bound on how long startup may wait for an adapter.
+export const STARTUP_TIMEOUT_CODE = 'BLE_STARTUP_TIMEOUT'; // Marker so callers and tests can recognise a bounded startup failure.
+
+function resolveStartupTimeout(value) { // Accept only usable overrides so a bad option cannot disable the bound.
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  return DEFAULT_STARTUP_TIMEOUT_MS;
+}
+
 export class GymnasticonServer extends BleServer {
   constructor(bleno, name = DEFAULT_NAME, options = {}) {
     const services = createServices({ includeHeartRate: options.includeHeartRate }); // Instantiate services before handing them to the base BleServer.
@@ -119,6 +128,15 @@ export class GymnasticonServer extends BleServer {
     // Teaching note: rely on bleno's standard startAdvertising path so we match
     // the proven behavior in the original ptx2 project.
     this.advertisingOptions = null;
+    // Teaching note: an adapter that never reports poweredOn used to leave
+    // start() pending forever and stall every other advertising adapter, so the
+    // wait for the radio is bounded and surfaced as an explicit error.
+    this.startupTimeoutMs = resolveStartupTimeout(options.startupTimeoutMs);
+    this.adapterLabel = options.adapter ? String(options.adapter) : null; // Names the adapter in startup errors.
+  }
+
+  get adapterName() {
+    return this.adapterLabel || 'default';
   }
 
   updateHeartRate(hr) { // Push heart rate notifications to subscribed clients.
@@ -162,18 +180,9 @@ export class GymnasticonServer extends BleServer {
 
     this.state = 'starting';
 
-    let state = this.bleno.state;
-    const fatalStates = new Set(['unauthorized', 'unsupported']);
-    while (state !== 'poweredOn') {
-      if (state && fatalStates.has(state)) {
-        this.state = 'stopped';
-        throw new Error(`Bluetooth adapter failed to power on: ${state}`);
-      }
-      const [next] = await once(this.bleno, 'stateChange');
-      state = next;
-    }
-
     try {
+      await this.waitForPoweredOn(); // Bounded: a wedged adapter rejects instead of hanging every caller.
+
       if (this.advertisingOptions) {
         const { advertisementData, scanData } = buildAdvertisingPayload(this.name, this.advertisingOptions, this.uuids);
         await new Promise((resolve, reject) => {
@@ -190,9 +199,64 @@ export class GymnasticonServer extends BleServer {
 
       await this.bleno.setServicesAsync(this.services); // Commit the service list to the adapter now that advertising is live.
     } catch (err) {
-      await this.cleanupFailedStart();
+      if (err && err.code === STARTUP_TIMEOUT_CODE) {
+        // Teaching note: the adapter already failed to answer within the bound,
+        // so reset our state synchronously and clean up best-effort only. Awaiting
+        // another call into a wedged radio would hang the caller all over again.
+        this.state = 'stopped';
+        this.connectionCount = 0;
+        this.stopAdvertisingBestEffort();
+      } else {
+        await this.cleanupFailedStart();
+      }
       throw err;
     }
     this.state = 'started';
   }
+
+  async waitForPoweredOn() { // Wait until bleno reports poweredOn, failing fast on terminal states and on timeout.
+    const fatalStates = new Set(['unauthorized', 'unsupported']);
+    let state = this.bleno.state;
+    while (state !== 'poweredOn') {
+      if (state && fatalStates.has(state)) {
+        this.state = 'stopped';
+        throw new Error(`Bluetooth adapter ${this.adapterName} failed to power on: ${state}`);
+      }
+      state = await this.nextStateChange(); // Rejects once startupTimeoutMs elapses without a usable state.
+    }
+  }
+
+  nextStateChange() {
+    return new Promise((resolve, reject) => {
+      let timer = null;
+      const onStateChange = (state) => {
+        clearTimeout(timer);
+        resolve(state);
+      };
+      timer = setTimeout(() => {
+        this.bleno.removeListener('stateChange', onStateChange); // Never leave a stale listener behind.
+        const lastState = this.bleno.state || 'unknown';
+        const error = new Error(
+          `BLE adapter ${this.adapterName} did not report poweredOn within ${this.startupTimeoutMs}ms (last state: ${lastState})`
+        );
+        error.code = STARTUP_TIMEOUT_CODE;
+        error.adapter = this.adapterLabel;
+        error.state = lastState;
+        reject(error);
+      }, this.startupTimeoutMs);
+      this.bleno.once('stateChange', onStateChange);
+    });
+  }
+
+  stopAdvertisingBestEffort() { // Fire-and-forget cleanup for adapters that already proved unresponsive.
+    try {
+      const pending = this.bleno.stopAdvertisingAsync();
+      if (pending && typeof pending.catch === 'function') {
+        pending.catch(() => {});
+      }
+    } catch (_error) {
+      // The adapter is already unusable; nothing else to do here.
+    }
+  }
 }
+

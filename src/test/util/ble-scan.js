@@ -134,3 +134,73 @@ test('scan() resolves on match even when stopScanningAsync never settles', async
   t.equal(result.advertisement.localName, 'Target', 'resolves with the match without waiting for stopScanningAsync');
   t.end();
 });
+
+test('scan() resolves on timeout when noble scan startup never settles', async (t) => {
+  // Regression: the pinned noble silently swallows some controller failures
+  // (e.g. "Command Disallowed"), leaving startScanningAsync() pending forever.
+  // The discovery deadline used to be armed only after startup resolved, so
+  // autodetection hung with no watchdog.
+  const noble = new EventEmitter();
+  let stopCalls = 0;
+  noble.startScanningAsync = () => new Promise(() => {}); // never settles
+  noble.stopScanning = () => {
+    stopCalls += 1;
+  };
+  noble.stopScanningAsync = async () => {
+    stopCalls += 1;
+  };
+
+  const startedAt = Date.now();
+  const result = await scan(noble, [], () => false, {timeoutMs: 50, stopScanOnTimeout: true});
+  const elapsed = Date.now() - startedAt;
+
+  t.equal(result, null, 'returns null when the scan never starts');
+  t.ok(elapsed < 1000, `settled promptly instead of hanging (${elapsed}ms)`);
+  t.equal(noble.listenerCount('discover'), 0, 'removes the discovery listener');
+  t.equal(stopCalls, 0, 'nothing to stop while startup is still pending');
+  t.end();
+});
+
+test('scan() stops a scan that only starts after the timeout already fired', async (t) => {
+  const noble = new EventEmitter();
+  let finishStartup;
+  noble.startScanningAsync = () => new Promise((resolve) => {
+    finishStartup = resolve;
+  });
+  let stopCalls = 0;
+  noble.stopScanning = () => {
+    stopCalls += 1;
+  };
+
+  const result = await scan(noble, [], () => false, {timeoutMs: 10, stopScanOnTimeout: true});
+  t.equal(result, null, 'times out while startup is pending');
+  t.equal(stopCalls, 0, 'no scan to stop yet');
+
+  finishStartup();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  t.equal(stopCalls, 1, 'the late scan is stopped immediately instead of running unsupervised');
+  t.end();
+});
+
+test('scan() reuses an already running noble scan without stopping it', async (t) => {
+  const noble = new EventEmitter();
+  noble.startScanningAsync = async () => {
+    throw new Error('Could not start scanning, already scanning');
+  };
+  let stopCalls = 0;
+  noble.stopScanning = () => {
+    stopCalls += 1;
+  };
+
+  const pending = scan(noble, [], (p) => p.advertisement.localName === 'Target', {
+    timeoutMs: 100,
+    stopScanOnMatch: true,
+  });
+  setTimeout(() => noble.emit('discover', {advertisement: {localName: 'Target'}}), 5);
+
+  const result = await pending;
+  t.equal(result.advertisement.localName, 'Target', 'discoveries still resolve the scan');
+  t.equal(stopCalls, 0, 'never stops a scan owned by somebody else');
+  t.end();
+});

@@ -26,6 +26,7 @@ import {BluetoothConnectionManager} from '../util/connection-manager.js';
 import {initializeBluetooth} from '../util/noble-wrapper.js';
 import {initializeBleno} from '../util/bleno-wrapper.js';
 import {stopBluetoothStack} from '../util/bluetooth-shutdown.js';
+import {ScanCoordinator} from '../util/scan-coordinator.js';
 import {normalizeAdapterId, normalizeAdapterName} from '../util/adapter-id.js';
 import {detectAdapters, supportsExtendedScan} from '../util/adapter-detect.js';
 import {isSingleAdapterMultiRoleCapable} from '../util/hardware-info.js';
@@ -49,6 +50,7 @@ const debuglog = debug('gym:app:app');
 const DEFAULT_SENSOR_DISCOVERY_DELAY_MS = 1000;
 const DEFAULT_SENSOR_RETRY_DELAY_MS = 60000;
 const DEFAULT_SENSOR_MAX_RETRY_DELAY_MS = 300000;
+const MAX_INTEGRATION_SECONDS = 30; // Longest cadence/speed gap we integrate in one step (guard against unit mistakes and clock jumps).
 
 export {getBikeTypes};
 export const defaults = sharedDefaults;
@@ -86,6 +88,12 @@ export class App {
         timeout: opts.connectionTimeout,
         maxRetries: opts.connectionRetries,
       });
+
+    // Teaching note: optional sensor clients share the radio with each other
+    // (and with bike discovery), so one refcounted scan owner per noble
+    // instance decides when the native scan actually starts and stops.
+    this.scanCoordinator = opts.scanCoordinator || new ScanCoordinator(this.noble, {logger: this.logger});
+    this.hrScanCoordinator = null; // Only used when heart rate runs on its own adapter.
 
     this.powerScale = opts.powerScale;
     this.powerOffset = opts.powerOffset;
@@ -159,6 +167,7 @@ export class App {
         deviceName: opts.heartRateDevice,
         serviceUuid: opts.heartRateServiceUuid,
         connectionManager: this.connectionManager,
+        scanCoordinator: this.scanCoordinatorFor(hrNoble),
       });
       this.hrClient.on('heartRate', this.onHeartRateBound);
     } else {
@@ -443,6 +452,7 @@ export class App {
     this.pingInterval.cancel(); // Stop BLE keep-alives immediately so reconnect loops do not keep publishing stale telemetry.
     this.statsTimeout.cancel();
     this.connectTimeout.cancel();
+    this.stopPedalSimulation(); // Cancel any pending synthetic pedal stroke before the bike goes away.
     if (this.bike) {
       this.bike.off('disconnect', this.onBikeDisconnectBound);
       this.bike.off('stats', this.onBikeStatsBound);
@@ -461,6 +471,7 @@ export class App {
         await this.hrClient.disconnect().catch(() => {});
       }
       await this.stopOptionalSensorDiscovery('bike-connection-stop');
+      await this.releaseScanOwnership('bike-connection-stop');
       await this.stopServerAdvertising('bike-connection-stop');
     }
   }
@@ -648,9 +659,16 @@ export class App {
     // Teaching note: force a fresh noble instance so the HCI socket is reopened.
     this.logger.log(`[gym-app] reinitializing noble (${reason})`);
     const previousNoble = this.noble;
+    // Drop every scan claim on the old radio before its socket is replaced.
+    await this.releaseScanOwnership(`reinitialize-${reason}`);
     const { noble } = await initializeBluetooth(this.opts.bikeAdapter, { forceNewInstance: true });
     this.noble = noble;
     this.opts.noble = noble;
+    // The reopened adapter needs a fresh refcounted scan owner.
+    this.scanCoordinator = new ScanCoordinator(noble, {logger: this.logger});
+    if (this.hrScanCoordinator && this.hrScanCoordinator.noble === previousNoble) {
+      this.hrScanCoordinator = null;
+    }
     this.attachNobleDiagnostics(); // Teaching note: reattach diagnostics to the new instance.
     // Teaching note: rebuild the connection manager so heart-rate scans use the new noble.
     this.connectionManager = new BluetoothConnectionManager(this.noble, {
@@ -683,8 +701,75 @@ export class App {
       deviceName: this.opts.heartRateDevice,
       serviceUuid: this.opts.heartRateServiceUuid,
       connectionManager: this.connectionManager,
+      scanCoordinator: this.scanCoordinatorFor(nextNoble),
     });
     this.hrClient.on('heartRate', this.onHeartRateBound);
+  }
+
+  /**
+   * Get the shared scan owner for a noble instance.
+   * @param {object} noble - the noble instance that will scan.
+   * @returns {ScanCoordinator} the coordinator for that instance.
+   * @private
+   */
+  scanCoordinatorFor(noble) {
+    if (!noble || noble === this.noble) {
+      return this.scanCoordinator;
+    }
+    if (!this.hrScanCoordinator || this.hrScanCoordinator.noble !== noble) {
+      this.hrScanCoordinator = new ScanCoordinator(noble, {logger: this.logger});
+    }
+    return this.hrScanCoordinator;
+  }
+
+  /**
+   * Release every BLE scan holder so a bike scan can own the radio again.
+   * @param {string} [reason] - short reason for logs.
+   * @returns {Promise<void>}
+   */
+  async releaseScanOwnership(reason = 'unspecified') {
+    const coordinators = new Set([this.scanCoordinator]);
+    if (this.hrScanCoordinator) {
+      coordinators.add(this.hrScanCoordinator);
+    }
+    for (const coordinator of coordinators) {
+      if (!coordinator) {
+        continue;
+      }
+      try {
+        const stopped = await coordinator.releaseAll();
+        if (stopped) {
+          this.logger.log(`[gym-app] released shared BLE scan ownership (${reason})`);
+        }
+      } catch (error) {
+        this.logger.error(`[gym-app] failed to release BLE scan ownership (${reason}): ${error.message}`);
+      }
+    }
+  }
+
+  /**
+   * Stop the synthetic pedal emitter.
+   *
+   * Teaching note: the simulation timer reschedules itself, so shutdown and
+   * every bike-loss path must cancel it explicitly. Otherwise a pedal stroke
+   * fires after disconnect, pushes cadence back to the simulated value and
+   * republishes telemetry for a bike that is already gone.
+   * @private
+   */
+  stopPedalSimulation() {
+    if (this.simulation) {
+      this.simulation.stop();
+    }
+  }
+
+  /**
+   * True when the connected bike is the bot/simulation profile, which needs the
+   * synthetic pedal emitter to advance the BLE crank counters.
+   * @returns {boolean}
+   * @private
+   */
+  isSimulationMode() {
+    return this.opts.bike === 'bot';
   }
 
   handleError(error) {
@@ -714,6 +799,7 @@ export class App {
     this.pingInterval.cancel();
     this.statsTimeout.cancel();
     this.connectTimeout.cancel();
+    this.stopPedalSimulation(); // No pedal stroke may fire after shutdown.
 
     let firstError;
     const stopSafely = async (label, action) => {
@@ -737,6 +823,7 @@ export class App {
       await stopSafely('heart-rate client', () => this.hrClient.disconnect());
     }
     await stopSafely('optional sensor discovery', () => this.stopOptionalSensorDiscovery('app-stop'));
+    await stopSafely('shared BLE scan ownership', () => this.releaseScanOwnership('app-stop'));
     if (this.healthMonitor?.stop) {
       await stopSafely('health monitor', () => this.healthMonitor.stop());
     }
@@ -803,12 +890,17 @@ export class App {
       while (this.keepRunning) { // Keep looping until shutdown or we successfully complete the full startup sequence.
         try {
           this.logger.log('connecting to bike...'); // Show progress on the console so headless installs still provide feedback.
-          this.bike = await this.createBikeClient(this.opts, this.noble); // Instantiate the bike client selected via config/CLI (autodetect, keiser, etc.).
+          // Teaching note: arm the watchdog BEFORE creating the bike client.
+          // createBikeClient() runs the autodetect BLE scans, so a wedged scan
+          // used to hang here forever with no timeout, fallback or retry.
+          this.connectTimeout.reset();
+          // Free the radio from optional sensor scans before bike discovery.
+          await this.releaseScanOwnership('bike-connect');
+          this.bike = await this.raceConnectWatchdog(this.createBikeClient(this.opts, this.noble)); // Instantiate the bike client selected via config/CLI (autodetect, keiser, etc.).
           // Teaching note: using bound handlers allows us to remove listeners when we reconnect.
           this.bike.on('disconnect', this.onBikeDisconnectBound); // Restart the app when the bike disconnects unexpectedly.
           this.bike.on('stats', this.onBikeStatsBound); // Stream bike telemetry into the BLE/ANT broadcasters.
-          this.connectTimeout.reset(); // Arm the watchdog so wedged BLE connections do not hang forever.
-          await this.bike.connect(); // Begin scanning or connecting based on the specific bike implementation.
+          await this.raceConnectWatchdog(this.bike.connect()); // Begin scanning or connecting based on the specific bike implementation.
           this.connectTimeout.cancel(); // Clear the watchdog because the connect phase finished successfully.
           this.logger.log(`bike connected ${this.bike.address}`); // Log the MAC so users can confirm which console paired.
           // Teaching note: only advertise once the bike is connected so we do
@@ -848,6 +940,42 @@ export class App {
       await this.cleanup();
       throw e;
     }
+  }
+
+  /**
+   * Await a startup step but stop waiting as soon as the connect watchdog fires.
+   *
+   * Teaching note: bike discovery (autodetect) performs BLE scans that can wedge
+   * inside noble. Racing the watchdog means the run loop falls through to its
+   * retry path instead of hanging on an await that never settles.
+   * @param {Promise<*>} promise - the startup step to wait for.
+   * @returns {Promise<*>} the step result, or a rejection when the watchdog fires.
+   * @private
+   */
+  raceConnectWatchdog(promise) {
+    if (!this.connectTimeout || typeof this.connectTimeout.once !== 'function') {
+      return promise;
+    }
+    return new Promise((resolve, reject) => {
+      const onTimeout = () => {
+        cleanup();
+        reject(new Error('bike connect watchdog expired'));
+      };
+      const cleanup = () => {
+        this.connectTimeout.removeListener('timeout', onTimeout);
+      };
+      this.connectTimeout.once('timeout', onTimeout);
+      Promise.resolve(promise).then(
+        (value) => {
+          cleanup();
+          resolve(value);
+        },
+        (error) => {
+          cleanup();
+          reject(error);
+        }
+      );
+    });
   }
 
   /**
@@ -928,6 +1056,7 @@ export class App {
       this.speedSensor = new this.SpeedSensorClient(this.noble, {
         logger: this.logger,
         connectionManager: this.connectionManager,
+        scanCoordinator: this.scanCoordinator,
         connectTimeout: this.opts.sensorConnectTimeout ?? sharedDefaults.sensorConnectTimeout,
         statTimeout: this.opts.sensorStatTimeout || 5000,
         retryDelay: this.opts.sensorRetryDelay ?? DEFAULT_SENSOR_RETRY_DELAY_MS,
@@ -970,6 +1099,7 @@ export class App {
       this.cadenceSensor = new this.CadenceSensorClient(this.noble, {
         logger: this.logger,
         connectionManager: this.connectionManager,
+        scanCoordinator: this.scanCoordinator,
         connectTimeout: this.opts.sensorConnectTimeout ?? sharedDefaults.sensorConnectTimeout,
         statTimeout: this.opts.sensorStatTimeout || 5000,
         retryDelay: this.opts.sensorRetryDelay ?? DEFAULT_SENSOR_RETRY_DELAY_MS,
@@ -1037,10 +1167,24 @@ export class App {
     }
   }
 
-  integrateKinematics(cadence, speed, timestamp) { // Update cumulative crank and wheel state for BLE notifications.
-    const now = timestamp ?? nowSeconds(); // Use provided timestamp or fall back to current wall-clock time.
+  /**
+   * Update cumulative crank and wheel state for BLE notifications.
+   * @param {number} cadence - pedaling cadence in rpm.
+   * @param {number} speed - ground speed in meters per second.
+   * @param {number} [timestampSeconds] - sample time in SECONDS (not milliseconds).
+   */
+  integrateKinematics(cadence, speed, timestampSeconds) { // Seconds, matching nowSeconds() - never milliseconds.
+    const now = Number.isFinite(timestampSeconds) ? timestampSeconds : nowSeconds(); // Use provided timestamp or fall back to current wall-clock time.
     const last = this.kinematics.lastTimestamp ?? now; // When this is the first sample treat dt as zero.
-    const dt = Math.max(0, now - last); // Ensure we never integrate backwards when timestamps jitter.
+    // Teaching note: clamp dt defensively. A millisecond value leaking into the
+    // seconds contract (or a long suspend/clock jump) used to turn 30 ms into
+    // 30 s and inflate the revolution counters by thousands of turns.
+    let dt = now - last;
+    if (!Number.isFinite(dt) || dt < 0) {
+      dt = 0; // Ensure we never integrate backwards when timestamps jitter.
+    } else if (dt > MAX_INTEGRATION_SECONDS) {
+      dt = MAX_INTEGRATION_SECONDS; // Absurd gaps are clamped to a plausible telemetry window.
+    }
     this.kinematics.lastTimestamp = now; // Persist the sample time for the next update.
 
     const safeCadence = Number.isFinite(cadence) ? Math.max(0, cadence) : 0; // Drop NaN/negative cadences before integrating.
@@ -1088,13 +1232,20 @@ export class App {
     }
   }
 
-  onPedalStroke(timestamp) {
+  onPedalStroke(timestampMs) {
+    if (!this.keepRunning) {
+      return; // A stroke queued before shutdown must not publish telemetry.
+    }
     this.pingInterval.reset();
     const cadence = this.simulation.cadence ?? this.currentCadence; // Use simulated cadence when bot mode drives the app.
     const speed = estimateSpeedMps(cadence, this.speedOptions); // Estimate speed for simulation strokes so CSC stays alive.
     this.currentCadence = cadence; // Track cadence for ANT+/BLE ping intervals.
-    this.integrateKinematics(cadence, speed, timestamp); // Update cumulative crank/wheel counters based on the simulated stroke.
-    this.logger.log(`pedal stroke [timestamp=${timestamp} revolutions=${this.crank.revolutions} power=${this.power}W]`);
+    // Teaching note: the simulation reports pedal times in MILLISECONDS while
+    // integrateKinematics works in SECONDS. Convert at this boundary; passing
+    // 30 (ms) straight through integrated 30 seconds of pedaling.
+    const timestampSeconds = Number.isFinite(timestampMs) ? timestampMs / 1000 : nowSeconds();
+    this.integrateKinematics(cadence, speed, timestampSeconds); // Update cumulative crank/wheel counters based on the simulated stroke.
+    this.logger.log(`pedal stroke [timestamp=${timestampSeconds}s revolutions=${this.crank.revolutions} power=${this.power}W]`);
     this.publishTelemetry(); // Push the updated measurement to BLE/ANT clients.
   }
 
@@ -1159,7 +1310,19 @@ export class App {
     this.statsTimeout.reset(); // Clear the bike stats timeout since we just received fresh data.
     this.power = processed.power; // Store the smoothed power for ping intervals and ANT+ updates.
     this.currentCadence = processed.cadence; // Track cadence for ANT+ and BLE keep-alives.
-    this.simulation.cadence = processed.cadence; // Keep the simulation helper in sync for manual pedal triggers.
+    if (this.isSimulationMode()) {
+      // Bot mode has no real crank sensor: the synthetic emitter produces the
+      // pedal strokes (and therefore the crank revolutions) for CSC output.
+      if (this.simulation.stopped) {
+        this.simulation.start();
+      }
+      this.simulation.cadence = processed.cadence;
+    } else {
+      // Teaching note: real bike stats only mirror cadence. Assigning through
+      // the scheduling setter here armed the pedal timer during normal riding,
+      // so a stroke could fire after disconnect/shutdown.
+      this.simulation.mirrorCadence(processed.cadence);
+    }
     if (this.healthMonitor) {
       this.healthMonitor.recordMetric('bikeStats', processed);
     }
@@ -1173,6 +1336,7 @@ export class App {
     this.logger.log(`timed out waiting for bike stats after ${this.statsTimeout.interval}s`);
     // Teaching note: treat missing stats as a disconnect; zero metrics so we
     // do not broadcast stale power/cadence while we reconnect.
+    this.stopPedalSimulation(); // No simulated stroke may resurrect cadence after the timeout.
     this.power = 0;
     this.currentCadence = 0;
     this.publishTelemetry();
@@ -1195,6 +1359,7 @@ export class App {
     // than killing the whole service.
     // Teaching note: zero out the metrics immediately so apps don't keep
     // showing stale power/cadence while we reconnect.
+    this.stopPedalSimulation(); // Cancel any pending synthetic stroke before zeroing metrics.
     this.power = 0;
     this.currentCadence = 0;
     this.publishTelemetry();
@@ -1214,6 +1379,7 @@ export class App {
     this.logger.log(`bike connection timed out after ${this.connectTimeout.interval}s`);
     // Teaching note: force a reconnect attempt instead of exiting so systemd
     // restarts are no longer required to recover.
+    this.stopPedalSimulation(); // Nothing synthetic may keep publishing after a failed connect.
     if (this.bike?.disconnect) {
       this.bike.disconnect().catch(() => {});
     }

@@ -52,7 +52,8 @@ APTCONF
     for list_file in "${sources_files[@]}"; do # touch every apt sources file we collected
         sudo sed -i 's|deb.debian.org|archive.debian.org|g' "$list_file" # Debian moved Buster packages to archive.debian.org; rewrite the mirror automatically
         sudo sed -i 's|security.debian.org|archive.debian.org|g' "$list_file" # security updates moved as well, so keep them consistent
-        sudo sed -i 's|raspbian.raspberrypi.org|archive.raspbian.org|g' "$list_file" # Raspberry Pi’s mirror follows the same archive pattern
+        # Buster Raspbian packages live on the legacy mirror; the retired archive host returns HTTP 404 for buster.
+        sudo sed -i 's|raspbian.raspberrypi.org|legacy.raspbian.org|g' "$list_file" # Raspberry Pi's mirror moved to the legacy archive host
     done
 
     echo "Legacy mirror patch complete. Continuing with package installs..." # keep the user informed so they know the script is still running

@@ -1,5 +1,29 @@
 # Changelog
 
+## [Unreleased]
+### Fixed
+- IC4/Flywheel connections no longer pass an options object to noble's callback-based `connectAsync()`, which threw `TypeError: callback is not a function` when the link completed and could restart the service in a loop. The 10 s connect budget is now enforced by the caller.
+- CSC/telemetry counters are no longer corrupted during normal riding: the simulated pedal path passed milliseconds into an integrator that expects seconds (120 rpm produced 55,027 crank revolutions in 30 ms). Integration is now explicitly seconds-based with a defensive clamp.
+- BLE scanning can no longer hang autodetection when the controller ignores scan startup (for example `Command Disallowed`); the discovery deadline is armed before startup, and the bike connect watchdog is armed before autodetection runs.
+- Optional sensors share one refcounted scan owner instead of starting and stopping each other's scans, so heart-rate, speed and cadence discovery can no longer leave a later bridge app undiscovered.
+- The simulated pedal emitter stops on disconnect and shutdown, and is only armed in bot mode — real bike telemetry mirrors cadence without scheduling synthetic pedal strokes.
+- Noble and bleno's recurring `pollIsDevUp` timers are neutralized during shutdown so the process can exit.
+- Each noble instance binds its own HCI adapter at bind time (`hci0`/`hci1` produced `[0, 0]` before), keeping a dedicated heart-rate radio from stealing the bike's adapter.
+- Heart-rate teardown is now intentional-stop aware: it no longer restarts scanning after `disconnect()`, releases a physically connected peripheral after failed GATT setup, and cannot mark an obsolete connection as connected.
+- Keiser selection isolates the configured MAC address; other consoles with the same shared name or Keiser payload are no longer accepted during or after discovery. Realtime `data-type` values are now validated as 0 or 128–227 (228–254 was wrongly accepted, 128 rejected).
+- IC8/C6 CSC parsing honours the wheel fields that precede crank data (a valid 60 rpm packet decoded as zero) and reports 0 rpm/power on repeated stationary packets instead of a stale estimate.
+- Advertising startup is bounded: an adapter that never reports `poweredOn` no longer stalls multi-output startup, and remaining adapters keep advertising in an explicitly logged degraded mode.
+- The CSC service now includes the mandatory SC Control Point characteristic (2A55) alongside wheel/crank support.
+- Native dependency load failures surface as actionable errors in production instead of silently substituting development stubs (a failed ABI load previously produced a fake `poweredOn` adapter). Stubs remain available on Windows and in tests.
+- The packaged npm tarball includes `scripts/`, which `preinstall`/`postinstall` require.
+- Manual installation installs a Node 14 compatible `node-gyp` before deriving `npm_config_node_gyp` instead of referencing a path that does not exist on npm 6.
+- Legacy Buster mirrors use `legacy.raspbian.org` (the retired `archive.raspbian.org` endpoint returns HTTP 404).
+- Image boot helpers no longer rely on `ExecCondition=`, which systemd 241 (Buster) does not support, so the `no_read_only` opt-out and the config-copy gate work again.
+- Boot Bluetooth recovery runs before Gymnasticon and never restarts `hciuart` while it is active, so a working radio is not reset during scanning or riding.
+
+### Tests
+- Added regressions for every item above; the suite now contains 548 passing assertions on Node 14 and Node 22.
+
 ## [2.0.9] - 2026-08-30
 ### Fixed
 - BLE scans no longer hang when noble's state stays `unknown` (seen on some Pi/BlueZ combos): `stopScanningAsync()` could wait forever for a `scanStop` event, which froze autodetect — no "No supported bike found" log, no fallback bike, and no advertising — and also stalled SIGTERM shutdown. Scan results now resolve immediately, and scan-stopping is bounded everywhere (ble-scan, Keiser disconnect, heart-rate client).

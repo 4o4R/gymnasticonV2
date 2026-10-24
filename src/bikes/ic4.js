@@ -1,6 +1,7 @@
 import {EventEmitter} from 'events';
 import {scan} from '../util/ble-scan.js';
 import {macAddress} from '../util/mac-address.js';
+import {connectWithTimeout} from '../util/noble-wrapper.js';
 
 export const IC4_LOCALNAME = 'IC Bike';
 
@@ -19,11 +20,16 @@ export function matchesIc4OrSchwinn290(peripheral) {
 const FTMS_SERVICE_UUID = '1826';
 const INDOOR_BIKE_DATA_UUID = '2ad2';
 
-// indoor bike data characteristic value parsing
-const IBD_VALUE_MAGIC = Buffer.from([0x44]); // identifies indoor bike data message
-const IBD_VALUE_IDX_SPEED = 2; // 16-bit instantaneous speed (0.01 km/h units) offset within packet
-const IBD_VALUE_IDX_CADENCE = 4; // 16-bit cadence (1/2 rpm) data offset within packet
-const IBD_VALUE_IDX_POWER = 6; // 16-bit power (watts) data offset within packet
+// Indoor Bike Data field flags (FTMS 4.9.1). Fields appear in bit order after
+// the 16-bit flag word; bit 0 ("more data") set means instantaneous speed is
+// ABSENT, which is why the flags are inverted compared to the other fields.
+const IBD_FLAG_MORE_DATA = 0x0001;
+const IBD_FLAG_AVERAGE_SPEED = 0x0002;
+const IBD_FLAG_INSTANTANEOUS_CADENCE = 0x0004;
+const IBD_FLAG_AVERAGE_CADENCE = 0x0008;
+const IBD_FLAG_TOTAL_DISTANCE = 0x0010;
+const IBD_FLAG_RESISTANCE_LEVEL = 0x0020;
+const IBD_FLAG_INSTANTANEOUS_POWER = 0x0040;
 
 import {loadDependency, toDefaultExport} from '../util/optional-deps.js';
 
@@ -70,7 +76,10 @@ export class Ic4BikeClient extends EventEmitter {
       this.state = 'disconnected';
       throw new Error('Unable to find IC4 bike');
     }
-    await this.peripheral.connectAsync({timeout: 10000});
+    // Teaching note: noble's connectAsync is util.promisify(connect) and
+    // connect() only accepts a callback, so no options object may be passed.
+    // The 10s connect budget is enforced by connectWithTimeout() instead.
+    await connectWithTimeout(this.peripheral);
     this.peripheral.on('disconnect', this.onDisconnect);
 
     // discover services/characteristics
@@ -194,37 +203,84 @@ export class Ic4BikeClient extends EventEmitter {
  * Parse Indoor Bike Data characteristic value.
  * @param {buffer} data - raw characteristic value.
  * @returns {object} message - parsed message
- * @returns {string} message.type - message type
- * @returns {object} message.payload - message payload
+ * @returns {number} [message.power] - instantaneous power (watts), absent when the bike omits it
+ * @returns {number} [message.cadence] - instantaneous cadence (rpm), absent when the bike omits it
+ * @returns {number} [message.speed] - instantaneous speed (m/s), absent when the bike omits it
  */
 export function parse(data) {
-  // In the spec, this value can have a lot of optional fields which means
-  // the offset of power or cadence can vary depending on what other data is
-  // present.
+  // Teaching note: this characteristic is variable-length. The 16-bit flag word
+  // lists which fields follow, and they are laid out in bit order, so every
+  // offset depends on the flags. Reading fixed offsets (the previous approach)
+  // turned a cadence-only frame into garbage power/cadence values.
   //
-  // However this bike always uses the same format:
-  //
-  // 0x02      0x44
-  // 0b0000001001000100
-  //         H  C   P S
-  // H - heartrate (present when flag is 1)
-  // C - cadence (present when flag is 1)
-  // P - power (present when flag is 1)
-  // S - speed (present when flag is 0)
-  //
-  // So we can simplify the decoding to:
-  if (data.indexOf(IBD_VALUE_MAGIC) === 0) {
-    // Teaching note: a short/fragmented frame must be rejected gracefully.
-    // Reading past the end would throw RangeError, which onReceive does not
-    // swallow (it only filters "unable to parse message"), crashing the app.
-    if (data.length < IBD_VALUE_IDX_POWER + 2) {
-      throw new Error('unable to parse message');
-    }
-    const power = data.readInt16LE(IBD_VALUE_IDX_POWER); // Power is reported as a signed 16-bit integer (watts).
-    const cadence = Math.round(data.readUInt16LE(IBD_VALUE_IDX_CADENCE) / 2); // Cadence is expressed in half RPM increments.
-    const speedRaw = data.readUInt16LE(IBD_VALUE_IDX_SPEED); // Instantaneous speed in 0.01 km/h per FTMS specification.
-    const speed = speedRaw > 0 ? (speedRaw / 100) * (1000 / 3600) : undefined; // Convert to meters per second when non-zero.
-    return speed !== undefined ? {power, cadence, speed} : {power, cadence}; // Include speed only when the bike actually reports it.
+  // We only walk as far as the last field we report (instantaneous power, bit
+  // 6). Fields after it (energy, heart rate, elapsed time, ...) never shift the
+  // offsets above, so a frame that stops early there is still usable.
+  if (!Buffer.isBuffer(data) || data.length < 2) {
+    throw new Error('unable to parse message');
   }
-  throw new Error('unable to parse message');
+
+  const flags = data.readUInt16LE(0);
+  let offset = 2;
+  let speed;
+
+  if (!(flags & IBD_FLAG_MORE_DATA)) {
+    const rawSpeed = readField(data, offset, 2);
+    offset += 2;
+    // 0.01 km/h units; 0 means "not reported right now".
+    if (rawSpeed > 0) {
+      speed = (rawSpeed / 100) * (1000 / 3600);
+    }
+  }
+  if (flags & IBD_FLAG_AVERAGE_SPEED) {
+    readField(data, offset, 2);
+    offset += 2;
+  }
+
+  let cadence;
+  if (flags & IBD_FLAG_INSTANTANEOUS_CADENCE) {
+    // Cadence is expressed in half RPM increments.
+    cadence = Math.round(readField(data, offset, 2) / 2);
+    offset += 2;
+  }
+  if (flags & IBD_FLAG_AVERAGE_CADENCE) {
+    readField(data, offset, 2);
+    offset += 2;
+  }
+  if (flags & IBD_FLAG_TOTAL_DISTANCE) {
+    readField(data, offset, 3);
+    offset += 3;
+  }
+  if (flags & IBD_FLAG_RESISTANCE_LEVEL) {
+    readField(data, offset, 2);
+    offset += 2;
+  }
+
+  let power;
+  if (flags & IBD_FLAG_INSTANTANEOUS_POWER) {
+    power = readField(data, offset, 2, true); // Power is a signed 16-bit integer (watts).
+  }
+
+  const parsed = {power, cadence};
+  if (speed !== undefined) {
+    parsed.speed = speed;
+  }
+  return parsed;
+}
+
+/**
+ * Read a numeric field, failing gracefully when the frame is truncated.
+ * @private
+ */
+function readField(data, offset, size, signed = false) {
+  // Teaching note: a short/fragmented frame must be rejected gracefully.
+  // Reading past the end would throw RangeError, which onReceive does not
+  // swallow (it only filters "unable to parse message"), crashing the app.
+  if (offset + size > data.length) {
+    throw new Error('unable to parse message');
+  }
+  if (size === 3) {
+    return data.readUIntLE(offset, 3);
+  }
+  return signed ? data.readInt16LE(offset) : data.readUInt16LE(offset);
 }

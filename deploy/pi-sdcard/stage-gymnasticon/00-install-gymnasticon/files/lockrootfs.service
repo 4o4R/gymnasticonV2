@@ -5,15 +5,11 @@ After=sshswitch.service
 Before=gymnasticon-mods.service
 
 [Service]
-ExecCondition=/bin/sh -c 'test ! -e /boot/no_read_only && test ! -e /boot/firmware/no_read_only'
-ExecStart=raspi-config nonint enable_overlayfs
-ExecStart=systemctl disable lockrootfs
-ExecStart=systemctl enable bootfs-ro
-ExecStart=rm /etc/systemd/system/lockrootfs.service
-ExecStart=/bin/echo "lockrootfs: overlay enabled, rebooting once (expected on first boot)..."
-ExecStart=reboot
+# Raspbian Buster ships systemd 241, which has no ExecCondition=, so the
+# no_read_only opt-out is evaluated inside a POSIX shell guard instead.
 Type=oneshot
 RemainAfterExit=no
+ExecStart=/bin/sh -c 'if [ -e /boot/no_read_only ] || [ -e /boot/firmware/no_read_only ]; then echo "lockrootfs: no_read_only flag present, leaving the root filesystem writable"; exit 0; fi; raspi-config nonint enable_overlayfs; systemctl disable lockrootfs; systemctl enable bootfs-ro; rm -f /etc/systemd/system/lockrootfs.service; /bin/echo "lockrootfs: overlay enabled, rebooting once (expected on first boot)..."; /sbin/reboot'
 
 [Install]
 WantedBy=multi-user.target

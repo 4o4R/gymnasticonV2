@@ -105,6 +105,27 @@ export function matchesKeiserName(peripheral) {
   return false; // Nothing matched; let autodetect keep scanning.
 }
 
+/**
+ * Build the discover filter used while looking for the bike to connect to.
+ *
+ * Teaching note: a configured MAC address is authoritative. Several Keiser
+ * consoles can be in range of one gym Pi, and every one of them advertises the
+ * same "M3i" name and manufacturer magic, so falling back to the name/payload
+ * heuristics would happily connect to (and then mix in) the neighbouring ride.
+ *
+ * @param {string} [targetAddress] - normalized MAC address to isolate, if any
+ * @returns {FilterFunction} filter accepting only the configured console
+ */
+export function createKeiserPeripheralFilter(targetAddress) {
+  const target = normalizeAddress(targetAddress);
+  return (peripheral) => {
+    if (target) {
+      return normalizeAddress(peripheral?.address) === target;
+    }
+    return matchesKeiserName(peripheral);
+  };
+}
+
 
 /**
  * Handles communication with Keiser bikes
@@ -169,15 +190,7 @@ export class KeiserBikeClient extends EventEmitter {
 
     this.state = 'connecting';
 
-    const filter = (peripheral) => {
-      if (this.targetAddress) {
-        const candidate = normalizeAddress(peripheral?.address);
-        if (candidate && candidate === this.targetAddress) {
-          return true;
-        }
-      }
-      return matchesKeiserName(peripheral);
-    };
+    const filter = createKeiserPeripheralFilter(this.targetAddress);
     
     const scanTimeoutFromEnv = Number.parseInt(process.env.GYMNASTICON_KEISER_SCAN_TIMEOUT_MS || '', 10);
     const scanTimeoutMs = Number.isFinite(scanTimeoutFromEnv) && scanTimeoutFromEnv > 0
@@ -408,6 +421,12 @@ export class KeiserBikeClient extends EventEmitter {
     if (!peripheral) {
       return false;
     }
+    // Teaching note: when the operator pinned a MAC, only that console may feed
+    // this ride. The id/name/signature fallbacks below would let a second
+    // Keiser console (same "M3i" name, same magic payload) contaminate it.
+    if (this.targetAddress) {
+      return normalizeAddress(peripheral.address) === this.targetAddress;
+    }
     // Teaching note: prefer the stable noble id when available.
     if (this.peripheralId && peripheral.id === this.peripheralId) {
       return true;
@@ -501,7 +520,9 @@ export function parse(data) {
     throw new Error('unable to parse message');
   }
   const realtime = data.readUInt8(KEISER_VALUE_IDX_REALTIME);
-  if (realtime === 0 || (realtime > 128 && realtime < 255)) {
+  // Teaching note: the vendor documents real-time data-type as 0 or 128..227;
+  // 228..254 are other (non real-time) message types.
+  if (realtime === 0 || (realtime >= 128 && realtime <= 227)) {
     // Realtime data received
     const power = data.readUInt16LE(KEISER_VALUE_IDX_POWER);
     const cadence = Math.round(data.readUInt16LE(KEISER_VALUE_IDX_CADENCE) / 10);

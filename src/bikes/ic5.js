@@ -7,7 +7,15 @@ function matchesPeripheral(peripheral) { // Helper that checks whether a discove
   return IC5_PATTERNS.some(pattern => pattern.test(name)); // Treat the device as a match when any known fragment is present.
 }
 
-export class Ic5BikeClient extends Ic4BikeClient { // LifeFitness IC5 shares the FTMS payload layout used by the Schwinn IC4.
+export class Ic5BikeClient extends Ic4BikeClient { // LifeFitness IC5 shares the FTMS Indoor Bike Data characteristic used by the Schwinn IC4.
+  // Teaching note: the IC5 inherits the IC4 flag-driven FTMS parser, so it
+  // decodes whatever fields the console actually sends (and reports undefined
+  // cadence/power when a field is absent) instead of assuming the IC4 layout.
+  // We deliberately do NOT synthesize power for frames that carry no
+  // instantaneous power: the IC5 / Schwinn 290 firmware variants are not
+  // documented well enough to guess, and a fabricated wattage would corrupt
+  // recorded rides. Confirming power support needs real GATT captures from
+  // those consoles.
   constructor(noble) {
     super(noble, matchesPeripheral); // Reuse the IC4 flow but supply a broader filter that matches IC5 advertising names.
   }

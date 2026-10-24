@@ -5,6 +5,7 @@ const execFileAsync = util.promisify(execFile);
 import {scan} from '../util/ble-scan.js';
 import {macAddress} from '../util/mac-address.js';
 import {createDropoutFilter} from '../util/dropout-filter.js';
+import {CONNECT_TIMEOUT_MS, connectWithTimeout} from '../util/noble-wrapper.js';
 
 export const FLYWHEEL_LOCALNAME = 'Flywheel 1';
 
@@ -38,11 +39,16 @@ export class FlywheelBikeClient extends EventEmitter {
     * Create a FlywheelBikeClient instance.
     * @param {Noble} noble - a Noble instance.
     * @param {function} filter - filter to specify bike when more than one is present
+    * @param {object} [options]
+    * @param {number} [options.connectTimeoutMs] - override the connect budget (ms)
     */
-  constructor(noble, filter) {
+  constructor(noble, filter, options = {}) {
     super();
     this.noble = noble;
     this.filter = filter;
+    // Teaching note: noble's connect() has no timeout argument (see
+    // connectWithTimeout), so the budget is owned here.
+    this.connectTimeoutMs = Number.isFinite(options.connectTimeoutMs) ? options.connectTimeoutMs : CONNECT_TIMEOUT_MS;
     this.state = 'disconnected';
     this.onReceive = this.onReceive.bind(this);
     this.onDisconnect = this.onDisconnect.bind(this);
@@ -71,16 +77,12 @@ export class FlywheelBikeClient extends EventEmitter {
       throw new Error('Unable to find Flywheel bike');
     }
 
-    // Modern connection parameters
-    const connectionParams = {
-      minInterval: LE_MIN_INTERVAL,
-      maxInterval: LE_MAX_INTERVAL,
-      latency: LE_LATENCY,
-      supervisionTimeout: LE_SUPERVISION_TIMEOUT,
-      timeout: 10000
-    };
-
-    await this.peripheral.connectAsync(connectionParams);
+    // Teaching note: noble's connectAsync is util.promisify(connect) and
+    // connect() only accepts a callback, so the LE connection parameters could
+    // never be handed to noble — passing them made the completion throw
+    // "callback is not a function". Connect with a bounded wait instead and let
+    // updateConnectionParameters() (below) push the LE parameters.
+    await connectWithTimeout(this.peripheral, this.connectTimeoutMs);
     try {
       // The Nordic UART firmware expects the central to acknowledge its desired
       // connection parameters. BlueZ sometimes ignores this, which causes the

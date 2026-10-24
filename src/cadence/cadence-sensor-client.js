@@ -14,7 +14,7 @@
  */
 
 import {EventEmitter} from 'events';
-import {scan} from '../util/ble-scan.js';
+import {ScanCoordinator, createScanTag, waitForPeripheral} from '../util/scan-coordinator.js';
 
 const EVENT_TIME_MAX = 0x10000;
 const CRANK_REV_MAX = 0x10000;
@@ -38,6 +38,11 @@ export class CadenceSensorClient extends EventEmitter {
     this.noble = noble;
     this.logger = options.logger || console;
     this.connectionManager = options.connectionManager;
+
+    // Teaching note: discovery goes through the shared scan owner so this
+    // client's timeout cannot stop the radio for the heart-rate/speed clients.
+    this.scanCoordinator = options.scanCoordinator || new ScanCoordinator(noble, {logger: this.logger});
+    this.scanTag = options.scanTag || createScanTag('cadence-sensor');
 
     // Search parameters
     this.deviceName = options.deviceName;  // Optional: filter by name (e.g., "Wahoo Cadence")
@@ -89,16 +94,7 @@ export class CadenceSensorClient extends EventEmitter {
       const timeoutMs = Number.isFinite(this.connectTimeout) && this.connectTimeout > 0
         ? Math.round(this.connectTimeout * 1000)
         : 0;
-      this.peripheral = await scan(
-        this.noble,
-        [this.serviceUuid],
-        (peripheral) => this.matchesFilter(peripheral),
-        {
-          timeoutMs,
-          stopScanOnMatch: true,
-          stopScanOnTimeout: true,
-        }
-      );
+      this.peripheral = await this.scanForPeripheral(timeoutMs);
 
       if (!this.shouldReconnect) {
         this.connecting = false;
@@ -163,6 +159,42 @@ export class CadenceSensorClient extends EventEmitter {
       }
       this.emit('connect-failed', error.message);
       this.scheduleReconnect();
+    }
+  }
+
+  /**
+   * Discover a cadence sensor while holding the shared scan.
+   * Teaching note: the coordinator stops the native scan only when the last
+   * holder releases, so this client's own timeout leaves the other optional
+   * sensors discovering.
+   * @param {number} timeoutMs - discovery window (0 = wait forever).
+   * @returns {Promise<object|null>} the matching peripheral, or null.
+   */
+  async scanForPeripheral(timeoutMs) {
+    await this.scanCoordinator.acquire(this.scanTag);
+    try {
+      if (!this.shouldReconnect) {
+        return null;
+      }
+      return await waitForPeripheral(
+        this.noble,
+        (peripheral) => this.matchesFilter(peripheral),
+        {timeoutMs}
+      );
+    } finally {
+      await this.releaseScan();
+    }
+  }
+
+  /**
+   * Drop this client's claim on the shared scan.
+   * @private
+   */
+  async releaseScan() {
+    try {
+      await this.scanCoordinator.release(this.scanTag);
+    } catch (error) {
+      console.warn(`[CadenceSensorClient] Failed to release shared scan: ${error?.message || error}`);
     }
   }
 
@@ -338,6 +370,9 @@ export class CadenceSensorClient extends EventEmitter {
     }
     this.clearStatTimer();
     this.clearRetryTimer();
+    // Give the radio back immediately; a pending discovery then settles and is
+    // discarded by the shouldReconnect guard in connect().
+    await this.releaseScan();
 
     if (this.characteristic) {
       try {

@@ -3,10 +3,62 @@ import {createRequire} from 'module';
 import {execSync} from 'child_process';
 import path from 'path';
 import {loadDependency, toDefaultExport} from './optional-deps.js';
-import {normalizeAdapterId} from './adapter-id.js';
+import {normalizeAdapterId, normalizeAdapterName} from './adapter-id.js';
 
 const requireFromWrapper = createRequire(import.meta.url);
 const NOBLE_REQUEST = '@abandonware/noble';
+
+export const CONNECT_TIMEOUT_MS = 10000;
+
+/**
+ * Connect to a peripheral with a bounded wait.
+ *
+ * @param {Peripheral} peripheral - a noble Peripheral instance.
+ * @param {number} [timeoutMs] - how long to wait before giving up.
+ * @returns {Promise<void>} resolves once the link is up.
+ */
+export async function connectWithTimeout(peripheral, timeoutMs = CONNECT_TIMEOUT_MS) {
+  if (!peripheral || typeof peripheral.connectAsync !== 'function') {
+    throw new Error('connectWithTimeout() needs a noble peripheral with connectAsync()');
+  }
+
+  // Teaching note: the pinned noble exposes connectAsync = util.promisify(connect)
+  // and connect() only takes a callback, so connectAsync({timeout: 10000}) hands
+  // the options object to promise resolution as the callback and blows up with
+  // "callback is not a function" once the connection completes. The connect
+  // budget therefore has to be enforced here instead of being passed to noble.
+  let timerId = null;
+  let timedOut = false;
+  const deadline = new Promise((_resolve, reject) => {
+    timerId = setTimeout(() => {
+      timedOut = true;
+      const address = peripheral.address || peripheral.id || 'peripheral';
+      reject(new Error(`Timed out after ${timeoutMs}ms connecting to ${address}`));
+    }, timeoutMs);
+  });
+
+  try {
+    await Promise.race([peripheral.connectAsync(), deadline]);
+  } catch (error) {
+    if (timedOut) {
+      // Teaching note: noble leaves the central half-connected when the
+      // controller never reports the link, and a half-open handle wedges the
+      // next connection attempt on the same radio.
+      try {
+        if (typeof peripheral.disconnectAsync === 'function') {
+          await peripheral.disconnectAsync();
+        }
+      } catch (_disconnectError) {
+        // Best effort only; the timeout error is the one worth reporting.
+      }
+    }
+    throw error;
+  } finally {
+    if (timerId) {
+      clearTimeout(timerId);
+    }
+  }
+}
 
 function clearDependencyCache(request) {
   const entryPath = requireFromWrapper.resolve(request);
@@ -74,6 +126,17 @@ function resolveAdapterNameFromEnv() {
   return 'hci0';
 }
 
+function resolveAdapterName(noble) {
+  // Teaching note: the adapter requested by the caller lives on the noble
+  // instance (see patchNobleAdapterBinding) because the ambient env var is only
+  // set for the duration of a bind and is restored afterwards.
+  const stashed = normalizeAdapterName(noble?.__gymnasticonAdapterId);
+  if (stashed) {
+    return stashed;
+  }
+  return resolveAdapterNameFromEnv();
+}
+
 function isAdapterUp(adapterName) {
   if (!adapterName) {
     return false;
@@ -99,6 +162,48 @@ function tryStartScanViaBindings(noble, serviceUuids, allowDuplicates) {
   } catch (_error) {
     return false;
   }
+}
+
+function patchNobleAdapterBinding(noble, adapter) {
+  if (!noble) {
+    return;
+  }
+  // Teaching note: noble only reads NOBLE_HCI_DEVICE_ID lazily inside
+  // Hci.prototype.init() (which calls _socket.bindRaw(deviceId)), long after the
+  // module was required, so setting the env var around the require was a no-op.
+  // Stash the requested adapter on the instance instead and apply it at bind
+  // time, which keeps two clients (bike + heart rate) on separate radios.
+  const adapterId = normalizeAdapterId(adapter);
+  if (adapterId !== undefined) {
+    noble.__gymnasticonAdapterId = adapterId;
+  }
+
+  const hci = noble?._bindings?._hci;
+  if (!hci || typeof hci.init !== 'function' || hci.__gymnasticonAdapterPatched) {
+    return;
+  }
+
+  const originalInit = hci.init.bind(hci);
+  hci.init = function patchedHciInit(...args) {
+    const targetId = noble.__gymnasticonAdapterId;
+    if (targetId === undefined) {
+      return originalInit(...args);
+    }
+
+    const previousAdapter = process.env.NOBLE_HCI_DEVICE_ID;
+    process.env.NOBLE_HCI_DEVICE_ID = targetId; // Synchronous window around bindRaw().
+    try {
+      return originalInit(...args);
+    } finally {
+      if (previousAdapter === undefined) {
+        delete process.env.NOBLE_HCI_DEVICE_ID;
+      } else {
+        process.env.NOBLE_HCI_DEVICE_ID = previousAdapter;
+      }
+    }
+  };
+
+  hci.__gymnasticonAdapterPatched = true;
 }
 
 function patchNobleHciInit(noble) {
@@ -153,7 +258,7 @@ function patchNobleUnknownStateScan(noble) {
         throw error;
       }
 
-      const adapterName = resolveAdapterNameFromEnv();
+      const adapterName = resolveAdapterName(noble);
       if (!isAdapterUp(adapterName)) {
         throw error;
       }
@@ -178,16 +283,18 @@ function patchNobleUnknownStateScan(noble) {
 }
 
 export const initializeBluetooth = async (adapter = 'hci0', options = {}) => {
-  const {forceNewInstance = false} = options; // Allow callers to request a dedicated noble instance.
+  const {forceNewInstance = false, loadModule} = options; // Allow callers to request a dedicated noble instance / inject a fake module.
   const previousAdapter = process.env.NOBLE_HCI_DEVICE_ID;
   // Teaching note: noble expects a numeric adapter index in the env var, so
-  // normalize "hci0" to "0" before loading the module.
+  // normalize "hci0" to "0". This env var only covers the window in which the
+  // module is loaded; the durable adapter binding is applied by
+  // patchNobleAdapterBinding() below.
   const adapterId = normalizeAdapterId(adapter);
   if (adapterId !== undefined) {
     process.env.NOBLE_HCI_DEVICE_ID = adapterId; // Point noble at the requested adapter while we load it.
   }
 
-  if (forceNewInstance) {
+  if (forceNewInstance && typeof loadModule !== 'function') {
     try {
       // Noble's entry point, bindings, HCI, and GAP modules all cache singleton
       // state. Evict the whole package so the new client owns a distinct HCI
@@ -198,7 +305,9 @@ export const initializeBluetooth = async (adapter = 'hci0', options = {}) => {
     }
   }
 
-  const nobleModule = loadDependency(NOBLE_REQUEST, '../stubs/noble.cjs', import.meta);
+  const nobleModule = typeof loadModule === 'function'
+    ? loadModule()
+    : loadDependency(NOBLE_REQUEST, '../stubs/noble.cjs', import.meta);
   const usingStub = Boolean(nobleModule && nobleModule.__isStub);
   let noble = toDefaultExport(nobleModule);
 
@@ -220,6 +329,7 @@ export const initializeBluetooth = async (adapter = 'hci0', options = {}) => {
       }
     }
 
+    patchNobleAdapterBinding(noble, adapter);
     patchNobleMtu(noble);
     patchNobleHciInit(noble);
     patchNobleUnknownStateScan(noble);

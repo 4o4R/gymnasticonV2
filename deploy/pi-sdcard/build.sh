@@ -37,11 +37,14 @@ fi
 # Normalise Buster mirrors separately to the live legacy archive.
 if [ "${RELEASE}" = "buster" ]; then
   PRIMARY_BUSTER_MIRROR="https://legacy.raspbian.org/raspbian/"
+  # The retired archive host returns HTTP 404 for buster, so treat it (like the
+  # stock and empty values) as unset and repoint it at the legacy archive.
+  STALE_BUSTER_MIRROR='https?://(raspbian\.raspberrypi\.(org|com)|archive\.raspbian\.org)/raspbian/?$'
 
-  if grep -Eq '^MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^MIRROR=https?://raspbian\.raspberrypi\.(org|com)/raspbian/?$' "${CONFIG_FILE}"; then
+  if grep -Eq '^MIRROR=$' "${CONFIG_FILE}" || grep -Eq "^MIRROR=${STALE_BUSTER_MIRROR}" "${CONFIG_FILE}"; then
     sed -i "s|^MIRROR=.*|MIRROR=${PRIMARY_BUSTER_MIRROR}|" "${CONFIG_FILE}"
   fi
-  if grep -Eq '^APT_MIRROR=$' "${CONFIG_FILE}" || grep -Eq '^APT_MIRROR=https?://raspbian\.raspberrypi\.(org|com)/raspbian/?$' "${CONFIG_FILE}"; then
+  if grep -Eq '^APT_MIRROR=$' "${CONFIG_FILE}" || grep -Eq "^APT_MIRROR=${STALE_BUSTER_MIRROR}" "${CONFIG_FILE}"; then
     sed -i "s|^APT_MIRROR=.*|APT_MIRROR=${PRIMARY_BUSTER_MIRROR}|" "${CONFIG_FILE}"
   fi
 fi

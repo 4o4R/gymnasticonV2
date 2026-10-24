@@ -1,15 +1,26 @@
+// Imported first so the stub opt-in is set before any test module evaluates.
+import './test-prelude.mjs';
+
 import '../src/test/app/simulation.js';
 import '../src/test/app/app.js';
 import '../src/test/bikes/autodetect.js';
 import '../src/test/bikes/bot.js';
 import '../src/test/bikes/flywheel.js';
 import '../src/test/bikes/ic4.js';
+import '../src/test/bikes/ic8.js';
 import '../src/test/bikes/keiser.js';
 import '../src/test/bikes/peloton.js';
+import '../src/test/hr/heart-rate-client.js';
+import '../src/test/servers/ble-startup.js';
+import '../src/test/servers/csc-service.js';
 import '../src/test/util/ble-scan.js';
+import '../src/test/util/bluetooth-shutdown.js';
 import '../src/test/util/dropout-filter.js';
 import '../src/test/util/mac-address.js';
+import '../src/test/util/noble-adapter-binding.js';
+import '../src/test/util/optional-deps.js';
 import '../src/test/util/runtime-regressions.js';
+import '../src/test/util/scan-coordinator.js';
 import '../src/test/util/timer.js';
 
 import tape from '../src/test/support/tape.js';

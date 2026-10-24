@@ -14,7 +14,13 @@ on_chroot <<'EOF'
 set -e
 
 echo "[gymnasticon] Normalising Raspberry Pi mirror URLs"
-sed -i -E 's@https?://(raspbian\.raspberrypi\.org|archive\.raspbian\.org|mirrordirector\.raspbian\.org)/raspbian@http://archive.raspbian.org/raspbian@g' /etc/apt/sources.list
+# Buster Raspbian packages live on legacy.raspbian.org; the retired archive host
+# returns HTTP 404 for buster, so point every Raspbian source at the legacy mirror.
+sed -i -E 's@https?://(raspbian\.raspberrypi\.org|mirrordirector\.raspbian\.org|legacy\.raspbian\.org)/raspbian@http://legacy.raspbian.org/raspbian@g' /etc/apt/sources.list
+for list in /etc/apt/sources.list.d/*.list; do
+  [ -f "$list" ] || continue
+  sed -i -E 's@https?://(raspbian\.raspberrypi\.org|mirrordirector\.raspbian\.org|legacy\.raspbian\.org)/raspbian@http://legacy.raspbian.org/raspbian@g' "$list"
+done
 if [ -f /etc/apt/sources.list.d/raspi.list ]; then
   sed -i -E 's|https?://archive.raspberrypi.org/debian|http://archive.raspberrypi.org/debian|g' /etc/apt/sources.list.d/raspi.list
 fi

@@ -88,7 +88,14 @@ sudo apt-get install -y bluetooth bluez libbluetooth-dev libudev-dev libusb-1.0-
 sudo git clone https://github.com/4o4R/gymnasticonV2.git /opt/gymnasticon
 cd /opt/gymnasticon
 
-NODE_GYP_BIN="$(npm root -g)/node-gyp/bin/node-gyp.js"
+# npm 6 (bundled with Node 14) ships node-gyp 5 inside npm itself, so the path
+# "$(npm root -g)/node-gyp/bin/node-gyp.js" does not exist on a stock install.
+# Install a Node 14 compatible node-gyp explicitly before deriving the path.
+sudo npm install -g node-gyp@9
+
+NODE_GYP_BIN="$(sudo npm root -g)/node-gyp/bin/node-gyp.js"
+test -f "$NODE_GYP_BIN" || { echo "node-gyp not found at $NODE_GYP_BIN" >&2; exit 1; }
+
 export npm_config_node_gyp="$NODE_GYP_BIN"
 export npm_config_python=/usr/bin/python3
 export CXXFLAGS=-std=gnu++14

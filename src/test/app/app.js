@@ -1,13 +1,14 @@
 import {EventEmitter} from 'events';
 
 import test from '../support/tape.js';
+import sinon from '../support/sinon.js';
 import {App, resolveServerAdapters} from '../../app/app.js';
 import {options as cliOptions} from '../../app/cli-options.js';
 import {resolveAntOptions} from '../../app/ant-options.js';
 import {DEFAULT_NAME as DEFAULT_SERVER_NAME} from '../../servers/ble/index.js';
 import {chooseAdapterRoles} from '../../util/adapter-detect.js';
 
-function createTestApp() {
+function createTestApp(overrides = {}) {
   const noble = new EventEmitter();
   noble.state = 'poweredOn';
 
@@ -23,6 +24,7 @@ function createTestApp() {
     healthMonitor,
     bleMultiOutput: false,
     serverAdapters: ['hci0'],
+    ...overrides,
   });
 }
 
@@ -520,3 +522,148 @@ test('App constructor preserves detected USB server adapter instead of restoring
 
   t.end();
 });
+
+test('App.onPedalStroke() converts simulated milliseconds into seconds for CSC integration', (t) => {
+  const app = createTestApp({bike: 'bot'});
+  try {
+    app.simulation.mirrorCadence(120); // Set the cadence without arming the real pedal timer.
+    app.onPedalStroke(1000); // First stroke: dt is zero by definition.
+    const crankBefore = app.kinematics.crankRevolutions;
+    const wheelBefore = app.kinematics.wheelRevolutions;
+
+    app.onPedalStroke(1030); // 30 ms later at 120 rpm => 0.06 crank revolutions.
+
+    const crankDelta = app.kinematics.crankRevolutions - crankBefore;
+    const wheelDelta = app.kinematics.wheelRevolutions - wheelBefore;
+
+    t.ok(
+      Math.abs(crankDelta - 0.06) < 1e-9,
+      `30 ms at 120 rpm adds 0.06 crank revolutions (got ${crankDelta})`
+    );
+    t.ok(wheelDelta > 0 && wheelDelta < 1, `wheel delta stays sub-revolution (got ${wheelDelta})`);
+  } finally {
+    app.pingInterval.cancel();
+    destroyTestApp(app);
+  }
+
+  t.end();
+});
+
+test('App.integrateKinematics() clamps an absurd timestamp gap instead of exploding the counters', (t) => {
+  const app = createTestApp();
+  try {
+    app.integrateKinematics(120, 5, 0);
+    const crankBefore = app.kinematics.crankRevolutions;
+
+    app.integrateKinematics(120, 5, 1e6); // A millisecond value (or a suspend) leaking into the seconds contract.
+
+    const crankDelta = app.kinematics.crankRevolutions - crankBefore;
+    t.ok(crankDelta <= 60, `clamped dt keeps the crank delta sane (got ${crankDelta})`);
+    t.ok(crankDelta > 0, 'clamped dt still advances the counters');
+  } finally {
+    destroyTestApp(app);
+  }
+
+  t.end();
+});
+
+test('App.onBikeStats() mirrors real-bike cadence without arming the pedal emitter', (t) => {
+  const clock = sinon.useFakeTimers();
+  const app = createTestApp();
+  let pedals = 0;
+  try {
+    app.simulation.on('pedal', () => {
+      pedals += 1;
+    });
+
+    app.onBikeStats({power: 200, cadence: 90, speed: 6});
+
+    t.equal(app.simulation.cadence, 90, 'simulation mirrors the bike cadence');
+    t.equal(pedals, 0, 'receiving stats emits no synthetic pedal stroke');
+    t.equal(app.simulation._timeoutId, null, 'no pedal timer is scheduled for real bike telemetry');
+
+    clock.tick(5000);
+    t.equal(pedals, 0, 'no pedal stroke fires while the real bike keeps reporting stats');
+  } finally {
+    app.pingInterval.cancel();
+    clock.restore();
+    destroyTestApp(app);
+  }
+
+  t.end();
+});
+
+test('App.onBikeStats() keeps the synthetic pedal emitter alive in bot mode', (t) => {
+  const clock = sinon.useFakeTimers();
+  const app = createTestApp({bike: 'bot'});
+  let pedals = 0;
+  try {
+    app.simulation.on('pedal', () => {
+      pedals += 1;
+    });
+
+    app.onBikeStats({power: 150, cadence: 120, speed: 5});
+    clock.tick(600);
+
+    t.ok(pedals > 0, 'bot mode still emits synthetic pedal strokes');
+  } finally {
+    app.pingInterval.cancel();
+    clock.restore();
+    destroyTestApp(app);
+  }
+
+  t.end();
+});
+
+test('App.stop() cancels the pending synthetic pedal timer', async (t) => {
+  const clock = sinon.useFakeTimers();
+  const app = createTestApp({bike: 'bot'});
+  let pedals = 0;
+  try {
+    app.simulation.on('pedal', () => {
+      pedals += 1;
+    });
+    app.onBikeStats({power: 150, cadence: 120, speed: 5});
+    clock.tick(600);
+    t.ok(pedals > 0, 'pedal strokes are running before shutdown');
+    const pedalsBeforeStop = pedals;
+
+    await app.stop();
+    clock.tick(10000);
+
+    t.equal(pedals, pedalsBeforeStop, 'no pedal stroke fires after app.stop()');
+    t.equal(app.simulation.stopped, true, 'the simulation is latched off');
+  } finally {
+    clock.restore();
+    destroyTestApp(app);
+  }
+});
+
+test('App.onBikeDisconnect() cancels the synthetic pedal timer', (t) => {
+  const clock = sinon.useFakeTimers();
+  const app = createTestApp({bike: 'bot'});
+  let pedals = 0;
+  try {
+    app.stopServerAdvertising = async () => {};
+    app.simulation.on('pedal', () => {
+      pedals += 1;
+    });
+    app.onBikeStats({power: 150, cadence: 120, speed: 5});
+    clock.tick(600);
+    t.ok(pedals > 0, 'pedal strokes are running before the disconnect');
+
+    app.onBikeDisconnect({address: 'AA:BB:CC:DD:EE:FF'});
+    const pedalsAfterDisconnect = pedals;
+    clock.tick(10000);
+
+    t.equal(pedals, pedalsAfterDisconnect, 'no pedal stroke fires after a bike disconnect');
+    t.equal(app.simulation.stopped, true, 'the simulation is latched off after disconnect');
+  } finally {
+    app.pingInterval.cancel();
+    clock.restore();
+    destroyTestApp(app);
+  }
+
+  t.end();
+});
+
