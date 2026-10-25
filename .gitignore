@@ -9,3 +9,6 @@ deploy/pi-sdcard/pi-gen
 build.log
 deploy/releases/*.zip
 deploy/releases/image_2025-11-08-Gymnasticon-lite.zip
+# Publish generated images and packages as GitHub release assets.
+/release-assets/**/*.img.xz*
+/release-assets/**/*.tgz*
