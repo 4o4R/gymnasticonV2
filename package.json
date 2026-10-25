@@ -24,6 +24,7 @@
   },
   "files": [
     "src",
+    "!src/test",
     "scripts",
     "stubs"
   ],
