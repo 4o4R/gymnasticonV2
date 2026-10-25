@@ -5,6 +5,7 @@ import test from '../support/tape.js';
 import {ScanCoordinator, createScanTag, waitForPeripheral} from '../../util/scan-coordinator.js';
 import {SpeedSensorClient} from '../../speed/speed-sensor-client.js';
 import {CadenceSensorClient} from '../../cadence/cadence-sensor-client.js';
+import {BluetoothConnectionManager} from '../../util/connection-manager.js';
 
 class FakeNoble extends EventEmitter {
   constructor() {
@@ -133,6 +134,58 @@ for (const SensorClient of [SpeedSensorClient, CadenceSensorClient]) {
     await coordinator.releaseAll();
     t.end();
   });
+
+  for (const managed of [false, true]) {
+    test(`${SensorClient.name} releases a late ${managed ? 'managed' : 'native'} connection without disturbing its successor`, async t => {
+      const noble = new FakeNoble();
+      const coordinator = new ScanCoordinator(noble);
+      const connectionManager = managed
+        ? new BluetoothConnectionManager(noble, {timeout: 1000, maxRetries: 1})
+        : undefined;
+      const client = new SensorClient(noble, {
+        scanCoordinator: coordinator, logger: silentSensorLog, connectionManager,
+      });
+      const oldPeripheral = sensorPeripheral(client);
+      oldPeripheral.id = 'cancelled-peripheral';
+      let finishConnection;
+      let disconnects = 0;
+      oldPeripheral.connectAsync = () => {
+        oldPeripheral.state = 'connecting';
+        return new Promise(resolve => {
+          finishConnection = () => { oldPeripheral.state = 'connected'; resolve(); };
+        });
+      };
+      oldPeripheral.disconnectAsync = async () => {
+        disconnects += 1;
+        oldPeripheral.state = 'disconnected';
+      };
+      const oldConnection = client.connect();
+      await new Promise(resolve => setImmediate(resolve));
+      noble.emit('discover', oldPeripheral);
+      await new Promise(resolve => setImmediate(resolve));
+      t.equal(oldPeripheral.state, 'connecting', 'the first native connection is pending');
+      await client.disconnect();
+      t.equal(oldPeripheral.state, 'disconnected', 'shutdown releases a link that is not connected yet');
+
+      const nextConnection = client.connect();
+      await new Promise(resolve => setImmediate(resolve));
+      const successor = sensorPeripheral(client);
+      successor.id = 'successor-peripheral';
+      noble.emit('discover', successor);
+      await nextConnection;
+      t.equal(client.isConnected, true, 'an explicit connection can establish a successor');
+      finishConnection();
+      await oldConnection;
+      t.equal(oldPeripheral.state, 'disconnected', 'late native success is released too');
+      t.equal(disconnects, 2, 'both the pending attempt and its late successful link are closed');
+      t.equal(client.peripheral, successor, 'late cleanup preserves the successor reference');
+      t.equal(client.isConnected, true, 'late cleanup does not clear successor state');
+      t.equal(successor.state, 'connected', 'the successor physical link stays connected');
+      if (connectionManager) t.equal(connectionManager.connections.size, 0, 'completed manager attempts retain no entries');
+      await client.disconnect();
+      t.end();
+    });
+  }
 
   test(`${SensorClient.name} old discovery cleanup cannot release a successor or clear its state`, async t => {
     const noble = new FakeNoble();

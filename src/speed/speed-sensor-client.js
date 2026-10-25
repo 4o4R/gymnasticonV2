@@ -15,6 +15,7 @@
 
 import {EventEmitter} from 'events';
 import {ScanCoordinator, createScanTag, waitForPeripheral} from '../util/scan-coordinator.js';
+import {disconnectPeripheral} from '../util/noble-wrapper.js';
 
 const EVENT_TIME_MAX = 0x10000;
 const WHEEL_REV_MAX = 0x100000000;
@@ -123,11 +124,18 @@ export class SpeedSensorClient extends EventEmitter {
 
       // Phase 2: Connect to device
       if (this.connectionManager) {
-        await this.connectionManager.connect(this.peripheral);
+        await this.connectionManager.connect(peripheral, {
+          isCancelled: () => !this.shouldReconnect || generation !== this.connectionGeneration,
+        });
       } else {
-        await this.peripheral.connectAsync();
+        await peripheral.connectAsync();
       }
-      if (generation !== this.connectionGeneration) return;
+      if (generation !== this.connectionGeneration) {
+        // A controller can report success after stop released our reference.
+        // Release that old link, but leave an explicitly adopted successor alone.
+        if (this.peripheral !== peripheral) await disconnectPeripheral(peripheral);
+        return;
+      }
       this.logger.log('[SpeedSensorClient] Connected to peripheral');
 
       // Phase 3: Discover services and characteristics
@@ -399,9 +407,9 @@ export class SpeedSensorClient extends EventEmitter {
     }
     if (generation !== this.connectionGeneration) return;
 
-    if (this.peripheral && this.isConnected) {
+    if (this.peripheral) {
       try {
-        await this.peripheral.disconnectAsync();
+        await disconnectPeripheral(this.peripheral);
       } catch (e) {
         this.logger.warn(`[SpeedSensorClient] Failed to disconnect: ${e.message}`);
       }

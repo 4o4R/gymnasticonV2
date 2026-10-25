@@ -4,7 +4,7 @@
 ### Fixed
 - A controller that never completes an advertising command no longer disables that output until process restart. A retry retires its old native stack and creates a fresh binding while preserving healthy mirrors and rejecting late callbacks.
 - Pi image capability cleanup runs on the build host, outside pi-gen's chroot that drops CAP_SETFCAP. Missing tools, failed reads and failed removal stop the build with explicit errors.
-- Cancelled optional-sensor scan acquisition no longer leaves clients waiting on an unowned scan. Intentional stop cancels pending discovery and retries; HR scan errors release their listeners while continuous discovery still accepts late sensors.
+- Cancelled optional-sensor scan acquisition no longer leaves clients waiting on an unowned scan. Intentional stop cancels pending discovery and retries, and releases pending or late sensor connections without disturbing a successor. HR scan errors release their listeners while continuous discovery still accepts late sensors.
 - Deployment fixtures reject a missing installer boundary before executing any shell commands.
 
 ### Documentation
