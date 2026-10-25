@@ -204,10 +204,16 @@ sudo systemctl restart getty@tty1.service >/dev/null 2>&1 || true
 # Allow the Node runtime to open raw BLE sockets without sudo (required for bleno/noble)
 sudo setcap cap_net_raw+eip "$(command -v node)" || true
 
-# Clone Gymnasticon repository
+# Clone Gymnasticon repository, or reuse the existing checkout so re-running
+# the installer keeps the current revision and local configuration.
 APP_DIR="/opt/gymnasticon"
 sudo mkdir -p "$APP_DIR" # ensure the parent prefix exists before cloning
-sudo git clone https://github.com/4o4R/gymnasticonV2.git "$APP_DIR"
+if [ -d "$APP_DIR/.git" ]; then
+    echo "Updating the existing checkout in $APP_DIR..."
+    sudo git -C "$APP_DIR" pull --ff-only || echo "Could not update the existing checkout; continuing with the installed revision."
+else
+    sudo git clone https://github.com/4o4R/gymnasticonV2.git "$APP_DIR"
+fi
 cd "$APP_DIR"
 sudo env \
     CXXFLAGS="-std=gnu++14" \
@@ -216,7 +222,11 @@ sudo env \
     npm install --omit=dev --unsafe-perm --cache /tmp/npm-cache # install production dependencies directly inside the repo (allow scripts under sudo and avoid cache permission issues)
 sudo install -d -m 755 /opt/gymnasticon/bin # create a bin directory for helper scripts
 sudo install -m 755 "$APP_DIR/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon-wrapper.sh" /opt/gymnasticon/bin/gymnasticon # reuse the wrapper so users can run `gymnasticon` manually
-sudo install -m 644 "$APP_DIR/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon.json" /etc/gymnasticon.json # seed the default config on manual installs for parity with the image
+if [ -f /etc/gymnasticon.json ]; then
+    echo "Keeping the existing /etc/gymnasticon.json configuration."
+else
+    sudo install -m 644 "$APP_DIR/deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon.json" /etc/gymnasticon.json # seed the default config on manual installs for parity with the image
+fi
 sudo ln -sf /etc/gymnasticon.json "$APP_DIR/gymnasticon.json" # expose the config inside the repo tree for documentation consistency
 sudo install -d -m 755 /lib/firmware/brcm # make sure the firmware directory exists even on minimal images
 if [ -f "$APP_DIR/deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd" ]; then

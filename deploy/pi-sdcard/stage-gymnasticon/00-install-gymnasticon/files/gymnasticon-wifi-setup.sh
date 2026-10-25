@@ -13,11 +13,11 @@ log() {
   echo "${LOG_TAG} $*" # Tiny helper to print readable status messages.
 }
 
-sanitize_env_file() {
-  local sanitized # Temporary filename to hold the CRLF-normalized copy.
-  sanitized="$(mktemp)" # Create a short-lived file in /tmp that only root can access.
-  tr -d '\r' < "$CONFIG_FILE" > "$sanitized" # Drop Windows-style carriage returns so Bash can parse KEY=VALUE lines.
-  echo "$sanitized" # Return the sanitized filename to the caller via stdout.
+trim_value() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
 }
 
 escape_wpa_value() {
@@ -26,16 +26,49 @@ escape_wpa_value() {
 }
 
 load_user_overrides() {
-  if [ -r "$CONFIG_FILE" ]; then # Only attempt to load the file when the user actually provided one.
-    local sanitized_file # Keep track of the CRLF-stripped temp file so we can delete it later.
-    sanitized_file="$(sanitize_env_file)" # Create a copy without carriage returns so `.` parsing behaves.
-    # shellcheck disable=SC1090
-    . "$sanitized_file" # Source the KEY=VALUE pairs so WIFI_SSID/WIFI_PSK/WIFI_COUNTRY populate in this shell.
-    rm -f "$sanitized_file" # Clean up the temporary file immediately now that we are done with it.
-    log "Loaded Wi-Fi overrides from $CONFIG_FILE" # Friendly confirmation for the user’s install log.
-  else
-    log "No $CONFIG_FILE found on the boot partition; continuing with baked-in defaults." # Explain why we fall back to defaults.
+  if [ ! -r "$CONFIG_FILE" ]; then
+    log "No Wi-Fi override file found; leaving existing credentials in place."
+    return
   fi
+  local line key value quote character decoded number=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    number=$((number + 1))
+    line="$(trim_value "${line%$'\r'}")"
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    if [[ "$line" != *=* ]]; then
+      log "Invalid Wi-Fi setting at line $number; expected KEY=value."
+      return 1
+    fi
+    key="$(trim_value "${line%%=*}")"
+    key="${key#export }"
+    case "$key" in
+      WIFI_COUNTRY|WIFI_SSID|WIFI_PSK|WIFI_PSK_FILE) ;;
+      *) log "Unsupported Wi-Fi setting at line $number."; return 1 ;;
+    esac
+    value="$(trim_value "${line#*=}")"
+    quote="${value:0:1}"
+    if [[ "$quote" == \" || "$quote" == \' ]]; then
+      if [ "${#value}" -lt 2 ] || [ "${value: -1}" != "$quote" ]; then
+        log "Unclosed quoted Wi-Fi value at line $number."
+        return 1
+      fi
+      value="${value:1:${#value}-2}"
+      if [ "$quote" = '"' ]; then
+        decoded=""
+        while [ -n "$value" ]; do
+          character="${value:0:1}"; value="${value:1}"
+          if [[ "$character" == \\ && "${value:0:1}" == [\"\$\`\\] ]]; then
+            character="${value:0:1}"; value="${value:1}"
+          fi
+          decoded+="$character"
+        done
+        value="$decoded"
+      fi
+    fi
+    # Values are data, including spaces, $, backticks, and command substitutions.
+    printf -v "$key" '%s' "$value"
+  done < "$CONFIG_FILE"
+  log "Loaded Wi-Fi overrides."
 }
 
 apply_country_and_rfkill() {
@@ -43,6 +76,12 @@ apply_country_and_rfkill() {
   if [ -z "$target_country" ]; then # Guard against the very-unlikely case where both values are blank.
     target_country="US" # Never pass an empty string into raspi-config or rfkill logs will be confusing.
   fi
+  if [[ ! "$target_country" =~ ^[[:alpha:]]{2}$ ]]; then
+    log "WIFI_COUNTRY must contain exactly two letters."
+    return 1
+  fi
+  WIFI_COUNTRY="${target_country^^}"
+  target_country="$WIFI_COUNTRY"
   if raspi-config nonint do_wifi_country "$target_country"; then # Ask Raspberry Pi OS to persist the regulatory domain.
     log "Set Wi-Fi country to ${target_country} so the radio firmware unblocks automatically." # Success message.
   else
@@ -69,7 +108,7 @@ write_network_manager_profile() {
     wifi-sec.psk "$passphrase" \
     connection.autoconnect yes \
     ipv4.method auto \
-    ipv6.method auto > "$profile_tmp"; then
+    ipv6.method auto > "$profile_tmp" 2>/dev/null; then
     rm -f "$profile_tmp"
     return 1
   fi
@@ -77,6 +116,12 @@ write_network_manager_profile() {
   install -d -m 700 "$(dirname "$NETWORK_MANAGER_PATH")"
   install -m 600 "$profile_tmp" "$NETWORK_MANAGER_PATH"
   rm -f "$profile_tmp"
+  if systemctl is-active --quiet NetworkManager.service; then
+    if ! nmcli connection reload >/dev/null 2>&1; then
+      log "Unable to reload the Wi-Fi profile in NetworkManager."
+      return 1
+    fi
+  fi
   log "Created a NetworkManager profile for the SSID specified in ${CONFIG_FILE}."
 }
 
@@ -125,18 +170,26 @@ write_wifi_configuration() {
     return
   fi
 
-  if command -v nmcli >/dev/null 2>&1 && [ -d /etc/NetworkManager ]; then
-    local passphrase="${WIFI_PSK:-}"
-    if [ -n "${WIFI_PSK_FILE:-}" ] && [ -r "${WIFI_PSK_FILE:-}" ]; then
-      passphrase="$(tr -d '\r' < "$WIFI_PSK_FILE")"
+  local passphrase="${WIFI_PSK:-}"
+  if [ -n "${WIFI_PSK_FILE:-}" ]; then
+    if [ ! -r "$WIFI_PSK_FILE" ]; then
+      log "Unable to read WIFI_PSK_FILE."
+      return 1
     fi
-    if [ -n "$passphrase" ] && write_network_manager_profile "$passphrase"; then
-      return
-    fi
-    log "Unable to create a NetworkManager profile; falling back to wpa_supplicant."
+    passphrase="$(tr -d '\r' < "$WIFI_PSK_FILE")"
   fi
-
-  write_wpa_supplicant
+  if [ -z "$passphrase" ]; then
+    log "WIFI_PSK is required when WIFI_SSID is set."
+    return 1
+  fi
+  if command -v nmcli >/dev/null 2>&1 && [ -d /etc/NetworkManager ]; then
+    if ! write_network_manager_profile "$passphrase"; then
+      log "Unable to configure Wi-Fi with NetworkManager; existing network services were not restarted."
+      return 1
+    fi
+  else
+    write_wpa_supplicant
+  fi
 }
 
 main() {

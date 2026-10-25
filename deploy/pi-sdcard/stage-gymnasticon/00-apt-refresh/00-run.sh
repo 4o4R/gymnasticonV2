@@ -42,6 +42,12 @@ apt-get -o Acquire::Check-Valid-Until=false \
         -o Acquire::AllowReleaseInfoChange::Version=true \
         update
 
+# Modern raspi-config otherwise downloads overlayroot during first boot, when
+# the appliance may have no network. Buster uses its older initramfs overlay.
+if [ "${VERSION_CODENAME:-}" = "bookworm" ] || [ "${VERSION_ID:-}" = "12" ]; then
+  apt-get install -y --no-install-recommends overlayroot
+fi
+
 for pkg in libudev-dev watchdog; do
   if apt-cache show "$pkg" >/dev/null 2>&1; then
     echo "[gymnasticon] Verified availability of $pkg"

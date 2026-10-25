@@ -5,8 +5,9 @@ Description=Gymnasticon headless Wi-Fi bootstrapper
 DefaultDependencies=no
 # Wait until the Bookworm or Buster boot partition mounts.
 After=local-fs.target
+Wants=network-pre.target
 # Configure Wi-Fi before any network daemons (or the overlay) start.
-Before=network-pre.target dhcpcd.service wpa_supplicant.service lockrootfs.service
+Before=network-pre.target NetworkManager.service dhcpcd.service wpa_supplicant.service lockrootfs.service
 
 [Service]
 # Run the helper exactly once per boot; it is fast and idempotent.
