@@ -44,7 +44,7 @@ jobs:
       # install -y = install packages and auto-answer "yes" to prompts
       # libudev-dev = library for device management (needed by usb package)
       # libusb-1.0-0-dev = library for USB communication (needed by usb package)
-      run: sudo apt-get update && sudo apt-get install -y libbluetooth-dev libudev-dev libusb-1.0-0-dev build-essential python3 python3-setuptools pkg-config
+      run: sudo apt-get update && sudo apt-get install -y libbluetooth-dev libudev-dev libusb-1.0-0-dev build-essential python3 python3-setuptools pkg-config libcap2-bin util-linux
     
     # Step 4: Pin node-gyp to a specific version
     # node-gyp is a tool that compiles native C/C++ add-ons for Node.js
@@ -71,3 +71,4 @@ jobs:
     - run: npm run lint
     - run: npm test
     - run: python3 scripts/verify-deployment.py
+    - run: sudo python3 scripts/verify-service-capabilities.py

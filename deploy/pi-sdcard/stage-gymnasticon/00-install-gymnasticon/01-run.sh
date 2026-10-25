@@ -128,7 +128,11 @@ dphys-swapfile uninstall
 systemctl disable dphys-swapfile.service
 apt-get remove -y --purge logrotate fake-hwclock rsyslog
 
-setcap cap_net_raw+eip /opt/gymnasticon/node/bin/node || true
+# Keep file capabilities off Node so the service's ambient caps survive exec.
+node_file_caps="$(getcap /opt/gymnasticon/node/bin/node)"
+if [ -n "$node_file_caps" ]; then
+  setcap -r /opt/gymnasticon/node/bin/node
+fi
 
 WIFI_COUNTRY=${WPA_COUNTRY:-US}
 mkdir -p /etc/systemd/system/getty@tty1.service.d

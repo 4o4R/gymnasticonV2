@@ -2,6 +2,7 @@
 
 ## [3.0.0] - 2026-10-24
 ### Fixed
+- Pi image services retain both ambient Bluetooth capabilities through Node and child commands. File capabilities on the runtime previously stripped NET_ADMIN under the unprivileged systemd account, leaving adapter-recovery subprocesses without permissions.
 - CLI version reporting reads Gymnasticon's packaged metadata instead of guessing from the working directory. Pi image installs export the intended user and group into chrooted commands.
 - Scan startup and shared ownership now cancel the pinned noble callbacks belonging to an expired request, so a late scan event cannot stop its successor. Optional scan startup also has its own deadline.
 - Pending and queued LE connections use bounded cancellation, including the controller's LE Create Connection Cancel command; late successful links are disconnected using their real handle. An unconfirmed bike cancellation reopens the radio before retrying.

@@ -111,6 +111,9 @@ At the top level of `bootfs`, optionally add:
 
 The image copies these settings into the installed system during boot.
 
+On the appliance image, run standalone hardware commands with `sudo`. The
+installed systemd service supplies its Bluetooth capabilities automatically.
+
 ## Release Checklist
 
 Before publishing an image:

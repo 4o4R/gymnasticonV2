@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: 14
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libbluetooth-dev libudev-dev libusb-1.0-0-dev build-essential python3 python3-setuptools pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libbluetooth-dev libudev-dev libusb-1.0-0-dev build-essential python3 python3-setuptools pkg-config libcap2-bin util-linux
       - name: Pin node-gyp 9.x
         run: |
           npm install -g node-gyp@9.4.1
@@ -44,6 +44,7 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: python3 scripts/verify-deployment.py
+      - run: sudo python3 scripts/verify-service-capabilities.py
 
   publish-npm:
     needs: build
