@@ -109,7 +109,7 @@ Gymnasticon includes `deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd`. The Raspbe
 
 After pairing succeeds, keep in mind:
 
-- Gymnasticon advertises only while a bike is connected. If the console sleeps during a pause, the app or watch sees the sensor disappear; pedal again to wake the console and Gymnasticon will rediscover it and start advertising again.
+- A short pause is normal: Gymnasticon reports zero while telemetry is stale and keeps the app or watch connected for `serverReconnectGrace` seconds (60 by default) while it rediscovers the bike. Pedal again to resume real values. If the console sleeps longer than `bikeDisconnectTimeout` (60 seconds by default), the output stops and returns once the bike is rediscovered.
 - Only one device can connect per advertising adapter; see the Bluetooth and ANT+ Behavior section in the README.
 
 ## Heart Rate Is Not Rebroadcast

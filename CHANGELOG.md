@@ -6,6 +6,15 @@
 - Pi image capability cleanup runs on the build host, outside pi-gen's chroot that drops CAP_SETFCAP. Missing tools, failed reads and failed removal stop the build with explicit errors.
 - Cancelled optional-sensor scan acquisition no longer leaves clients waiting on an unowned scan. Intentional stop cancels pending discovery and retries, and releases pending or late sensor connections without disturbing a successor. HR scan errors release their listeners while continuous discovery still accepts late sensors.
 - Deployment fixtures reject a missing installer boundary before executing any shell commands.
+- A telemetry gap now only zeroes the outputs: the bike is reconnected after `bikeDisconnectTimeout` (60 s) and an app or watch keeps its connection for `serverReconnectGrace` (60 s) instead of being dropped after 10 seconds. The health monitor no longer imposes a second, shorter deadline.
+- A pause, watch reconnect or console sleep no longer needs a restart: cancelled bike discovery cannot reconnect itself later (IC4/IC8/Flywheel), autodetect hands its match to the bike client instead of scanning twice, and Keiser holds the shared scan claim so an accessory timeout cannot stop beacon reception.
+- Heart-rate discovery failures retry with backoff instead of disabling heart rate until a restart, and optional accessories start after advertising so they cannot delay keep-alives or bike recovery.
+- Advertising recovers during an ongoing ride: a stalled or reset output is retired and rebuilt by a background health check without disturbing healthy mirrors.
+- Power smoothing restarts at a stop and at teardown, so a returning rider sees real watts instead of the previous ride's average. IC8/C6 native FTMS values expire after 10 seconds of silence.
+- The Wi-Fi bootstrap helper reads credentials as literal text (spaces, `$`, `#`, quotes), the installer keeps an existing checkout and `/etc/gymnasticon.json` on re-runs, and overlayroot ships in modern images so first boot works offline.
+
+### Added
+- `bikeDisconnectTimeout` / `--bike-disconnect-timeout` and `serverReconnectGrace` / `--server-reconnect-grace` control how long a pause reports zero and how long a receiver stays connected during bike recovery.
 
 ### Documentation
 - The README and troubleshooting guide now state that each advertising adapter serves one training app or watch connection, and that advertising resumes automatically when a client disconnects while a bike is connected.

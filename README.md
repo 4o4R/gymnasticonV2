@@ -130,6 +130,8 @@ Default configuration:
   "defaultBike": "keiser",
   "serverName": "GymnasticonV2",
   "bikeReceiveTimeout": 10,
+  "bikeDisconnectTimeout": 60,
+  "serverReconnectGrace": 60,
   "powerScale": 1,
   "powerOffset": 0
 }
@@ -142,6 +144,9 @@ Common options:
 | `bike` | Select a fixed profile such as `flywheel`, `peloton`, `ic4`, `ic5`, `ic8`, `keiser`, `bot`, or `autodetect`. |
 | `defaultBike` | Fallback profile when autodetect does not find a supported bike. |
 | `serverName` | Bluetooth advertisement name shown to training apps. |
+| `bikeReceiveTimeout` | Seconds without bike telemetry before the outputs report zero (`0` disables). |
+| `bikeDisconnectTimeout` | Seconds without bike telemetry before Gymnasticon reconnects the bike (`0` disables). |
+| `serverReconnectGrace` | Seconds an app or watch stays connected while the bike reconnects (`0` drops it immediately). |
 | `bikeAdapter` | Bluetooth adapter used to connect to the bike, for example `hci0`. |
 | `serverAdapter` / `serverAdapters` | Bluetooth adapter or adapters used to advertise Gymnasticon. |
 | `bleMultiOutput` | Mirror BLE output across multiple adapters when available. |
@@ -201,7 +206,8 @@ Gymnasticon detects available Bluetooth adapters and assigns radio roles automat
 - Dual-adapter Pi Zero setups prefer the onboard adapter for bike scanning and a USB BLE dongle for advertising.
 - Multi-output mode can mirror BLE advertising across multiple suitable adapters.
 - Each advertising adapter accepts one training app or watch connection at a time. To use two devices at once (for example a watch plus a phone), enable multi-output with two adapters; both advertise the same data and each can host one connection.
-- While a bike is connected, Gymnasticon resumes advertising automatically when the app or watch disconnects, so a watch can leave and reconnect without restarting the service. Advertising stops when the bike goes idle or disconnects and resumes once the bike is rediscovered.
+- While a bike is connected, Gymnasticon resumes advertising automatically when the app or watch disconnects, so a watch can leave and reconnect without restarting the service.
+- A pause keeps the connection: after `bikeReceiveTimeout` seconds without telemetry the outputs report zero, and the app or watch stays connected for `serverReconnectGrace` seconds while Gymnasticon rediscovers the bike. The bike is only treated as lost after `bikeDisconnectTimeout` seconds without telemetry.
 - ANT+ uses a separate USB ANT+ stick and does not consume a Bluetooth adapter.
 
 On single-adapter Pi Zero / Zero W systems, power/cadence/speed output still works, but heart-rate rebroadcast is disabled by default to avoid unstable scan/advertise switching.
