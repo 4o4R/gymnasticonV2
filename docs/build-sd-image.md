@@ -71,7 +71,10 @@ Run both commands sequentially to build both release images. Each build recreate
 the `pi-gen` workspace, so copy or publish the first artifact before starting the
 second build.
 
-The build usually takes 20-40 minutes depending on host performance and network speed.
+Build time depends on the host, network, and current OS packages. Under ARM
+emulation, repeated kernel and initramfs generation can push a modern Bookworm
+build well beyond an hour. Check the build log and CPU activity during quiet
+compression steps before treating the build as stalled.
 
 ## Output
 
