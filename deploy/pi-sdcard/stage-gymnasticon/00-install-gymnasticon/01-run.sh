@@ -128,12 +128,6 @@ dphys-swapfile uninstall
 systemctl disable dphys-swapfile.service
 apt-get remove -y --purge logrotate fake-hwclock rsyslog
 
-# Keep file capabilities off Node so the service's ambient caps survive exec.
-node_file_caps="$(getcap /opt/gymnasticon/node/bin/node)"
-if [ -n "$node_file_caps" ]; then
-  setcap -r /opt/gymnasticon/node/bin/node
-fi
-
 WIFI_COUNTRY=${WPA_COUNTRY:-US}
 mkdir -p /etc/systemd/system/getty@tty1.service.d
 AUTOLOGIN_USER=${FIRST_USER_NAME:-pi}
@@ -150,6 +144,40 @@ if [ -f "${BOOT_DIR}/cmdline.txt" ]; then
   sed -i 's/[[:space:]]*console=ttyAMA0,[0-9]\\+//g; s/[[:space:]]*console=serial0,[0-9]\\+//g' "${BOOT_DIR}/cmdline.txt"
 fi
 CHROOT_EOF
+
+# Keep file capabilities off Node so the service's ambient caps survive exec.
+# pi-gen drops CAP_SETFCAP inside on_chroot, so change this metadata on the host.
+node_runtime="${ROOTFS_DIR:?}/opt/gymnasticon/node/bin/node"
+if [ ! -f "$node_runtime" ]; then
+  echo "Node runtime is missing: $node_runtime" >&2
+  exit 1
+fi
+for capability_tool in getcap setcap; do
+  if ! command -v "$capability_tool" >/dev/null 2>&1; then
+    echo "Required capability tool is missing: $capability_tool" >&2
+    exit 1
+  fi
+done
+read_node_capabilities() {
+  if ! node_file_caps="$(getcap "$node_runtime" 2>&1)"; then
+    echo "Cannot read Node file capabilities: $node_file_caps" >&2
+    return 1
+  fi
+  case "$node_file_caps" in
+    ""|"$node_runtime "*=*) ;;
+    *) echo "Cannot read Node file capabilities: $node_file_caps" >&2; return 1 ;;
+  esac
+}
+read_node_capabilities
+if [ -n "$node_file_caps" ] && ! setcap -r "$node_runtime"; then
+  echo "Cannot remove Node file capabilities: $node_runtime" >&2
+  exit 1
+fi
+read_node_capabilities
+if [ -n "$node_file_caps" ]; then
+  echo "Node file capabilities remain after removal: $node_file_caps" >&2
+  exit 1
+fi
 
 # Systemd helper: if fewer than two HCIs exist at boot, restart hciuart and
 # bring both adapters up. This avoids manual unplug/replug when a USB dongle

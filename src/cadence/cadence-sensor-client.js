@@ -66,6 +66,8 @@ export class CadenceSensorClient extends EventEmitter {
     this.isConnected = false;
     this.connecting = false;
     this.shouldReconnect = true;
+    this.connectionGeneration = 0;
+    this.discoveryAttempt = null;
 
     // Timers
     this.connectTimer = null;
@@ -87,6 +89,7 @@ export class CadenceSensorClient extends EventEmitter {
     }
     this.connecting = true;
     this.shouldReconnect = true;
+    const generation = ++this.connectionGeneration;
     this.logger.log('[CadenceSensorClient] Starting cadence sensor discovery...');
 
     try {
@@ -94,7 +97,9 @@ export class CadenceSensorClient extends EventEmitter {
       const timeoutMs = Number.isFinite(this.connectTimeout) && this.connectTimeout > 0
         ? Math.round(this.connectTimeout * 1000)
         : 0;
-      this.peripheral = await this.scanForPeripheral(timeoutMs);
+      const peripheral = await this.scanForPeripheral(timeoutMs);
+      if (generation !== this.connectionGeneration) return;
+      this.peripheral = peripheral;
 
       if (!this.shouldReconnect) {
         this.connecting = false;
@@ -122,10 +127,12 @@ export class CadenceSensorClient extends EventEmitter {
       } else {
         await this.peripheral.connectAsync();
       }
+      if (generation !== this.connectionGeneration) return;
       this.logger.log('[CadenceSensorClient] Connected to peripheral');
 
       // Phase 3: Discover services and characteristics
       const {characteristics} = await this.peripheral.discoverServicesAndCharacteristicsAsync();
+      if (generation !== this.connectionGeneration) return;
 
       this.characteristic = characteristics.find(c =>
         c.uuid === this.characteristicUuid.toLowerCase()
@@ -140,6 +147,7 @@ export class CadenceSensorClient extends EventEmitter {
       // Phase 4: Subscribe to notifications
       this.characteristic.on('data', this.onCadenceDataBound);
       await this.characteristic.subscribeAsync();
+      if (generation !== this.connectionGeneration) return;
 
       this.isConnected = true;
       this.connecting = false;
@@ -151,6 +159,7 @@ export class CadenceSensorClient extends EventEmitter {
       this.peripheral.once('disconnect', this.onDisconnectBound);
 
     } catch (error) {
+      if (generation !== this.connectionGeneration) return;
       this.logger.error(`[CadenceSensorClient] Connection failed: ${error.message}`);
       this.connecting = false;
       this.cleanupConnection();
@@ -171,18 +180,22 @@ export class CadenceSensorClient extends EventEmitter {
    * @returns {Promise<object|null>} the matching peripheral, or null.
    */
   async scanForPeripheral(timeoutMs) {
-    await this.scanCoordinator.acquire(this.scanTag);
+    const attempt = new EventEmitter();
+    attempt.scanTag = createScanTag(this.scanTag);
+    attempt.cancelled = false;
+    this.discoveryAttempt = attempt;
     try {
-      if (!this.shouldReconnect) {
+      const scanning = await this.scanCoordinator.acquire(attempt.scanTag);
+      if (!scanning || !this.shouldReconnect || attempt.cancelled) {
         return null;
       }
       return await waitForPeripheral(
         this.noble,
         (peripheral) => this.matchesFilter(peripheral),
-        {timeoutMs}
+        {timeoutMs, cancellation: attempt}
       );
     } finally {
-      await this.releaseScan();
+      await this.releaseScan(attempt);
     }
   }
 
@@ -190,9 +203,13 @@ export class CadenceSensorClient extends EventEmitter {
    * Drop this client's claim on the shared scan.
    * @private
    */
-  async releaseScan() {
+  async releaseScan(attempt = this.discoveryAttempt) {
+    if (!attempt) return;
+    attempt.cancelled = true;
+    attempt.emit('cancel');
+    if (this.discoveryAttempt === attempt) this.discoveryAttempt = null;
     try {
-      await this.scanCoordinator.release(this.scanTag);
+      await this.scanCoordinator.release(attempt.scanTag);
     } catch (error) {
       console.warn(`[CadenceSensorClient] Failed to release shared scan: ${error?.message || error}`);
     }
@@ -352,10 +369,13 @@ export class CadenceSensorClient extends EventEmitter {
    */
   async reconnect() {
     if (!this.shouldReconnect) return;
+    const generation = this.connectionGeneration;
     try {
       await this.disconnect({reconnect: true});  // Clean up old connection
+      if (!this.shouldReconnect || generation !== this.connectionGeneration) return;
       await this.connect();
     } catch (error) {
+      if (!this.shouldReconnect || generation !== this.connectionGeneration) return;
       this.logger.error(`[CadenceSensorClient] Reconnection failed: ${error.message}`);
       this.scheduleReconnect();
     }
@@ -367,12 +387,15 @@ export class CadenceSensorClient extends EventEmitter {
   async disconnect({reconnect = false} = {}) {
     if (!reconnect) {
       this.shouldReconnect = false;
+      this.connectionGeneration += 1;
     }
+    const generation = this.connectionGeneration;
     this.clearStatTimer();
     this.clearRetryTimer();
     // Give the radio back immediately; a pending discovery then settles and is
     // discarded by the shouldReconnect guard in connect().
     await this.releaseScan();
+    if (generation !== this.connectionGeneration) return;
 
     if (this.characteristic) {
       try {
@@ -381,6 +404,7 @@ export class CadenceSensorClient extends EventEmitter {
         this.logger.warn(`[CadenceSensorClient] Failed to unsubscribe: ${e.message}`);
       }
     }
+    if (generation !== this.connectionGeneration) return;
 
     if (this.peripheral && this.isConnected) {
       try {
@@ -390,7 +414,7 @@ export class CadenceSensorClient extends EventEmitter {
       }
     }
 
-    this.cleanupConnection();
+    if (generation === this.connectionGeneration) this.cleanupConnection();
   }
 
   /**

@@ -1,4 +1,5 @@
 import {EventEmitter} from 'events';
+import {spawnSync} from 'child_process';
 
 import test from '../support/tape.js';
 import {GymnasticonServer} from '../../servers/ble/index.js';
@@ -234,5 +235,176 @@ test('MultiBleServer.start() does not degrade when every adapter starts', async 
   t.equal(multi.degraded, false, 'stays out of degraded mode');
   t.equal(logger.entries.warn.length, 0, 'does not warn');
   await multi.stop();
+  t.end();
+});
+
+test('retrying a stalled adapter preserves an already healthy mirror', async t => {
+  const stalledBleno = createFakeBleno();
+  stalledBleno.startAdvertising = () => {};
+  const stalled = createServer(stalledBleno);
+  const healthyBleno = createFakeBleno();
+  const healthy = createServer(healthyBleno);
+  let healthyStops = 0;
+  const originalStop = healthyBleno.stopAdvertising;
+  healthyBleno.stopAdvertising = callback => { healthyStops++; originalStop(callback); };
+  const replacement = createServer(createFakeBleno());
+  const entry = {adapter: 'hci0', server: stalled, createServer: async () => replacement};
+  const multi = new MultiBleServer([entry, {adapter: 'hci1', server: healthy}], createLogger());
+  await multi.start();
+  t.equal(multi.degraded, true, 'the healthy mirror remains available after the other adapter stalls');
+  await multi.start();
+  t.equal(entry.server, replacement, 'retry replaces the stalled server');
+  t.equal(stalled.retired, true, 'the abandoned binding cannot be reused');
+  t.equal(healthyStops, 0, 'repair never stops the healthy mirror');
+  t.equal(healthy.state, 'started', 'the healthy output remains started');
+  t.equal(multi.degraded, false, 'both outputs are available after repair');
+  await multi.stop();
+  t.end();
+});
+
+test('a retired binding can reopen after a factory failure and late old completion', async t => {
+  const oldBleno = createFakeBleno();
+  let oldComplete;
+  oldBleno.startAdvertising = (_name, _uuids, callback) => { oldComplete = callback; };
+  const old = createServer(oldBleno);
+  const replacement = createServer(createFakeBleno());
+  let opens = 0;
+  const entry = {adapter: 'hci0', server: old, createServer: async () => {
+    if (++opens === 1) throw new Error('adapter temporarily unavailable');
+    return replacement;
+  }};
+  const multi = new MultiBleServer([entry], createLogger());
+  try {
+    t.ok(await multi.start().then(() => null, error => error), 'the original command times out');
+    t.ok(await multi.start().then(() => null, error => error), 'the first replacement attempt can fail');
+    oldComplete(null);
+    await new Promise(resolve => setImmediate(resolve));
+    t.equal(old.pendingStartOperation, null, 'the old controller eventually finishes its command');
+    t.equal(old.retired, true, 'late completion cannot make the old binding reusable');
+    await multi.start();
+    t.equal(opens, 2, 'the next retry opens another binding instead of starting the retired one');
+    t.equal(entry.server, replacement, 'the later replacement owns the adapter');
+    t.equal(replacement.state, 'started', 'advertising recovers after the transient factory failure');
+  } finally {
+    await multi.stop();
+  }
+  t.end();
+});
+
+test('shutdown retires a replacement that finishes opening after cancellation', async t => {
+  const old = createServer(createFakeBleno());
+  old.pendingStartOperation = new Promise(() => {});
+  let finishOpen;
+  const entry = {adapter: 'hci0', server: old,
+    createServer: () => new Promise(resolve => { finishOpen = resolve; })};
+  const multi = new MultiBleServer([entry], createLogger());
+  const starting = multi.start().then(() => null, error => error);
+  await multi.stop();
+  const replacementBleno = createFakeBleno();
+  const replacement = createServer(replacementBleno);
+  finishOpen(replacement);
+  t.ok(await starting, 'the cancelled startup rejects');
+  t.equal(replacement.retired, true, 'a late factory result releases its binding');
+  t.equal(replacementBleno.advertising, false, 'the late replacement never advertises');
+  t.equal(entry.server, old, 'the cancelled replacement cannot change the current entry');
+  t.equal(multi.activeEntries, null, 'shutdown cannot be revived by a late factory');
+  t.end();
+});
+
+test('a replacement factory has the same bounded lifetime as adapter startup', async t => {
+  const old = createServer(createFakeBleno());
+  old.pendingStartOperation = new Promise(() => {});
+  let finishOpen;
+  const entry = {adapter: 'hci0', server: old,
+    createServer: () => new Promise(resolve => { finishOpen = resolve; })};
+  const multi = new MultiBleServer([entry], createLogger(), {startupTimeoutMs: SHORT_TIMEOUT_MS});
+  const failure = await multi.start().then(() => null, error => error);
+  t.ok(failure, 'an unresponsive factory cannot hang startup');
+  const replacement = createServer(createFakeBleno());
+  finishOpen(replacement);
+  await new Promise(resolve => setImmediate(resolve));
+  t.equal(replacement.retired, true, 'a factory result past the deadline releases its binding');
+  t.equal(entry.server, old, 'the expired factory cannot install a replacement');
+  t.equal(multi.activeEntries, null, 'the expired attempt never publishes an active output');
+  await multi.stop();
+  t.end();
+});
+
+test('actual App retries a never-completing first-adapter command using a fresh pinned bleno binding', t => {
+  const result = spawnSync(process.execPath, ['--input-type=module'], {
+    encoding: 'utf8', timeout: 10000,
+    input: String.raw`
+import assert from 'assert';
+import {createRequire} from 'module';
+import {EventEmitter} from 'events';
+import path from 'path';
+const require = createRequire(path.join(process.cwd(), 'package.json'));
+let rawCount = 0;
+class Socket extends EventEmitter {
+  constructor() { super(); this.writes = []; this.stops = 0; }
+  bindRaw(id) { this.id = id; this.rawNumber = ++rawCount; return id; }
+  bindControl() { return 0; }
+  start() {} stop() { this.stops++; } isDevUp() { return true; } setFilter() {}
+  write(buffer) {
+    this.writes.push(Buffer.from(buffer));
+    if (!this.rawNumber || buffer[0] !== 1) return;
+    const opcode = buffer.readUInt16LE(1);
+    const complete = result => {
+      const params = Buffer.from([1, opcode & 255, opcode >> 8, 0, ...result]);
+      setImmediate(() => this.emit('data', Buffer.concat([Buffer.from([4, 14, params.length]), params])));
+    };
+    if (opcode === 0x1001) complete([7, 0, 0, 7, 15, 0, 0, 0]);
+    else if (opcode === 0x1009) complete([6, 5, 4, 3, 2, 1]);
+    else if (opcode === 0x2006) complete([]);
+    else if (opcode === 0x200a && (buffer[4] === 0 || this.rawNumber > 1)) complete([]);
+  }
+}
+const native = require.resolve('@abandonware/bluetooth-hci-socket');
+require.cache[native] = {id: native, filename: native, loaded: true, exports: Socket};
+const {App} = await import('./src/app/app.js');
+const noble = new EventEmitter(); noble.state = 'poweredOn';
+const app = new App({noble, antEnabled: false, heartRateEnabled: false,
+  bike: 'bot', bikeAdapter: 'hci0', serverAdapter: 'hci1', serverAdapters: ['hci1'],
+  healthMonitor: {on() {}, stop() {}}, speedSensorEnabled: false, cadenceSensorEnabled: false});
+app.logger = {log() {}, warn() {}, error() {}};
+try {
+  await app.initializeBleServers();
+  const entry = app.server.entries[0];
+  const old = entry.server;
+  old.startupTimeoutMs = 100;
+  app.server.startupTimeoutMs = 100;
+  await assert.rejects(app.ensureServerStarted('first'), /No BLE adapters/);
+  assert.ok(old.pendingStartOperation);
+  await app.ensureServerStarted('retry');
+  const replacement = entry.server;
+  assert.notStrictEqual(replacement, old);
+  assert.notStrictEqual(replacement.bleno, old.bleno);
+  assert.notStrictEqual(replacement.bleno._bindings, old.bleno._bindings);
+  assert.strictEqual(replacement.bleno._bindings._hci._socket.id, 1);
+  assert.strictEqual(replacement.state, 'started');
+  assert.strictEqual(old.retired, true);
+  assert.strictEqual(old.bleno.__gymnasticonStopped, true);
+  const oldSocket = old.bleno._bindings._hci._socket;
+  const oldWrites = oldSocket.writes.length;
+  old.bleno.emit('advertisingStart', null);
+  old.bleno.emit('servicesSet', null);
+  old.bleno.emit('accept', '11:22:33:44:55:66');
+  old.bleno.emit('disconnect', '11:22:33:44:55:66');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(oldSocket.writes.length, oldWrites, 'old callbacks cannot stop the successor radio');
+  assert.strictEqual(old.connectionCount, 0);
+  assert.strictEqual(old.state, 'stopped');
+  assert.strictEqual(replacement.state, 'started');
+  assert.strictEqual(app.serverStarted, true);
+  await app.stop();
+  await app.stop();
+  assert.strictEqual(oldSocket.stops, 1, 'retirement stays idempotent through App.stop');
+  assert.strictEqual(replacement.bleno._bindings._hci._socket.stops, 1);
+} finally {
+  await app.cleanup();
+}
+`,
+  });
+  t.equal(result.status, 0, result.stderr || result.stdout || 'actual App and pinned bleno recovery passed');
   t.end();
 });

@@ -23,7 +23,7 @@ export class MultiBleServer {
   async start() {
     const generation = ++this.generation;
     const results = await Promise.allSettled(
-      this.entries.map(entry => this.startEntry(entry))
+      this.entries.map(entry => this.startEntry(entry, generation))
     );
     if (generation !== this.generation) {
       throw new Error('BLE startup cancelled');
@@ -64,18 +64,11 @@ export class MultiBleServer {
     }
   }
 
-  startEntry(entry) { // Start one adapter under a hard bound so a wedged radio cannot stall the others.
-    const server = entry.server;
-    if (server && !server.adapterLabel) {
-      server.adapterLabel = entry.adapter; // Let startup errors name the adapter that failed.
-    }
-    if (server && typeof server.startupTimeoutMs === 'number' && server.startupTimeoutMs > this.startupTimeoutMs) {
-      server.startupTimeoutMs = this.startupTimeoutMs; // Never wait longer than the multi-server bound itself.
-    }
-
+  startEntry(entry, generation = this.generation) { // Bound replacement and startup together.
     const boundMs = this.startupTimeoutMs + STARTUP_GRACE_MS; // Backstop for servers without their own timeout.
     return new Promise((resolve, reject) => {
       let expired = false;
+      let server = entry.server;
       const timer = setTimeout(() => {
         expired = true;
         const error = new Error(`BLE adapter ${entry.adapter} did not finish starting within ${boundMs}ms`);
@@ -85,11 +78,31 @@ export class MultiBleServer {
         Promise.resolve().then(() => server.stop()).catch(() => {});
         reject(error);
       }, boundMs);
-      server.start().then(
+      const start = async () => {
+        if ((server.retired || server.pendingStartOperation) && typeof entry.createServer === 'function') {
+          server.retire();
+          const replacement = await entry.createServer(); // The factory must reopen bleno, even for the first adapter.
+          if (expired || generation !== this.generation) {
+            replacement.retire();
+            throw new Error('BLE startup cancelled');
+          }
+          server = replacement;
+          entry.server = server;
+        }
+        if (expired || generation !== this.generation) throw new Error('BLE startup cancelled');
+        if (server.state === 'started') return; // Keep healthy mirrors live while retrying a failed adapter.
+        if (!server.adapterLabel) server.adapterLabel = entry.adapter;
+        if (typeof server.startupTimeoutMs === 'number' && server.startupTimeoutMs > this.startupTimeoutMs) {
+          server.startupTimeoutMs = this.startupTimeoutMs;
+        }
+        return server.start();
+      };
+      start().then(
         value => {
           clearTimeout(timer);
-          if (expired) {
+          if (expired || generation !== this.generation) {
             Promise.resolve().then(() => server.stop()).catch(() => {});
+            if (!expired) reject(new Error('BLE startup cancelled'));
             return;
           }
           resolve(value);

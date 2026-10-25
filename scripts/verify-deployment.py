@@ -7,6 +7,7 @@ import shlex
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -59,10 +60,13 @@ class DeploymentChecks(unittest.TestCase):
         source = 'set -e\non_chroot() { bash -e; }\n' + STAGE.read_text()
         return self.run_shell(source)
 
-    def run_installer_mirror_setup(self):
+    def run_installer_mirror_setup(self, installer=INSTALLER):
         # The remaining installer intentionally stops services and installs the
         # app. Execute its actual prerequisite functions without that entrypoint.
-        source = INSTALLER.read_text().split("# Ensure we are not executing", 1)[0]
+        source = installer.read_text()
+        boundary = "# Ensure we are not executing"
+        self.assertIn(boundary, source, "Installer boundary changed; refusing to execute it")
+        source = source.split(boundary, 1)[0]
         return self.run_shell(source + "\ndetect_os_release\nmaybe_enable_legacy_apt_mirror\n")
 
     def run_overlay(self):
@@ -142,6 +146,16 @@ class DeploymentChecks(unittest.TestCase):
         self.assert_ok(self.run_installer_mirror_setup())
         self.assertEqual((self.root / "etc/apt/sources.list").read_text(), main)
         self.assertFalse((self.root / "etc/apt/apt.conf.d/99-gymnasticon-archive-tweaks").exists())
+
+    def test_missing_installer_boundary_does_not_execute_commands(self):
+        installer = self.root / "install.sh"
+        installer.write_text(INSTALLER.read_text().replace(
+            "# Ensure we are not executing", "# Reworded entrypoint comment", 1))
+        with patch.object(self, "run_shell") as run_shell:
+            with self.assertRaisesRegex(AssertionError, "refusing to execute"):
+                self.run_installer_mirror_setup(installer)
+            run_shell.assert_not_called()
+        self.assertEqual(self.actions(), [])
 
     def test_failed_overlay_preserves_helper_and_does_not_reboot(self):
         self.write("etc/systemd/system/lockrootfs.service", "retain for retry")

@@ -253,16 +253,19 @@ export class App {
     const entries = [];
     try {
       for (const adapter of adapters) {
-        if (!this.keepRunning) throw new Error('BLE startup cancelled');
-        const { bleno } = await initializeBleno(adapter, { forceNewInstance: entries.length > 0 });
-        if (!this.keepRunning) {
-          stopBluetoothStack(bleno);
-          throw new Error('BLE startup cancelled');
-        }
-        const server = new GymnasticonServer(bleno, this.opts.serverName, {
-          includeHeartRate: this.heartRateAutoPreference,
-        });
-        entries.push({ adapter, server });
+        const createServer = async (forceNewInstance = true) => {
+          if (!this.keepRunning) throw new Error('BLE startup cancelled');
+          const {bleno} = await initializeBleno(adapter, {forceNewInstance});
+          if (!this.keepRunning) {
+            stopBluetoothStack(bleno);
+            throw new Error('BLE startup cancelled');
+          }
+          return new GymnasticonServer(bleno, this.opts.serverName, {
+            includeHeartRate: this.heartRateAutoPreference,
+          });
+        };
+        const server = await createServer(entries.length > 0);
+        entries.push({adapter, server, createServer});
       }
     } catch (error) {
       for (const {server} of entries) stopBluetoothStack(server.bleno);

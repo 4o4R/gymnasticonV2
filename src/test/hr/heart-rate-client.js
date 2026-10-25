@@ -230,3 +230,96 @@ test('HeartRateClient bounds a silent GATT peer and never waits on unsubscribe d
   t.equal(characteristic.listenerCount('data'), 0, 'our notification handler is removed');
   t.end();
 });
+
+test('HeartRateClient can retry after scan ownership is cancelled during startup', async t => {
+  const noble = new FakeNoble();
+  noble.startScanningAsync = () => new Promise(() => {});
+  const client = createClient(noble);
+  const starting = client.connect();
+  await client.scanCoordinator.releaseAll();
+  let failure;
+  await starting.catch(error => { failure = error; });
+  t.equal(failure?.code, 'BLE_SCAN_CANCELLED', 'cancelled acquisition is reported to the caller');
+  t.equal(client.isScanning, false, 'the client does not claim a scan that never started');
+  t.equal(noble.listenerCount('discover'), 0, 'failed acquisition leaves no discovery listener');
+  t.equal(client.scanCoordinator.holderCount, 0, 'the cancelled owner is released');
+
+  noble.startScanningAsync = FakeNoble.prototype.startScanningAsync.bind(noble);
+  await client.connect();
+  t.equal(noble.scanStarts, 1, 'a later connect makes a fresh scan request');
+  t.equal(client.isScanning, true, 'the later scan is active');
+  await client.disconnect();
+  t.end();
+});
+
+test('HeartRateClient keeps discovering sensors that arrive after the setup budget', async t => {
+  const noble = new FakeNoble();
+  const client = createClient(noble);
+  client.setupTimeoutMs = 5;
+  await client.connect();
+  await new Promise(resolve => setTimeout(resolve, 15));
+  t.equal(client.isScanning, true, 'the GATT setup budget does not expire advertisement discovery');
+  t.equal(noble.listenerCount('discover'), 1, 'late advertisements still have a listener');
+  const peripheral = createPeripheral({characteristics: [createCharacteristic()]});
+  noble.emit('discover', peripheral);
+  await flush();
+  t.equal(client.connected, true, 'a late sensor connects normally');
+  await client.disconnect();
+  t.end();
+});
+
+test('HeartRateClient shutdown during scan startup is an intentional cancellation', async t => {
+  const noble = new FakeNoble();
+  noble.startScanningAsync = () => new Promise(() => {});
+  const client = createClient(noble);
+  const starting = client.connect();
+  await client.disconnect();
+  await starting;
+  t.equal(client.stopped, true, 'shutdown remains latched');
+  t.equal(client.isScanning, false, 'a cancelled startup cannot revive scanning');
+  t.equal(noble.listenerCount('discover'), 0, 'shutdown removes discovery listeners');
+  t.equal(client.scanCoordinator.holderCount, 0, 'shutdown releases the scan owner');
+  t.end();
+});
+
+test('HeartRateClient accepts a peripheral discovered before the scan-start callback', async t => {
+  const noble = new FakeNoble();
+  noble.startScanningAsync = () => {
+    noble.scanning = true;
+    return new Promise(() => {});
+  };
+  const client = createClient(noble);
+  const starting = client.connect();
+  const peripheral = createPeripheral({characteristics: [createCharacteristic()]});
+  noble.emit('discover', peripheral);
+  await starting;
+  await flush();
+  t.equal(client.connected, true, 'a real discovery can complete connection without the missing scan acknowledgement');
+  t.equal(client.isScanning, false, 'connecting to a candidate ends scanning');
+  t.equal(noble.scanning, false, 'the cancelled scan is stopped');
+  t.equal(client.scanCoordinator.holderCount, 0, 'the connected client no longer holds discovery');
+  await client.disconnect();
+  t.end();
+});
+
+for (const failureMode of ['controller error', 'startup timeout']) {
+  test(`HeartRateClient releases discovery after a scan ${failureMode}`, async t => {
+    const noble = new FakeNoble();
+    noble.startScanningAsync = failureMode === 'controller error'
+      ? async () => { throw new Error('radio denied scan'); }
+      : () => new Promise(() => {});
+    const client = createClient(noble);
+    client.scanCoordinator.startTimeoutMs = 5;
+    let failure;
+    await client.connect().catch(error => { failure = error; });
+    t.ok(failure, 'the startup error reaches the caller');
+    t.equal(client.isScanning, false, 'failed startup does not mark scanning active');
+    t.equal(noble.listenerCount('discover'), 0, 'failed startup detaches discovery');
+    t.equal(client.scanCoordinator.holderCount, 0, 'failed startup leaves no scan claim');
+    noble.startScanningAsync = FakeNoble.prototype.startScanningAsync.bind(noble);
+    await client.connect();
+    t.equal(client.isScanning, true, 'a later explicit connect can retry');
+    await client.disconnect();
+    t.end();
+  });
+}

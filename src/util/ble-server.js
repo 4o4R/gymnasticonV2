@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import util from 'util';
 
 import { resolveStartupTimeout, STARTUP_TIMEOUT_CODE, waitForPoweredOn } from './ble-startup.js';
+import {stopBluetoothStack} from './bluetooth-shutdown.js';
 
 /**
  * Bluetooth LE GATT server helper built on top of bleno.
@@ -23,6 +24,7 @@ export class BleServer extends EventEmitter {
     this.connectionCount = 0;
     this.startup = null;
     this.pendingStartOperation = null;
+    this.retired = false;
 
     this.bleno.on('accept', this.onAccept.bind(this));
     this.bleno.on('disconnect', this.onDisconnect.bind(this));
@@ -39,6 +41,7 @@ export class BleServer extends EventEmitter {
 
   /** Start advertising and wait for a connection. */
   async start() {
+    if (this.retired) throw new Error(`BLE adapter ${this.adapterName} binding was retired`);
     if (this.state !== 'stopped') {
       throw new Error('already started');
     }
@@ -93,7 +96,10 @@ export class BleServer extends EventEmitter {
 
   async startStep(attempt, action) {
     if (attempt.aborted) throw attempt.error;
-    const pending = Promise.resolve().then(action);
+    const pending = Promise.resolve().then(() => {
+      if (attempt.aborted || this.retired) throw attempt.error || new Error('BLE binding retired');
+      return action();
+    });
     this.pendingStartOperation = pending;
     try {
       await pending;
@@ -121,6 +127,7 @@ export class BleServer extends EventEmitter {
   }
 
   stopAdvertisingBestEffort() {
+    if (this.retired) return;
     try {
       Promise.resolve(this.bleno.stopAdvertisingAsync()).catch(() => {});
     } catch (_error) {
@@ -128,8 +135,24 @@ export class BleServer extends EventEmitter {
     }
   }
 
+  retire() {
+    if (this.retired) return;
+    this.cancelStartup(new Error(`BLE adapter ${this.adapterName} binding was retired`));
+    this.retired = true;
+    // Issue the final stop before closing the old stack. Its late callbacks
+    // must never send another command after a replacement owns this adapter.
+    try { this.bleno.stopAdvertising(); } catch (_error) { /* unavailable controller */ }
+    if (this.connectionCount > 0) {
+      try { this.bleno.disconnect(); } catch (_error) { /* disconnected controller */ }
+    }
+    this.state = 'stopped';
+    this.connectionCount = 0;
+    stopBluetoothStack(this.bleno);
+  }
+
   /** Disconnect any active connections and stop advertising. */
   async stop() {
+    if (this.retired) return;
     this.cancelStartup();
     if (this.state === 'stopped' || this.state === 'stopping') return;
 
@@ -160,6 +183,7 @@ export class BleServer extends EventEmitter {
   }
 
   onAccept(address) {
+    if (this.retired) return;
     // Teaching note: increment connection tracking so stop() can decide whether
     // it is safe/necessary to call bleno.disconnect().
     this.connectionCount += 1;
@@ -167,6 +191,7 @@ export class BleServer extends EventEmitter {
   }
 
   onDisconnect(address) {
+    if (this.retired) return;
     // Teaching note: decrement connection tracking but never let it go negative
     // in case of duplicate disconnect events.
     this.connectionCount = Math.max(0, this.connectionCount - 1);

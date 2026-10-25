@@ -35,6 +35,7 @@ export function createScanTag(prefix) {
  * @param {object} [options]
  * @param {number} [options.timeoutMs] - resolve null after this long (0 = wait forever).
  * @param {Function} [options.onDiscovery] - called for every advertisement seen.
+ * @param {EventEmitter} [options.cancellation] - emits cancel and latches cancelled on shutdown.
  * @returns {Promise<Peripheral|null>} the matching peripheral, or null on timeout.
  */
 export function waitForPeripheral(noble, filter, options = {}) {
@@ -56,6 +57,7 @@ export function waitForPeripheral(noble, filter, options = {}) {
       }
       settled = true;
       noble.removeListener('discover', onDiscover);
+      options.cancellation?.removeListener('cancel', onCancel);
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
@@ -74,6 +76,12 @@ export function waitForPeripheral(noble, filter, options = {}) {
       }
     };
 
+    const onCancel = () => finish(null);
+    if (options.cancellation?.cancelled) {
+      finish(null);
+      return;
+    }
+    options.cancellation?.once('cancel', onCancel);
     noble.on('discover', onDiscover);
     if (timeoutMs > 0) {
       timeoutId = setTimeout(() => finish(null), timeoutMs);

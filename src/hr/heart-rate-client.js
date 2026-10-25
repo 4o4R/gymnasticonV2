@@ -97,13 +97,25 @@ export class HeartRateClient extends EventEmitter {
     if (this.isScanning || this.connected || this.stopped) {
       return;
     }
-    await this.scanCoordinator.acquire(this.scanTag);
-    if (this.stopped) {
-      // A disconnect() landed while the shared scan was starting.
+    try {
+      const scanning = await this.scanCoordinator.acquire(this.scanTag);
+      if (this.stopped || this.connecting || this.connected) {
+        // Shutdown or a discovered peripheral already ended this scan attempt.
+        await this.releaseScan();
+        return;
+      }
+      if (!scanning) {
+        const error = new Error('Heart-rate scan was cancelled before discovery started');
+        error.code = 'BLE_SCAN_CANCELLED';
+        throw error;
+      }
+      this.isScanning = true;
+    } catch (error) {
+      this.detachDiscoverListener();
       await this.releaseScan();
-      return;
+      if (this.stopped || this.connecting || this.connected) return;
+      throw error;
     }
-    this.isScanning = true;
   }
 
   async stopSharedScan() {

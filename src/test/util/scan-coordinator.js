@@ -3,6 +3,8 @@ import {spawnSync} from 'child_process';
 
 import test from '../support/tape.js';
 import {ScanCoordinator, createScanTag, waitForPeripheral} from '../../util/scan-coordinator.js';
+import {SpeedSensorClient} from '../../speed/speed-sensor-client.js';
+import {CadenceSensorClient} from '../../cadence/cadence-sensor-client.js';
 
 class FakeNoble extends EventEmitter {
   constructor() {
@@ -25,6 +27,134 @@ class FakeNoble extends EventEmitter {
     this.scanning = false;
     this.scanStops += 1;
   }
+}
+
+const silentSensorLog = {log() {}, warn() {}, error() {}};
+
+function sensorPeripheral(client) {
+  const characteristic = new EventEmitter();
+  characteristic.uuid = client.characteristicUuid;
+  characteristic.subscribeAsync = async () => {};
+  characteristic.unsubscribeAsync = async () => {};
+  const peripheral = new EventEmitter();
+  peripheral.state = 'disconnected';
+  peripheral.advertisement = {serviceUuids: [client.serviceUuid]};
+  peripheral.connectAsync = async () => { peripheral.state = 'connected'; };
+  peripheral.disconnectAsync = async () => { peripheral.state = 'disconnected'; };
+  peripheral.discoverServicesAndCharacteristicsAsync = async () => ({characteristics: [characteristic]});
+  return peripheral;
+}
+
+for (const SensorClient of [SpeedSensorClient, CadenceSensorClient]) {
+  test(`${SensorClient.name} does not wait for advertisements after scan acquisition is cancelled`, async t => {
+    const noble = new FakeNoble();
+    noble.startScanningAsync = () => new Promise(() => {});
+    const coordinator = new ScanCoordinator(noble);
+    const client = new SensorClient(noble, {scanCoordinator: coordinator});
+    const discovering = client.scanForPeripheral(1000);
+    await coordinator.releaseAll();
+    let timer;
+    const cancelled = await Promise.race([
+      discovering,
+      new Promise(resolve => { timer = setTimeout(() => resolve('still waiting'), 30); }),
+    ]);
+    clearTimeout(timer);
+    t.equal(cancelled, null, 'cancelled acquisition finishes without waiting for discovery');
+    t.equal(noble.listenerCount('discover'), 0, 'no listener remains on an unowned scan');
+    t.equal(coordinator.holderCount, 0, 'no cancelled claim remains');
+    const peripheral = {advertisement: {serviceUuids: [client.serviceUuid]}};
+    // Settle an old implementation's discovery promise too, so a failed
+    // regression does not leave its timeout running in the test process.
+    noble.emit('discover', peripheral);
+    await discovering;
+
+    noble.startScanningAsync = FakeNoble.prototype.startScanningAsync.bind(noble);
+    const retry = client.scanForPeripheral(1000);
+    await new Promise(resolve => setImmediate(resolve));
+    noble.emit('discover', peripheral);
+    t.equal(await retry, peripheral, 'a subsequent acquisition discovers normally');
+    t.equal(coordinator.holderCount, 0, 'successful discovery releases its own claim');
+    await client.disconnect();
+    t.end();
+  });
+
+  test(`${SensorClient.name} does not undo an intentional stop while reconnect cleanup is awaiting`, async t => {
+    const noble = new FakeNoble();
+    const coordinator = new ScanCoordinator(noble);
+    const client = new SensorClient(noble, {
+      scanCoordinator: coordinator, logger: silentSensorLog,
+      connectTimeout: 0.02, maxConnectRetries: 0,
+    });
+    const reconnecting = client.reconnect();
+    await client.disconnect();
+    await reconnecting;
+    t.equal(client.shouldReconnect, false, 'intentional stop stays latched');
+    t.equal(client.connecting, false, 'the stale retry does not begin connecting');
+    t.equal(noble.scanStarts, 0, 'no scan starts after shutdown');
+    t.equal(noble.listenerCount('discover'), 0, 'no discovery listener is reattached');
+    t.equal(coordinator.holderCount, 0, 'no retry claim remains');
+    t.equal(client.retryTimer, null, 'shutdown does not leave a retry timer');
+    t.end();
+  });
+
+  test(`${SensorClient.name} cancels active discovery immediately without stopping a healthy peer`, async t => {
+    const noble = new FakeNoble();
+    const coordinator = new ScanCoordinator(noble);
+    await coordinator.acquire('healthy-peer');
+    const client = new SensorClient(noble, {scanCoordinator: coordinator, logger: silentSensorLog});
+    const discovering = client.scanForPeripheral(0);
+    await new Promise(resolve => setImmediate(resolve));
+    t.equal(noble.listenerCount('discover'), 1, 'an unlimited discovery is active');
+    const attempt = client.discoveryAttempt;
+    await client.disconnect();
+    let timer;
+    const cancelled = await Promise.race([
+      discovering,
+      new Promise(resolve => { timer = setTimeout(() => resolve('still waiting'), 30); }),
+    ]);
+    clearTimeout(timer);
+    t.equal(cancelled, null, 'shutdown resolves active discovery without waiting for a deadline');
+    t.equal(noble.listenerCount('discover'), 0, 'the discovery listener is removed immediately');
+    t.equal(attempt?.listenerCount('cancel'), 0, 'the cancellation listener is removed too');
+    t.equal(coordinator.holderCount, 1, 'only the healthy peer retains ownership');
+    t.equal(noble.scanning, true, 'the peer keeps its native scan');
+    const peripheral = sensorPeripheral(client);
+    // Also settle a pre-fix unlimited discovery so a red run can finish.
+    noble.emit('discover', peripheral);
+    await discovering;
+    const reconnecting = client.connect();
+    await new Promise(resolve => setImmediate(resolve));
+    noble.emit('discover', {advertisement: {serviceUuids: ['ffff']}});
+    await new Promise(resolve => setImmediate(resolve));
+    noble.emit('discover', peripheral);
+    await reconnecting;
+    t.equal(client.isConnected, true, 'a later explicit connect still accepts a late sensor');
+    await client.disconnect();
+    await coordinator.releaseAll();
+    t.end();
+  });
+
+  test(`${SensorClient.name} old discovery cleanup cannot release a successor or clear its state`, async t => {
+    const noble = new FakeNoble();
+    const coordinator = new ScanCoordinator(noble);
+    const client = new SensorClient(noble, {scanCoordinator: coordinator, logger: silentSensorLog});
+    const oldConnection = client.connect();
+    await new Promise(resolve => setImmediate(resolve));
+    await client.disconnect();
+    const successor = client.connect();
+    const successorAttempt = client.discoveryAttempt;
+    await oldConnection;
+    await new Promise(resolve => setImmediate(resolve));
+    t.equal(client.connecting, true, 'old cancellation does not clear the new connecting flag');
+    t.equal(coordinator.holderCount, 1, 'the successor keeps its own scan claim');
+    t.ok(coordinator.has(successorAttempt.scanTag), 'the current attempt still owns its tag');
+    t.equal(noble.listenerCount('discover'), 1, 'only the successor listens for advertisements');
+    noble.emit('discover', sensorPeripheral(client));
+    await successor;
+    t.equal(client.isConnected, true, 'successor setup completes normally');
+    await client.disconnect();
+    t.end();
+  });
 }
 
 test('ScanCoordinator starts one native scan for two holders', async (t) => {
