@@ -1,8 +1,10 @@
 import {EventEmitter} from 'events'; // Base class so the client can emit measurement events.
+import {performance} from 'perf_hooks';
 import {scan} from '../util/ble-scan.js'; // Helper that performs BLE scans using noble.
+import {connectWithTimeout, disconnectPeripheral} from '../util/noble-wrapper.js';
 import {loadDependency, toDefaultExport} from '../util/optional-deps.js'; // Optional dependency loader so we can swap in stubs.
 import {estimatePower, Ewma} from '../util/power-estimator.js'; // Shared helpers for power estimation and smoothing.
-import {FTMS_SERVICE_UUID, INDOOR_BIKE_DATA_UUID, parseIndoorBikeData} from './ftms-indoor-bike.js'; // Shared FTMS Indoor Bike Data decoder.
+import {FTMS_SERVICE_UUID, INDOOR_BIKE_DATA_UUID, IndoorBikeDataAssembler} from './ftms-indoor-bike.js';
 
 const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta); // Debug logging helper.
 const debug = toDefaultExport(debugModule)('gym:bikes:ic8');
@@ -27,11 +29,15 @@ const CSC_SERVICE_UUID = '1816'; // Cycling Speed and Cadence service for cadenc
 const CSC_MEASUREMENT_UUID = '2a5b'; // CSC Measurement characteristic.
 
 export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 client that estimates power from cadence + resistance.
-  constructor({ noble, log = console, config = {} } = {}) {
+  constructor({ noble, log = console, config = {}, now = () => performance.now() } = {}) {
     super();
     this.noble = noble || resolveNoble(); // Accept the shared noble instance from the App when provided; otherwise fall back to the lazy loader above.
     this.log = log; // Logger interface (console by default).
     this.config = config; // Optional calibration config for power estimation.
+    this.now = now;
+    this.indoorBikeDataAssembler = new IndoorBikeDataAssembler({now});
+    this.lastCrankChangeAt = null;
+    this.crankIntervalMs = 0;
     this.device = null; // Active noble peripheral once connected.
     this.characteristics = []; // Track subscribed characteristics so disconnect() can detach listeners.
     this.state = { rpm: 0, resistance: 0, watts: 0, speed: undefined }; // Track the latest cadence/resistance/power/speed values.
@@ -67,7 +73,7 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
       throw new Error('Unable to find Schwinn IC8 / Bowflex C6 bike');
     }
     this.device = peripheral;
-    await peripheral.connectAsync();
+    await connectWithTimeout(peripheral);
     this.log.info?.('Connected to IC8 peripheral', peripheral.address);
     // Teaching note: without a peripheral disconnect listener the app would
     // keep broadcasting the last power/cadence after the bike drops.
@@ -126,13 +132,16 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
       }
       if (this.device) {
         this.device.removeListener('disconnect', this.onPeripheralDisconnectBound);
-        await this.device.disconnectAsync();
+        await disconnectPeripheral(this.device);
       }
     } catch (error) {
       debug('error during IC8 disconnect', error);
     } finally {
       this.device = null;
       this.lastCrank = undefined; // Reset stale crank state so a same-instance reconnect starts clean.
+      this.lastCrankChangeAt = null;
+      this.crankIntervalMs = 0;
+      this.indoorBikeDataAssembler.reset();
       this.nativePower = undefined; // Drop native FTMS values so a reconnect cannot replay the last ride.
       this.nativeCadence = undefined;
       this.state = { rpm: 0, resistance: 0, watts: 0, speed: undefined };
@@ -141,6 +150,7 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
   }
 
   onPeripheralDisconnect() { // Emit a disconnect event so the app stops advertising stale data.
+    this.indoorBikeDataAssembler.reset();
     this.log.warn?.('IC8 peripheral disconnected');
     const address = this.device?.address;
     this.device = null;
@@ -159,20 +169,25 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
   onIndoorBikeData(buf) { // Decode FTMS Indoor Bike Data and prefer its native power/cadence over the estimator.
     let parsed;
     try {
-      parsed = parseIndoorBikeData(buf);
+      parsed = this.indoorBikeDataAssembler.push(buf);
     } catch (error) {
       // A truncated/fragmented frame must never escape into the notification handler.
       debug('ignoring malformed FTMS Indoor Bike Data frame', error);
       return;
     }
-    // Each frame is self-describing, so assign unconditionally: a field the
-    // flags omit clears the native value and the CSC/estimator fallbacks resume.
+    if (!parsed) return;
+    // Only a completed data record can replace native fields. Individual
+    // notifications can omit fields carried by another fragment of that record.
     this.nativeCadence = Number.isFinite(parsed.cadence) ? parsed.cadence : undefined;
     this.nativePower = Number.isFinite(parsed.power) ? parsed.power : undefined;
     // Keep speed in step with the frames too: a frame without speed clears it so
     // the app falls back to its cadence-based estimate instead of broadcasting
     // the last speed forever.
     this.state.speed = Number.isFinite(parsed.speed) ? parsed.speed : undefined;
+    if (Number.isFinite(parsed.resistance)) {
+      // Match the existing vendor-resistance path's 0..100 estimator input.
+      this.state.resistance = Math.max(0, Math.min(100, parsed.resistance)) / 100;
+    }
     this.publish();
   }
 
@@ -206,6 +221,7 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
   updateCadence(crankRevolutions, crankTimestamp) { // Derive RPM from cumulative crank data per CSC specification.
     if (!this.lastCrank) {
       this.lastCrank = { revolutions: crankRevolutions, timestamp: crankTimestamp };
+      this.lastCrankChangeAt = this.now();
       return;
     }
     let deltaRevs = crankRevolutions - this.lastCrank.revolutions;
@@ -214,18 +230,24 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
     if (deltaTime < 0) deltaTime += 0x10000; // Handle 16-bit wrap.
     this.lastCrank = { revolutions: crankRevolutions, timestamp: crankTimestamp };
     if (deltaTime === 0 || deltaRevs === 0) {
-      // Teaching note: a repeated packet means the cranks are not turning, so
-      // cadence drops to 0. Keeping the previous value made a stopped rider look
-      // like they were still pedalling.
-      this.state.rpm = 0;
+      // Notifications can arrive between revolutions. Elapsed inactivity,
+      // checked in publish(), distinguishes a duplicate from stopped cranks.
       return;
     }
     const seconds = deltaTime / 1024; // CSC timestamps use 1/1024 second resolution.
     const rpm = (deltaRevs / seconds) * 60;
+    this.lastCrankChangeAt = this.now();
+    this.crankIntervalMs = (seconds * 1000) / deltaRevs;
     this.state.rpm = Math.max(0, Math.round(rpm));
   }
 
   publish() { // Emit smoothed power/cadence whenever either input changes.
+    // Allow at least two revolutions at the last observed cadence so slow
+    // pedaling does not look like a stop between notifications.
+    const inactivityMs = Math.max(3000, this.crankIntervalMs * 2);
+    if (this.lastCrankChangeAt !== null && this.now() - this.lastCrankChangeAt >= inactivityMs) {
+      this.state.rpm = 0;
+    }
     const { rpm, resistance } = this.state;
     // Native FTMS cadence wins; CSC-derived rpm is the fallback for consoles
     // that only publish the CSC service.

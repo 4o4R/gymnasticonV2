@@ -3,6 +3,23 @@ const neutralizedHci = new WeakSet();
 
 const noop = () => {};
 
+/** Remember the process hooks installed by one synchronous native initialization. */
+export function captureBluetoothInitialization(stack, initialize) {
+  const events = ['exit', 'SIGINT'];
+  const before = new Map(events.map(event => [event, new Set(process.listeners(event))]));
+  try {
+    return initialize();
+  } finally {
+    const owned = stack.__gymnasticonProcessListeners || [];
+    for (const event of events) {
+      for (const listener of process.listeners(event)) {
+        if (!before.get(event).has(listener)) owned.push({event, listener});
+      }
+    }
+    stack.__gymnasticonProcessListeners = owned;
+  }
+}
+
 /**
  * Collect the HCI helper objects reachable from a noble or bleno instance.
  *
@@ -21,6 +38,8 @@ function hciInstances(stack) {
   };
   add(stack?._bindings?._hci);
   add(stack?._hci);
+  // Bleno's SMP helper owns an additional control-channel socket.
+  add(stack?.__gymnasticonManagement);
   return found;
 }
 
@@ -97,6 +116,14 @@ function releaseSocket(socket) {
  */
 export function stopBluetoothStack(stack) {
   let acted = false;
+  if (stack && typeof stack === 'object') {
+    try { stack.__gymnasticonStopped = true; } catch (_error) { /* frozen shim */ }
+  }
+  for (const {event, listener} of stack?.__gymnasticonProcessListeners || []) {
+    process.removeListener(event, listener);
+    acted = true;
+  }
+  if (stack?.__gymnasticonProcessListeners) stack.__gymnasticonProcessListeners = [];
   for (const hci of hciInstances(stack)) {
     try {
       if (neutralizePoller(hci)) {

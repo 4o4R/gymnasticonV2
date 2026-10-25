@@ -1,3 +1,5 @@
+import {performance} from 'perf_hooks';
+
 // Shared decoding for the Bluetooth LE FTMS Indoor Bike Data characteristic (0x2AD2).
 // The IC4/IC5 family and the IC8/C6 consoles publish the same characteristic, so
 // the flag-driven walk lives here instead of being duplicated in each client.
@@ -26,6 +28,7 @@ const PARSE_ERROR = 'unable to parse message';
  * @returns {number} [message.power] - instantaneous power (watts)
  * @returns {number} [message.cadence] - instantaneous cadence (rpm)
  * @returns {number} [message.speed] - instantaneous speed (m/s)
+ * @returns {number} [message.resistance] - console resistance level (0..100 on IC8/C6)
  */
 export function parseIndoorBikeData(data) {
   // Teaching note: this characteristic is variable-length. The 16-bit flag word
@@ -77,7 +80,9 @@ export function parseIndoorBikeData(data) {
     offset += 3;
   }
   if (flags & IBD_FLAG_RESISTANCE_LEVEL) {
-    readField(data, offset, 2);
+    // Preserve this profile's existing two-byte resistance layout. Other
+    // console layouts need captures before changing the field width or scale.
+    parsed.resistance = readField(data, offset, 2, true);
     offset += 2;
   }
   if (flags & IBD_FLAG_INSTANTANEOUS_POWER) {
@@ -90,6 +95,42 @@ export function parseIndoorBikeData(data) {
   }
 
   return parsed;
+}
+
+/** Assemble one FTMS data record, which may span several notifications. */
+export class IndoorBikeDataAssembler {
+  constructor({now = () => performance.now(), timeoutMs = 2000} = {}) {
+    this.now = now;
+    this.timeoutMs = timeoutMs;
+    this.reset();
+  }
+
+  reset() {
+    this.pending = null;
+    this.startedAt = null;
+  }
+
+  push(data) {
+    let fields;
+    try {
+      fields = parseIndoorBikeData(data);
+    } catch (error) {
+      this.reset();
+      throw error;
+    }
+    const now = this.now();
+    if (this.pending && now - this.startedAt >= this.timeoutMs) {
+      this.reset();
+    }
+    const record = {...this.pending, ...fields};
+    if (data.readUInt16LE(0) & IBD_FLAG_MORE_DATA) {
+      if (!this.pending) this.startedAt = now;
+      this.pending = record;
+      return null;
+    }
+    this.reset();
+    return record;
+  }
 }
 
 /**

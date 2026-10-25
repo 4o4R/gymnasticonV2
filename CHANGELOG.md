@@ -2,16 +2,26 @@
 
 ## [Unreleased]
 ### Fixed
+- Scan startup and shared ownership now cancel the pinned noble callbacks belonging to an expired request, so a late scan event cannot stop its successor. Optional scan startup also has its own deadline.
+- Pending and queued LE connections use bounded cancellation, including the controller's LE Create Connection Cancel command; late successful links are disconnected using their real handle. An unconfirmed bike cancellation reopens the radio before retrying.
+- Heart-rate setup listens for link loss before GATT discovery, bounds setup, and retains each attempt's peripheral through shutdown so late links cannot leak.
+- Bike discovery and connection have separate watchdog budgets, allowing autodetection to return and connect its configured fallback. Shutdown cancels initial radio readiness, discovery, advertising startup, and pending retry waits.
+- Advertising commands and service registration share one startup deadline. Cancelled adapters stop late controller completions, and multi-output shutdown includes failed adapters.
+- IC4/IC8 assemble split FTMS records before publishing, IC8 waits for elapsed crank inactivity before reporting a stop, and FTMS resistance contributes to estimated power.
+- SC Control Point responses use opcode `0x10`, require indication subscription, and serialize procedures until confirmation. Unsupported bike calibration is reported honestly.
+- Bookworm image builds retain their current mirrors; Buster normalization also repairs old `archive.raspbian.org` sources. Overlay setup fails before disabling its recovery helper or rebooting when a command fails.
+- Native source builds pin a Python 3 compatible project-local `node-gyp` because native build helpers can bypass npm's global toolchain override.
+- Importing BLE characteristic constructors no longer initializes bleno's default HCI binding, which previously kept Linux running after shutdown when no bike had connected.
 - IC4/Flywheel connections no longer pass an options object to noble's callback-based `connectAsync()`, which threw `TypeError: callback is not a function` when the link completed and could restart the service in a loop. The 10 s connect budget is now enforced by the caller.
 - CSC/telemetry counters are no longer corrupted during normal riding: the simulated pedal path passed milliseconds into an integrator that expects seconds (120 rpm produced 55,027 crank revolutions in 30 ms). Integration is now explicitly seconds-based with a defensive clamp.
-- BLE scanning can no longer hang autodetection when the controller ignores scan startup (for example `Command Disallowed`); the discovery deadline is armed before startup, and the bike connect watchdog is armed before autodetection runs.
+- BLE scan discovery deadlines are armed before controller startup (including `Command Disallowed` failures), and the application gives discovery and fallback connection separate bounded waits.
 - Optional sensors share one refcounted scan owner instead of starting and stopping each other's scans, so heart-rate, speed and cadence discovery can no longer leave a later bridge app undiscovered.
 - The simulated pedal emitter stops on disconnect and shutdown, and is only armed in bot mode — real bike telemetry mirrors cadence without scheduling synthetic pedal strokes.
 - Noble and bleno's recurring `pollIsDevUp` timers are neutralized during shutdown so the process can exit.
 - Each noble instance binds its own HCI adapter at bind time (`hci0`/`hci1` produced `[0, 0]` before), keeping a dedicated heart-rate radio from stealing the bike's adapter.
 - Heart-rate teardown is now intentional-stop aware: it no longer restarts scanning after `disconnect()`, releases a physically connected peripheral after failed GATT setup, and cannot mark an obsolete connection as connected.
 - Keiser selection isolates the configured MAC address; other consoles with the same shared name or Keiser payload are no longer accepted during or after discovery. When the adapter cannot resolve an address, identity falls back to the equipment ID that Keiser documents as the primary identifier (byte 5), so a ride is no longer dropped mid-session. Realtime `data-type` values are now validated as 0 or 128–227 (228–254 was wrongly accepted, 128 rejected).
-- IC8/C6 CSC parsing honours the wheel fields that precede crank data (a valid 60 rpm packet decoded as zero) and reports 0 rpm/power on repeated stationary packets instead of a stale estimate.
+- IC8/C6 CSC parsing honours the wheel fields that precede crank data (a valid 60 rpm packet decoded as zero) and reports zero power/cadence after elapsed crank inactivity instead of treating ordinary repeated events as stops.
 - IC8/C6 now uses native FTMS power/cadence when the console publishes the Indoor Bike Data characteristic, falling back to CSC or to cadence + resistance estimation when it does not. The flag-driven FTMS decoder is shared with IC4.
 - Advertising startup is bounded for every bleno transport: an adapter that never reports `poweredOn` no longer stalls multi-output startup, the base `BleServer` uses the same bound, and remaining adapters keep advertising in an explicitly logged degraded mode.
 - The CSC service now includes the mandatory SC Control Point characteristic (2A55) alongside wheel/crank support.
@@ -29,7 +39,7 @@
 - The supported-bike table no longer claims IC5/Schwinn 290 power estimation that is not implemented, and a "Known limitations" block records the remaining capture gap and how Keiser isolation degrades when every console keeps the default equipment ID of 0.
 
 ### Tests
-- Added regressions for every item above; the suite now contains 665 passing assertions on Node 14 and Node 22.
+- Node 14 regressions cover packet assembly, real pinned-library cancellation, late callbacks and shutdown. Linux deployment checks execute the actual mirror and overlay commands in isolated fixtures; CI runs them alongside the JavaScript suite.
 
 ## [2.0.9] - 2026-08-30
 ### Fixed

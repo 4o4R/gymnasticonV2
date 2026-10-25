@@ -5,7 +5,7 @@ const execFileAsync = util.promisify(execFile);
 import {scan} from '../util/ble-scan.js';
 import {macAddress} from '../util/mac-address.js';
 import {createDropoutFilter} from '../util/dropout-filter.js';
-import {CONNECT_TIMEOUT_MS, connectWithTimeout} from '../util/noble-wrapper.js';
+import {CONNECT_TIMEOUT_MS, connectWithTimeout, disconnectPeripheral} from '../util/noble-wrapper.js';
 
 export const FLYWHEEL_LOCALNAME = 'Flywheel 1';
 
@@ -174,7 +174,7 @@ export class FlywheelBikeClient extends EventEmitter {
     const disconnectingPeripheral = this.peripheral;
     this.state = 'disconnecting';
     try {
-      await disconnectingPeripheral.disconnectAsync();
+      await disconnectPeripheral(disconnectingPeripheral);
     } catch (err) {
       debuglog('error disconnecting from Flywheel bike', err);
     } finally {

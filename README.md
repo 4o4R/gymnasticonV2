@@ -160,13 +160,14 @@ Most users can leave the defaults in place and rely on autodetection.
 | Peloton Bike | USB serial | Requires the active cable setup documented by the original Gymnasticon project. |
 | Schwinn IC4 / IC8 / Bowflex C6 | Bluetooth LE | IC8/C6 prefers native FTMS power when the console publishes it and falls back to cadence + resistance estimation. |
 | Schwinn 290 recumbent | Bluetooth LE FTMS | Auto-detected through the IC4-compatible FTMS profile. Unverified: no capture from a real 290 has been validated yet. |
-| Keiser M Series (M3i, M3i-TBT, M3iX) | Bluetooth broadcast | Can be isolated by MAC address or by the console's equipment ID; an unknown or rotating MAC no longer drops the ride. |
+| Keiser M Series (M3i, M3i-TBT, M3iX) | Bluetooth broadcast | Select by MAC address or by a unique console equipment ID; use `keiserEquipmentId` for rotating MAC addresses. |
 | LifeFitness IC5 | Bluetooth LE | Uses the FTMS profile and reports native power when the console publishes it. IC5-specific power estimation is not implemented. |
 
 Known limitations:
 
 - IC5 and Schwinn 290 field layouts are only proven against the IC4-compatible FTMS frames this project already handles. Real captures from those consoles are still needed to confirm per-console layouts and whether they publish power at all.
-- Keiser isolation uses the console's MAC address when the adapter can resolve one; when it cannot (`address: unknown`, or the console rotates its MAC), Gymnasticon falls back to the equipment ID documented by Keiser (`keiserEquipmentId`, byte 5 of the broadcast). Consoles left at the factory-default equipment ID of `0` in the same room are therefore only distinguishable by MAC, so set a unique equipment ID on each console if you run several.
+- An explicit `keiserEquipmentId` selects that equipment ID even if the console rotates its MAC. A MAC-only selection remains strict when an address is available; an unknown address can fall back to the captured equipment ID. Consoles sharing the factory-default equipment ID `0` are only distinguishable by MAC, so assign unique IDs when running several consoles.
+- FTMS resistance uses the existing IC8/C6 two-byte, 0–100 console layout for estimation. Console-specific resistance ranges and field layouts still require real captures.
 
 ## Supported Outputs
 

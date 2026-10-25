@@ -503,9 +503,14 @@ export class KeiserBikeClient extends EventEmitter {
     const payload = extractKeiserPayload(peripheral?.advertisement);
     const equipmentId = equipmentIdFromAdvertisement(peripheral?.advertisement);
 
-    // Teaching note: when the operator pinned a MAC, a *usable* address decides
-    // alone. Two consoles in one room have different MACs, so this is what keeps
-    // a neighbouring ride out of this one.
+    // An explicitly configured equipment ID survives usable MAC rotation too.
+    // Discovery already accepts either selector, so reception must agree.
+    if (this.targetEquipmentId !== null && equipmentId !== null) {
+      return equipmentId === this.targetEquipmentId ||
+        Boolean(this.targetAddress && usableAddress && address === this.targetAddress);
+    }
+
+    // With only a pinned MAC, preserve strict isolation when an address exists.
     if (this.targetAddress && usableAddress) {
       return address === this.targetAddress;
     }

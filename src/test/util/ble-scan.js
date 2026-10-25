@@ -157,7 +157,7 @@ test('scan() resolves on timeout when noble scan startup never settles', async (
   t.equal(result, null, 'returns null when the scan never starts');
   t.ok(elapsed < 1000, `settled promptly instead of hanging (${elapsed}ms)`);
   t.equal(noble.listenerCount('discover'), 0, 'removes the discovery listener');
-  t.equal(stopCalls, 0, 'nothing to stop while startup is still pending');
+  t.equal(stopCalls, 1, 'cancels the pending controller operation at the deadline');
   t.end();
 });
 
@@ -174,12 +174,12 @@ test('scan() stops a scan that only starts after the timeout already fired', asy
 
   const result = await scan(noble, [], () => false, {timeoutMs: 10, stopScanOnTimeout: true});
   t.equal(result, null, 'times out while startup is pending');
-  t.equal(stopCalls, 0, 'no scan to stop yet');
+  t.equal(stopCalls, 1, 'cancels the pending start before another scan can take ownership');
 
   finishStartup();
   await new Promise((resolve) => setTimeout(resolve, 10));
 
-  t.equal(stopCalls, 1, 'the late scan is stopped immediately instead of running unsupervised');
+  t.equal(stopCalls, 1, 'late completion cannot stop a successor scan');
   t.end();
 });
 

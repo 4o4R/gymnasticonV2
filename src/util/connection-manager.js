@@ -1,3 +1,5 @@
+import {disconnectPeripheral} from './noble-wrapper.js';
+
 export class BluetoothConnectionManager {
   constructor(noble, options = {}) {
     this.noble = noble;
@@ -25,7 +27,7 @@ export class BluetoothConnectionManager {
     return Math.floor(jitter);
   }
 
-  async connect(peripheral) {
+  async connect(peripheral, options = {}) {
     // Track connection state so we can retry consistently across attempts.
     const connection = {
       peripheral,
@@ -37,12 +39,14 @@ export class BluetoothConnectionManager {
 
     try {
       while (connection.retryCount < this.maxRetries) {
+        if (options.isCancelled?.()) throw new Error('Bluetooth connection cancelled');
         try {
           await this.attemptConnection(connection);
           connection.connected = true;
           return true;
         } catch (error) {
           connection.retryCount++;
+          if (options.isCancelled?.()) throw error;
           if (error.retryable === false) {
             throw new Error(`Connection aborted because cleanup failed: ${error.message}`);
           }
@@ -111,26 +115,6 @@ export class BluetoothConnectionManager {
   }
 
   async cancelConnectionAttempt(peripheral) {
-    if (!peripheral || peripheral.state === 'disconnected' || peripheral.state === 'error') {
-      return true;
-    }
-    if (typeof peripheral.disconnectAsync !== 'function') {
-      return false;
-    }
-
-    let cleanupTimer;
-    try {
-      const disconnected = await Promise.race([
-        peripheral.disconnectAsync().then(() => true, () => false),
-        new Promise(resolve => {
-          cleanupTimer = setTimeout(() => resolve(false), 1000);
-        }),
-      ]);
-      return disconnected || peripheral.state === 'disconnected';
-    } finally {
-      if (cleanupTimer) {
-        clearTimeout(cleanupTimer);
-      }
-    }
+    return disconnectPeripheral(peripheral);
   }
 }

@@ -112,6 +112,21 @@ test('Ic4BikeClient.connect() establishes a connection without passing noble opt
   t.end();
 });
 
+test('IC4 publishes split FTMS notifications as one record and clears fragments on disconnect', t => {
+  const client = new Ic4BikeClient(undefined);
+  const stats = [];
+  client.on('stats', value => stats.push(value));
+  client.onReceive(Buffer.from('4500a000c800', 'hex'));
+  t.equal(stats.length, 0, 'partial power/cadence does not reach the app');
+  client.onReceive(Buffer.from('0000100e', 'hex'));
+  t.deepEqual(stats[0], {power: 200, cadence: 80, speed: 10}, 'the complete record preserves all metrics');
+  client.onReceive(Buffer.from('4500a000c800', 'hex'));
+  client.onDisconnect();
+  client.onReceive(Buffer.from('0000100e', 'hex'));
+  t.equal(stats[1].power, undefined, 'a previous connection cannot contribute power');
+  t.end();
+});
+
 /**
  * Fake noble peripheral whose connectAsync is util.promisify of a
  * callback-style connect, exactly like @abandonware/noble 1.9.2-10.

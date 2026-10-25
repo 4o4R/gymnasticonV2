@@ -13,19 +13,19 @@ mkdir -p "${ROOTFS_DIR}/proc" \
 on_chroot <<'EOF'
 set -e
 
-echo "[gymnasticon] Normalising Raspberry Pi mirror URLs"
-# Buster Raspbian packages live on legacy.raspbian.org; the retired archive host
-# returns HTTP 404 for buster, so point every Raspbian source at the legacy mirror.
-sed -i -E 's@https?://(raspbian\.raspberrypi\.org|mirrordirector\.raspbian\.org|legacy\.raspbian\.org)/raspbian@http://legacy.raspbian.org/raspbian@g' /etc/apt/sources.list
-for list in /etc/apt/sources.list.d/*.list; do
-  [ -f "$list" ] || continue
-  sed -i -E 's@https?://(raspbian\.raspberrypi\.org|mirrordirector\.raspbian\.org|legacy\.raspbian\.org)/raspbian@http://legacy.raspbian.org/raspbian@g' "$list"
-done
-if [ -f /etc/apt/sources.list.d/raspi.list ]; then
-  sed -i -E 's|https?://archive.raspberrypi.org/debian|http://archive.raspberrypi.org/debian|g' /etc/apt/sources.list.d/raspi.list
-fi
+. /etc/os-release
+if [ "${VERSION_CODENAME:-}" = "buster" ] || [ "${VERSION_ID:-}" = "10" ]; then
+  echo "[gymnasticon] Normalising legacy Buster mirror URLs"
+  # Only Buster belongs on the legacy mirror. Preserve Bookworm's live sources.
+  for list in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+    [ -f "$list" ] || continue
+    sed -i -E 's@(https?://)(raspbian\.raspberrypi\.(org|com)|archive\.raspbian\.org|mirrordirector\.raspbian\.org)/raspbian@\1legacy.raspbian.org/raspbian@g' "$list"
+  done
+  if [ -f /etc/apt/sources.list.d/raspi.list ]; then
+    sed -i -E 's|https?://archive.raspberrypi.org/debian|http://archive.raspberrypi.org/debian|g' /etc/apt/sources.list.d/raspi.list
+  fi
 
-cat >/etc/apt/apt.conf.d/99legacy-repos <<'CONF'
+  cat >/etc/apt/apt.conf.d/99legacy-repos <<'CONF'
 Acquire::Check-Valid-Until "false";
 Acquire::Retries "5";
 Acquire::http::Pipeline-Depth "0";
@@ -33,8 +33,9 @@ Acquire::AllowReleaseInfoChange::Suite "1";
 Acquire::AllowReleaseInfoChange::Codename "1";
 Acquire::AllowReleaseInfoChange::Version "1";
 CONF
+fi
 
-echo "[gymnasticon] Running apt-get update against archive mirrors"
+echo "[gymnasticon] Refreshing package indexes"
 apt-get -o Acquire::Check-Valid-Until=false \
         -o Acquire::AllowReleaseInfoChange::Suite=true \
         -o Acquire::AllowReleaseInfoChange::Codename=true \

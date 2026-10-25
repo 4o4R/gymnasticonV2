@@ -1,7 +1,7 @@
 import {EventEmitter} from 'events';
 import {scan} from '../util/ble-scan.js';
 import {macAddress} from '../util/mac-address.js';
-import {connectWithTimeout} from '../util/noble-wrapper.js';
+import {connectWithTimeout, disconnectPeripheral} from '../util/noble-wrapper.js';
 
 export const IC4_LOCALNAME = 'IC Bike';
 
@@ -17,7 +17,7 @@ export function matchesIc4OrSchwinn290(peripheral) {
 }
 
 import {loadDependency, toDefaultExport} from '../util/optional-deps.js';
-import {FTMS_SERVICE_UUID, INDOOR_BIKE_DATA_UUID, parseIndoorBikeData} from './ftms-indoor-bike.js';
+import {FTMS_SERVICE_UUID, INDOOR_BIKE_DATA_UUID, IndoorBikeDataAssembler, parseIndoorBikeData} from './ftms-indoor-bike.js';
 
 const debugModule = loadDependency('debug', '../../stubs/debug.cjs', import.meta);
 const debuglog = toDefaultExport(debugModule)('gym:bikes:ic4');
@@ -39,6 +39,7 @@ export class Ic4BikeClient extends EventEmitter {
     this.noble = noble;
     this.filter = filter;
     this.state = 'disconnected';
+    this.indoorBikeDataAssembler = new IndoorBikeDataAssembler();
     this.onReceive = this.onReceive.bind(this);
     this.onDisconnect = this.onDisconnect.bind(this);
   }
@@ -129,7 +130,9 @@ export class Ic4BikeClient extends EventEmitter {
     this.emit('data', data);
 
     try {
-      const payload = parse(data); // Decode power/cadence and optional speed from the FTMS payload.
+      const record = this.indoorBikeDataAssembler.push(data);
+      if (!record) return; // More Data means the console has not finished this measurement.
+      const payload = formatStats(record);
       this.emit('stats', payload); // Forward the parsed stats so downstream services can consume speed when present.
     } catch (e) {
       if (!/unable to parse message/.test(e)) {
@@ -147,7 +150,7 @@ export class Ic4BikeClient extends EventEmitter {
     }
     this.state = 'disconnecting';
     try {
-      await this.peripheral.disconnectAsync();
+      await disconnectPeripheral(this.peripheral);
     } catch (err) {
       debuglog('error disconnecting from IC4 bike', err);
     } finally {
@@ -163,6 +166,7 @@ export class Ic4BikeClient extends EventEmitter {
    * @private
    */
   onDisconnect() {
+    this.indoorBikeDataAssembler.reset();
     if (this.state === 'disconnected') {
       return;
     }
@@ -198,7 +202,10 @@ export function parse(data) {
   // IC8/C6 clients (src/bikes/ftms-indoor-bike.js). This wrapper keeps the
   // long-standing IC4 contract of always returning power/cadence keys, with
   // undefined meaning "the flag said the field is absent".
-  const parsed = parseIndoorBikeData(data);
+  return formatStats(parseIndoorBikeData(data));
+}
+
+function formatStats(parsed) {
   const message = {power: parsed.power, cadence: parsed.cadence};
   if (parsed.speed !== undefined) {
     message.speed = parsed.speed;

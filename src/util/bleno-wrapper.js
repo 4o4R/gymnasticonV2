@@ -3,6 +3,7 @@ import {createRequire} from 'module';
 import path from 'path';
 import {loadDependency, toDefaultExport} from './optional-deps.js';
 import {normalizeAdapterId} from './adapter-id.js';
+import {captureBluetoothInitialization, stopBluetoothStack} from './bluetooth-shutdown.js';
 
 const requireFromWrapper = createRequire(import.meta.url);
 const BLENO_REQUEST = '@abandonware/bleno';
@@ -55,12 +56,23 @@ export const initializeBleno = async (adapter = 'hci0', options = {}) => {
         bleno = emitter;
       }
     }
+    if (!usingStub) {
+      // SMP loads a second, management-channel socket at package import time.
+      // Cache eviction gives each forced instance a different singleton, so
+      // capture its owner now rather than looking up the last one at shutdown.
+      const managementPath = requireFromWrapper.resolve(`${BLENO_REQUEST}/lib/hci-socket/mgmt`);
+      bleno.__gymnasticonManagement = requireFromWrapper.cache[managementPath]?.exports;
+    }
     // Teaching note: trigger bleno init while the adapter env var is set so
     // each instance binds to the intended HCI device.
     if (!usingStub && bleno && !bleno.initialized && typeof bleno.once === 'function') {
-      bleno.once('stateChange', () => {});
+      captureBluetoothInitialization(bleno, () => bleno.once('stateChange', () => {}));
     }
     return { bleno };
+  } catch (error) {
+    stopBluetoothStack(bleno);
+    if (!usingStub) clearDependencyCache(BLENO_REQUEST);
+    throw error;
   } finally {
     if (previousAdapter === undefined) {
       delete process.env.BLENO_HCI_DEVICE_ID;

@@ -4,11 +4,88 @@ import {execSync} from 'child_process';
 import path from 'path';
 import {loadDependency, toDefaultExport} from './optional-deps.js';
 import {normalizeAdapterId, normalizeAdapterName} from './adapter-id.js';
+import {captureBluetoothInitialization} from './bluetooth-shutdown.js';
 
 const requireFromWrapper = createRequire(import.meta.url);
 const NOBLE_REQUEST = '@abandonware/noble';
 
 export const CONNECT_TIMEOUT_MS = 10000;
+const connectionCancellations = new WeakMap();
+
+/** Release a link, including noble's pending or queued LE connection attempts. */
+export function disconnectPeripheral(peripheral, timeoutMs = 1000) {
+  if (!peripheral || peripheral.state === 'disconnected' || peripheral.state === 'error') {
+    return Promise.resolve(true);
+  }
+  const existing = connectionCancellations.get(peripheral);
+  if (existing) return existing;
+  const bindings = peripheral._noble?._bindings;
+  const id = peripheral.id;
+  const queue = bindings?._connectionQueue;
+  if (Array.isArray(queue) && queue.includes(id)) {
+    bindings._connectionQueue = queue.filter(queued => queued !== id);
+    peripheral.state = 'disconnected';
+    peripheral.emit('connect', new Error('Bluetooth connection cancelled before it started'));
+    peripheral.emit('disconnect');
+    return Promise.resolve(true);
+  }
+
+  const pending = Boolean(bindings && id && peripheral.state !== 'connected' && bindings._pendingConnectionUuid === id);
+  const operation = new Promise(resolve => {
+    let settled = false;
+    let timer;
+    const finish = (released, keepLateListener = false) => {
+      if (!keepLateListener) peripheral.removeListener?.('connect', onConnect);
+      if (released) connectionCancellations.delete(peripheral);
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      peripheral.removeListener?.('disconnect', onDisconnect);
+      resolve(released);
+    };
+    const onDisconnect = () => finish(true);
+    const disconnectLink = () => {
+      if (peripheral.state === 'disconnected' || peripheral.state === 'error') return finish(true);
+      try {
+        if (bindings && typeof peripheral.disconnect === 'function') {
+          peripheral.once('disconnect', onDisconnect);
+          peripheral.disconnect();
+        } else if (typeof peripheral.disconnectAsync === 'function') {
+          Promise.resolve(peripheral.disconnectAsync()).then(() => finish(true), () => finish(false));
+        } else {
+          finish(false);
+        }
+      } catch (_error) {
+        finish(false);
+      }
+    };
+    const onConnect = error => {
+      // LE Create Connection Cancel races a successful connection. Keep this
+      // listener even after the cleanup budget expires to release that late link.
+      peripheral.removeListener?.('connect', onConnect);
+      if (error) finish(true);
+      else disconnectLink();
+    };
+    timer = setTimeout(() => finish(false, pending), timeoutMs);
+    if (pending && typeof bindings._hci?._socket?.write === 'function') {
+      peripheral.once('connect', onConnect);
+      try {
+        // Pinned noble has no cancel API. The controller reports the outcome via
+        // LE Connection Complete; its existing binding advances the pending queue.
+        bindings._hci._socket.write(Buffer.from([0x01, 0x0e, 0x20, 0x00]));
+      } catch (_error) {
+        finish(false, true);
+      }
+    } else {
+      disconnectLink();
+    }
+  });
+  connectionCancellations.set(peripheral, operation);
+  operation.then(released => {
+    if (released) connectionCancellations.delete(peripheral);
+  });
+  return operation;
+}
 
 /**
  * Connect to a peripheral with a bounded wait.
@@ -28,29 +105,25 @@ export async function connectWithTimeout(peripheral, timeoutMs = CONNECT_TIMEOUT
   // "callback is not a function" once the connection completes. The connect
   // budget therefore has to be enforced here instead of being passed to noble.
   let timerId = null;
-  let timedOut = false;
+  let abandoned = false;
   const deadline = new Promise((_resolve, reject) => {
     timerId = setTimeout(() => {
-      timedOut = true;
       const address = peripheral.address || peripheral.id || 'peripheral';
       reject(new Error(`Timed out after ${timeoutMs}ms connecting to ${address}`));
     }, timeoutMs);
   });
 
+  const connection = peripheral.connectAsync();
+  connection.then(() => {
+    if (abandoned) void disconnectPeripheral(peripheral);
+  }, () => {});
   try {
-    await Promise.race([peripheral.connectAsync(), deadline]);
+    await Promise.race([connection, deadline]);
   } catch (error) {
-    if (timedOut) {
-      // Teaching note: noble leaves the central half-connected when the
-      // controller never reports the link, and a half-open handle wedges the
-      // next connection attempt on the same radio.
-      try {
-        if (typeof peripheral.disconnectAsync === 'function') {
-          await peripheral.disconnectAsync();
-        }
-      } catch (_disconnectError) {
-        // Best effort only; the timeout error is the one worth reporting.
-      }
+    abandoned = true;
+    if (!await disconnectPeripheral(peripheral)) {
+      error.retryable = false;
+      error.code = 'BLE_CONNECTION_CLEANUP_FAILED';
     }
     throw error;
   } finally {
@@ -98,6 +171,21 @@ function patchNobleMtu(noble) {
   }
   bindings.on('onMtu', safeOnMtu);
   noble.__gymnasticonMtuPatched = true;
+}
+
+function patchNobleInitialization(noble) {
+  const bindings = noble?._bindings;
+  if (!bindings || typeof bindings.init !== 'function' || bindings.__gymnasticonInitializationPatched) {
+    return;
+  }
+  const originalInit = bindings.init;
+  bindings.init = function patchedBindingsInit(...args) {
+    if (noble.__gymnasticonStopped) return;
+    // Capture the whole binding initialization: its process callbacks may be
+    // installed before HCI startup fails, and must belong to this stack alone.
+    return captureBluetoothInitialization(noble, () => originalInit.apply(this, args));
+  };
+  bindings.__gymnasticonInitializationPatched = true;
 }
 
 function isHciBindRaceError(error) {
@@ -329,6 +417,7 @@ export const initializeBluetooth = async (adapter = 'hci0', options = {}) => {
       }
     }
 
+    patchNobleInitialization(noble);
     patchNobleAdapterBinding(noble, adapter);
     patchNobleMtu(noble);
     patchNobleHciInit(noble);

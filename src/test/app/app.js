@@ -7,6 +7,7 @@ import {options as cliOptions} from '../../app/cli-options.js';
 import {resolveAntOptions} from '../../app/ant-options.js';
 import {DEFAULT_NAME as DEFAULT_SERVER_NAME} from '../../servers/ble/index.js';
 import {chooseAdapterRoles} from '../../util/adapter-detect.js';
+import {createBikeClient} from '../../bikes/index.js';
 
 function createTestApp(overrides = {}) {
   const noble = new EventEmitter();
@@ -520,6 +521,106 @@ test('App constructor preserves detected USB server adapter instead of restoring
     destroyTestApp(app);
   }
 
+  t.end();
+});
+
+test('App.run() gives an autodetect fallback its own connection budget', async t => {
+  const noble = Object.assign(new EventEmitter(), {
+    state: 'poweredOn',
+    async startScanningAsync() {},
+    stopScanning() {},
+  });
+  let connected = 0;
+  const app = createTestApp({
+    noble, bike: 'autodetect', defaultBike: 'keiser', bikeConnectTimeout: 0.03,
+    heartRateEnabled: false, speedSensorEnabled: false, cadenceSensorEnabled: false,
+    createBikeClient: async (options, radio) => {
+      const bike = await createBikeClient(options, radio);
+      bike.connect = async () => {
+        await new Promise(resolve => setTimeout(resolve, 15));
+        connected += 1;
+      };
+      return bike;
+    },
+  });
+  app.logger = {log() {}, warn() {}, error() {}};
+  app.ensureServerStarted = async () => { app.keepRunning = false; };
+  try {
+    await app.run();
+    t.equal(connected, 1, 'fallback connects after the whole autodetect window expires');
+  } finally {
+    await app.stop();
+    destroyTestApp(app);
+  }
+  t.end();
+});
+
+test('App.stop() cancels startup and disposes a late-created bike', async t => {
+  const app = createTestApp();
+  let complete;
+  let disconnected = 0;
+  const result = app.raceConnectWatchdog(new Promise(resolve => { complete = resolve; }), {discovery: true})
+    .then(() => null, error => error);
+  try {
+    await app.stop();
+    t.ok(await result, 'stopping rejects the outstanding startup wait');
+    complete({async disconnect() { disconnected += 1; }});
+    await new Promise(resolve => setImmediate(resolve));
+    t.equal(disconnected, 1, 'late discovery is released instead of connecting after shutdown');
+    t.equal(app.startupCancellations.size, 0, 'startup listeners are released');
+  } finally {
+    destroyTestApp(app);
+  }
+  t.end();
+});
+
+test('App.stop() cancels initial radio readiness without reopening the adapter', async t => {
+  const app = createTestApp();
+  app.noble.state = 'poweredOff';
+  app.attachNobleDiagnostics = () => {};
+  app.isAdapterUp = () => false;
+  app.getFallbackAdapters = () => [];
+  let reopened = 0;
+  app.reinitializeNoble = async () => { reopened += 1; };
+  const running = app.run();
+  await new Promise(resolve => setImmediate(resolve));
+  try {
+    await app.stop();
+    await running;
+    t.equal(reopened, 0, 'a cancelled readiness wait never reopens a radio');
+    t.equal(app.noble.listenerCount('stateChange'), 0, 'removes the readiness listener');
+    t.equal(app.startupCancellations.size, 0, 'clears startup cancellation handles');
+  } finally {
+    destroyTestApp(app);
+  }
+  t.end();
+});
+
+test('App.run() replaces the radio after an unconfirmed connection cancellation', async t => {
+  let attempts = 0;
+  let resets = 0;
+  let staleDisconnects = 0;
+  const app = createTestApp({minimumRetryDelayMs: 0, connectionRetryDelay: 0});
+  app.createBikeClient = async () => {
+    const attempt = ++attempts;
+    return Object.assign(new EventEmitter(), {
+      async connect() {
+        if (attempt === 1) throw Object.assign(new Error('cancel unconfirmed'), {code: 'BLE_CONNECTION_CLEANUP_FAILED'});
+      },
+      async disconnect() { if (attempt === 1) staleDisconnects += 1; },
+    });
+  };
+  app.reinitializeNoble = async () => { resets += 1; };
+  app.ensureServerStarted = async () => { app.keepRunning = false; };
+  app.logger = {log() {}, warn() {}, error() {}};
+  try {
+    await app.run();
+    t.equal(resets, 1, 'reopens the binding instead of reusing the stuck pending queue');
+    t.equal(staleDisconnects, 0, 'does not wait on an invalid old disconnect');
+  } finally {
+    await app.stop();
+    destroyTestApp(app);
+  }
   t.end();
 });
 

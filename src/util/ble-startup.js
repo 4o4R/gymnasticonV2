@@ -65,6 +65,7 @@ export function waitForPoweredOn(bleno, options = {}) {
       }
       // Exactly one removal, in every code path, keeps the emitter leak-free.
       bleno.removeListener('stateChange', onStateChange);
+      options.cancellation?.removeListener('abort', onAbort);
     };
 
     const settle = error => { // Single settle gate prevents double-resolve on racy events.
@@ -91,6 +92,15 @@ export function waitForPoweredOn(bleno, options = {}) {
       inspect(state);
     }
 
+    function onAbort() {
+      settle(options.cancellation.error || new Error('BLE startup cancelled'));
+    }
+
+    if (options.cancellation?.aborted) {
+      onAbort();
+      return;
+    }
+    options.cancellation?.once('abort', onAbort);
     bleno.on('stateChange', onStateChange);
     timer = setTimeout(() => {
       settle(createTimeoutError(label, bound, bleno.state || 'unknown'));

@@ -80,8 +80,9 @@ test('onCscData() ignores malformed CSC frames instead of throwing', t => {
   t.end();
 });
 
-test('onCscData() reports 0 rpm and 0 W when the cranks stop advancing', t => {
-  const client = createClient();
+test('onCscData() holds cadence between revolutions and reports zero after elapsed inactivity', t => {
+  let now = 0;
+  const client = new Ic8BikeClient({noble: {}, now: () => now});
   const stats = [];
   client.on('stats', (value) => stats.push(value));
 
@@ -91,12 +92,53 @@ test('onCscData() reports 0 rpm and 0 W when the cranks stop advancing', t => {
   t.equal(pedalling.cadence, 60, 'pedalling cadence is 60 rpm');
   t.ok(pedalling.power > 0, 'power estimate is non-zero while pedalling');
 
-  // Same crank revolutions and timestamp: the bike keeps notifying while the
-  // cranks are stationary.
+  now = 500;
+  client.onCscData(crankPacket({crankRevolutions: 101, crankTimestamp: 2048}));
+  t.equal(stats[stats.length - 1].cadence, 60, 'a notification between revolutions is not a stop');
+  t.ok(stats[stats.length - 1].power > 0, 'duplicate notifications do not cause power dropouts');
+  now = 3000;
   client.onCscData(crankPacket({crankRevolutions: 101, crankTimestamp: 2048}));
   const stationary = stats[stats.length - 1];
   t.equal(stationary.cadence, 0, 'cadence drops to 0 instead of holding the previous value');
   t.equal(stationary.power, 0, 'power does not keep the stale estimate');
+  t.end();
+});
+
+test('slow CSC pedaling gets two crank periods before being treated as stopped', t => {
+  let now = 0;
+  const client = new Ic8BikeClient({noble: {}, now: () => now});
+  client.onCscData(crankPacket({crankRevolutions: 10, crankTimestamp: 1024}));
+  now = 3000;
+  const latest = crankPacket({crankRevolutions: 11, crankTimestamp: 4096});
+  client.onCscData(latest);
+  now = 6500;
+  client.onCscData(latest);
+  t.equal(client.state.rpm, 20, 'slow cadence survives a duplicate beyond the three-second minimum');
+  now = 9000;
+  client.onCscData(latest);
+  t.equal(client.state.rpm, 0, 'two full crank periods of inactivity establish a stop');
+  t.equal(client.state.watts, 0, 'stationary power drops immediately when inactivity is established');
+  t.end();
+});
+
+test('IC8 waits for the final FTMS notification before replacing native metrics', t => {
+  const client = createClient();
+  const stats = [];
+  client.on('stats', value => stats.push(value));
+  client.onIndoorBikeData(Buffer.from('4500a000c800', 'hex'));
+  t.equal(stats.length, 0, 'incomplete power/cadence record is held');
+  client.onIndoorBikeData(Buffer.from('0000100e', 'hex'));
+  t.deepEqual(stats[0], {power: 200, cadence: 80, speed: 10}, 'power and cadence survive the final speed notification');
+  t.end();
+});
+
+test('FTMS resistance changes the IC8 estimate when native power is absent', t => {
+  const client = createClient();
+  client.onIndoorBikeData(Buffer.from('2400100ea0000000', 'hex'));
+  const lowResistancePower = client.state.watts;
+  client.onIndoorBikeData(Buffer.from('2400100ea0006400', 'hex'));
+  t.equal(client.state.resistance, 1, 'a console level of 100 uses the full estimator resistance');
+  t.ok(client.state.watts > lowResistancePower, 'changing resistance changes wattage at the same cadence');
   t.end();
 });
 
@@ -258,21 +300,19 @@ test('IC8 falls back to CSC when the console refuses FTMS notifications', async 
 
 /**
  * Indoor Bike Data frame (0x2AD2) with the fields the tests need.
- * Flag bits: 0 = "speed absent" (inverted), 2 = cadence, 6 = power.
+ * A complete record includes speed. Zero speed models consoles that do not
+ * provide a usable speed reading without incorrectly setting More Data.
  */
 function indoorBikeFrame({cadenceRpm = 0, powerWatts = 0, speedHundredthsKmh = 0, withSpeed = true, withCadence = true, withPower = true}) {
   let flags = 0;
-  if (!withSpeed) flags |= 0x0001;
   if (withCadence) flags |= 0x0004;
   if (withPower) flags |= 0x0040;
 
   const parts = [Buffer.alloc(2)];
   parts[0].writeUInt16LE(flags, 0);
-  if (withSpeed) {
-    const speed = Buffer.alloc(2);
-    speed.writeUInt16LE(speedHundredthsKmh, 0);
-    parts.push(speed);
-  }
+  const speed = Buffer.alloc(2);
+  speed.writeUInt16LE(withSpeed ? speedHundredthsKmh : 0, 0);
+  parts.push(speed);
   if (withCadence) {
     const cadence = Buffer.alloc(2);
     cadence.writeUInt16LE(Math.round(cadenceRpm * 2), 0);

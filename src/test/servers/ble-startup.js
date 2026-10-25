@@ -6,6 +6,37 @@ import {MultiBleServer} from '../../servers/ble/multi-server.js';
 
 const SHORT_TIMEOUT_MS = 20; // Small bound so the suite never waits on a wedged adapter.
 
+test('an expired advertising command cannot revive an adapter after stop', async t => {
+  const bleno = createFakeBleno();
+  let complete;
+  bleno.startAdvertising = (_name, _uuids, callback) => {
+    complete = () => { bleno.advertising = true; callback(); };
+  };
+  const server = createServer(bleno);
+  const multi = new MultiBleServer([{adapter: 'hci1', server}], createLogger());
+  const error = await multi.start().then(() => null, failure => failure);
+  t.ok(error, 'the controller command has a bounded wait');
+  await multi.stop();
+  complete();
+  await new Promise(resolve => setImmediate(resolve));
+  t.equal(bleno.advertising, false, 'late completion is stopped');
+  t.equal(server.state, 'stopped', 'late completion does not restore the started state');
+  t.end();
+});
+
+test('stopping an adapter while waiting for power cancels startup immediately', async t => {
+  const bleno = createFakeBleno({state: 'poweredOff'});
+  const server = createServer(bleno, {startupTimeoutMs: 10000});
+  const pending = server.start().then(() => null, error => error);
+  await server.stop();
+  t.ok(await pending, 'startup rejects on stop without waiting ten seconds');
+  bleno.state = 'poweredOn';
+  bleno.emit('stateChange', 'poweredOn');
+  t.equal(bleno.advertising, false, 'a later power event cannot advertise');
+  t.equal(bleno.listenerCount('stateChange'), 0, 'the cancelled listener is gone');
+  t.end();
+});
+
 function createFakeBleno({state = 'poweredOn'} = {}) { // Minimal bleno double: only what BleServer/GymnasticonServer call.
   const bleno = new EventEmitter();
   bleno.state = state;

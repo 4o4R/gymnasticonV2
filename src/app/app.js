@@ -27,6 +27,7 @@ import {initializeBluetooth} from '../util/noble-wrapper.js';
 import {initializeBleno} from '../util/bleno-wrapper.js';
 import {stopBluetoothStack} from '../util/bluetooth-shutdown.js';
 import {ScanCoordinator} from '../util/scan-coordinator.js';
+import {startScanningBounded} from '../util/ble-scan.js';
 import {normalizeAdapterId, normalizeAdapterName} from '../util/adapter-id.js';
 import {detectAdapters, supportsExtendedScan} from '../util/adapter-detect.js';
 import {isSingleAdapterMultiRoleCapable} from '../util/hardware-info.js';
@@ -75,6 +76,7 @@ export class App {
       ? Math.max(0, Number(opts.sensorDiscoveryDelayMs))
       : DEFAULT_SENSOR_DISCOVERY_DELAY_MS;
     this.keepRunning = true; // Main run loop flag so graceful shutdowns and tests can stop the reconnect loop cleanly.
+    this.startupCancellations = new Set();
 
     this.logger = new Logger();
     this.noble = opts.noble || nobleDefault;
@@ -249,12 +251,22 @@ export class App {
     }
 
     const entries = [];
-    for (const adapter of adapters) {
-      const { bleno } = await initializeBleno(adapter, { forceNewInstance: entries.length > 0 });
-      const server = new GymnasticonServer(bleno, this.opts.serverName, {
-        includeHeartRate: this.heartRateAutoPreference,
-      });
-      entries.push({ adapter, server });
+    try {
+      for (const adapter of adapters) {
+        if (!this.keepRunning) throw new Error('BLE startup cancelled');
+        const { bleno } = await initializeBleno(adapter, { forceNewInstance: entries.length > 0 });
+        if (!this.keepRunning) {
+          stopBluetoothStack(bleno);
+          throw new Error('BLE startup cancelled');
+        }
+        const server = new GymnasticonServer(bleno, this.opts.serverName, {
+          includeHeartRate: this.heartRateAutoPreference,
+        });
+        entries.push({ adapter, server });
+      }
+    } catch (error) {
+      for (const {server} of entries) stopBluetoothStack(server.bleno);
+      throw error;
     }
     this.server = new MultiBleServer(entries, this.logger);
     this.serverAdapters = adapters;
@@ -282,10 +294,15 @@ export class App {
     if (!this.server) {
       await this.initializeBleServers();
     }
+    if (!this.keepRunning) return;
     this.logger.log(`[gym-app] starting BLE server (${reason})`);
     // Teaching note: bleno throws if the adapter cannot advertise; we let the
     // caller decide how to retry.
     await this.server.start();
+    if (!this.keepRunning) {
+      await this.server.stop();
+      return;
+    }
     this.serverStarted = true;
     this.logger.log('[gym-app] BLE server advertising');
   }
@@ -400,9 +417,9 @@ export class App {
   }
 
   async stopServerAdvertising(reason = 'unspecified') {
-    if (!this.serverStarted) {
-      return; // Teaching note: no-op if advertising never started.
-    }
+    if (typeof this.server?.stop !== 'function') return;
+    const starting = this.server.entries?.some(({server}) => server.state === 'starting' || server.state === 'started');
+    if (!this.serverStarted && !starting) return;
     this.logger.log(`[gym-app] stopping BLE server (${reason})`);
     await this.server.stop();
     this.serverStarted = false;
@@ -446,17 +463,18 @@ export class App {
     this.restartSignal = null;
   }
 
-  async stopBikeConnection({ stopServer = false } = {}) {
+  async stopBikeConnection({ stopServer = false, discardBike = false } = {}) {
     // Teaching note: this cleans up the bike connection and optionally stops
     // advertising when we should not broadcast without a bike.
     this.pingInterval.cancel(); // Stop BLE keep-alives immediately so reconnect loops do not keep publishing stale telemetry.
     this.statsTimeout.cancel();
     this.connectTimeout.cancel();
     this.stopPedalSimulation(); // Cancel any pending synthetic pedal stroke before the bike goes away.
+    this.kinematics.lastTimestamp = null; // Do not integrate an outage as if the rider were still pedaling.
     if (this.bike) {
       this.bike.off('disconnect', this.onBikeDisconnectBound);
       this.bike.off('stats', this.onBikeStatsBound);
-      if (this.bike.disconnect) {
+      if (!discardBike && this.bike.disconnect) {
         await this.bike.disconnect().catch(() => {});
       }
       this.bike = null;
@@ -486,6 +504,7 @@ export class App {
     let fallbackIndex = 0;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (!this.keepRunning) return;
       this.attachNobleDiagnostics(); // Teaching note: always log noble state changes and warnings.
       const state = this.noble?.state ?? 'unknown';
       if (state === 'poweredOn') {
@@ -498,6 +517,7 @@ export class App {
       if (this.isAdapterUp(this.opts.bikeAdapter)) {
         this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP (verified via hciconfig); noble state is ${state}`);
         const canScan = await this.probeNobleScan(this.opts.bikeAdapter);
+        if (!this.keepRunning) return;
         if (canScan) {
           this.logger.log('[gym-app] proceeding despite noble state mismatch (scan probe succeeded)');
           return;
@@ -510,17 +530,20 @@ export class App {
         this.logger.log(`[gym-app] waiting for Bluetooth adapter to become poweredOn (attempt ${attempt}/${maxAttempts}, current state: ${state})`);
         try {
           const nextState = await this.waitForNobleStateChange(timeoutMs);
+          if (!this.keepRunning) return;
           if (nextState === 'poweredOn') {
             return;
           }
           this.logger.log(`[gym-app] Bluetooth adapter state is ${nextState}; reinitializing noble`);
           shouldReinitialize = true;
         } catch (error) {
+          if (!this.keepRunning) return;
           this.logger.log(`[gym-app] Bluetooth adapter state timeout after ${timeoutMs}ms; checking if adapter is up...`);
 
           // If adapter is up, only continue if a probe scan succeeds.
           if (this.isAdapterUp(this.opts.bikeAdapter)) {
             const canScan = await this.probeNobleScan(this.opts.bikeAdapter);
+            if (!this.keepRunning) return;
             if (canScan) {
               this.logger.log(`[gym-app] adapter ${this.opts.bikeAdapter} is UP (hciconfig confirms); proceeding despite noble state being ${state}`);
               return;
@@ -549,10 +572,20 @@ export class App {
       } else {
         await this.reinitializeNoble(`attempt-${attempt}`);
       }
+      if (!this.keepRunning) return;
       if (this.noble?.state === 'poweredOn') {
         return; // No need to sleep/retry when reinit already recovered the adapter.
       }
-      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      await new Promise(resolve => {
+        const finish = () => {
+          clearTimeout(timer);
+          this.startupCancellations.delete(finish);
+          resolve();
+        };
+        const timer = setTimeout(finish, retryDelayMs);
+        this.startupCancellations.add(finish);
+        if (!this.keepRunning) finish();
+      });
     }
 
     throw new Error('Bluetooth adapter never reached poweredOn');
@@ -573,57 +606,26 @@ export class App {
     }
   }
 
-  isAlreadyScanningError(error) {
-    const message = String(error?.message || error || '');
-    return /already (?:start(ed)? )?scanning/i.test(message) || /scan already in progress/i.test(message);
-  }
-
   async probeNobleScan(adapterName) {
     // Teaching note: a short scan start/stop confirms noble is actually usable.
     if (!this.noble?.startScanningAsync || !this.noble?.stopScanningAsync) {
       return false;
     }
-    const withTimeout = async (promise, timeoutMs, label) => {
-      let timeoutId;
-      try {
-        return await Promise.race([
-          promise,
-          new Promise((_, reject) => {
-            timeoutId = setTimeout(() => reject(new Error(`probe ${label} timeout after ${timeoutMs}ms`)), timeoutMs);
-          }),
-        ]);
-      } finally {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-      }
-    };
+    const request = startScanningBounded(this.noble, [], false, {timeoutMs: 1500, adoptExisting: true});
+    const cancel = () => request.cancel();
+    this.startupCancellations.add(cancel);
     try {
-      await withTimeout(this.noble.startScanningAsync([], false), 1500, 'start');
-      try {
-        if (typeof this.noble.stopScanning === 'function') {
-          // Teaching note: stopScanningAsync can hang forever waiting for scanStop
-          // on some Pi/BlueZ combos, so use the sync variant during probing.
-          this.noble.stopScanning();
-        } else {
-          await withTimeout(this.noble.stopScanningAsync(), 1000, 'stop');
-        }
-      } catch (stopError) {
-        const message = String(stopError?.message || stopError || '');
-        if (!/not scanning/i.test(message)) {
-          this.logger.log(`[gym-app] scan probe stop warning on ${adapterName}: ${message}`);
-        }
-      }
+      await request.promise;
+      if (!this.keepRunning) return false;
       this.logger.log(`[gym-app] noble scan probe succeeded on ${adapterName}`);
       return true;
     } catch (error) {
-      if (this.isAlreadyScanningError(error)) {
-        this.logger.log(`[gym-app] noble scan probe on ${adapterName}: scan already running; treating as usable`);
-        return true;
-      }
       const message = String(error?.message || error || '');
       this.logger.log(`[gym-app] noble scan probe failed on ${adapterName}: ${message}`);
       return false;
+    } finally {
+      this.startupCancellations.delete(cancel);
+      request.cancel();
     }
   }
 
@@ -635,7 +637,12 @@ export class App {
       throw new Error('noble instance unavailable');
     }
     const terminalStates = new Set(['poweredOn', 'unsupported', 'unauthorized']);
+    const noble = this.noble;
     return new Promise((resolve, reject) => {
+      const cancel = () => {
+        cleanup();
+        reject(new Error('Bluetooth startup cancelled'));
+      };
       const onChange = (nextState) => {
         if (!terminalStates.has(nextState)) {
           return; // keep waiting; the adapter may still be powering up
@@ -649,9 +656,12 @@ export class App {
       }, timeoutMs);
       const cleanup = () => {
         clearTimeout(timer);
-        this.noble.removeListener('stateChange', onChange);
+        noble.removeListener('stateChange', onChange);
+        this.startupCancellations.delete(cancel);
       };
-      this.noble.on('stateChange', onChange);
+      this.startupCancellations.add(cancel);
+      noble.on('stateChange', onChange);
+      if (!this.keepRunning) cancel();
     });
   }
 
@@ -661,7 +671,12 @@ export class App {
     const previousNoble = this.noble;
     // Drop every scan claim on the old radio before its socket is replaced.
     await this.releaseScanOwnership(`reinitialize-${reason}`);
+    if (!this.keepRunning) return;
     const { noble } = await initializeBluetooth(this.opts.bikeAdapter, { forceNewInstance: true });
+    if (!this.keepRunning) {
+      stopBluetoothStack(noble);
+      return;
+    }
     this.noble = noble;
     this.opts.noble = noble;
     // The reopened adapter needs a fresh refcounted scan owner.
@@ -792,6 +807,7 @@ export class App {
 
   async stop() {
     this.keepRunning = false;
+    for (const cancel of this.startupCancellations) cancel();
     if (this.restartSignal && !this.restartSignal.resolved) {
       this.restartSignal.resolved = true;
       this.restartSignal.resolve('app-stop');
@@ -879,6 +895,7 @@ export class App {
       this.logger.log(`[gym-app] checking Bluetooth adapter state: ${state ?? 'unknown'}`);
       this.attachNobleDiagnostics(); // Teaching note: log noble warnings/errors right away.
       await this.ensureBluetoothPoweredOn();
+      if (!this.keepRunning) return;
       this.logger.log('[gym-app] Bluetooth adapter ready (poweredOn)');
 
       const retryDelayMs = Math.max(this.minimumRetryDelayMs, Number(this.opts.connectionRetryDelay ?? sharedDefaults.connectionRetryDelay ?? 5000)); // Guarantee a sensible retry floor in production while allowing tests to override it.
@@ -890,22 +907,23 @@ export class App {
       while (this.keepRunning) { // Keep looping until shutdown or we successfully complete the full startup sequence.
         try {
           this.logger.log('connecting to bike...'); // Show progress on the console so headless installs still provide feedback.
-          // Teaching note: arm the watchdog BEFORE creating the bike client.
-          // createBikeClient() runs the autodetect BLE scans, so a wedged scan
-          // used to hang here forever with no timeout, fallback or retry.
-          this.connectTimeout.reset();
           // Free the radio from optional sensor scans before bike discovery.
           await this.releaseScanOwnership('bike-connect');
-          this.bike = await this.raceConnectWatchdog(this.createBikeClient(this.opts, this.noble)); // Instantiate the bike client selected via config/CLI (autodetect, keiser, etc.).
+          if (!this.keepRunning) break;
+          // Discovery needs its own budget: autodetect consumes the scan window
+          // before returning a fallback, which still needs time to connect.
+          this.bike = await this.raceConnectWatchdog(this.createBikeClient(this.opts, this.noble), {discovery: true});
           // Teaching note: using bound handlers allows us to remove listeners when we reconnect.
           this.bike.on('disconnect', this.onBikeDisconnectBound); // Restart the app when the bike disconnects unexpectedly.
           this.bike.on('stats', this.onBikeStatsBound); // Stream bike telemetry into the BLE/ANT broadcasters.
+          this.connectTimeout.reset();
           await this.raceConnectWatchdog(this.bike.connect()); // Begin scanning or connecting based on the specific bike implementation.
           this.connectTimeout.cancel(); // Clear the watchdog because the connect phase finished successfully.
           this.logger.log(`bike connected ${this.bike.address}`); // Log the MAC so users can confirm which console paired.
           // Teaching note: only advertise once the bike is connected so we do
           // not broadcast phantom sensors while idle.
           await this.ensureServerStarted('bike-connected');
+          if (!this.keepRunning) break;
           if (this.antEnabled) { // Only talk to the ANT+ stick when the user opted in.
             this.startAnt(); // Fire up ANT+ broadcasting (no-op if the stick is missing).
           }
@@ -913,6 +931,7 @@ export class App {
           // Multi-sensor parallel startup (critical feature)
           // Launch all optional sensor discovery concurrently so they connect faster
           await this.startOptionalSensors();
+          if (!this.keepRunning) break;
 
           this.pingInterval.reset(); // Kick off the BLE keep-alive timer so Zwift sees data even when you pause pedaling.
           this.statsTimeout.reset(); // Start the "bike telemetry" watchdog so we can log when stats go stale.
@@ -927,7 +946,11 @@ export class App {
           this.clearRestartRequest(); // Retry errors already trigger a new connection attempt; discard stale pre-wait restart requests from the failed cycle.
           // Teaching note: stop advertising on errors so we only broadcast when
           // a bike is actually connected.
-          await this.stopBikeConnection({ stopServer: true }).catch(() => {}); // Tear down partial bike state before the next attempt.
+          const resetRadio = e.code === 'BLE_CONNECTION_CLEANUP_FAILED';
+          await this.stopBikeConnection({ stopServer: true, discardBike: resetRadio }).catch(() => {});
+          if (resetRadio && this.keepRunning) {
+            await this.reinitializeNoble('unconfirmed-connection-cancellation');
+          }
           this.logger.log(`retrying connection in ${retryDelayMs / 1000}s (adjust with --connection-retry-delay)`); // Give a friendly heads-up that retries are automatic.
           if (!this.keepRunning) {
             break;
@@ -949,24 +972,46 @@ export class App {
    * inside noble. Racing the watchdog means the run loop falls through to its
    * retry path instead of hanging on an await that never settles.
    * @param {Promise<*>} promise - the startup step to wait for.
-   * @returns {Promise<*>} the step result, or a rejection when the watchdog fires.
+   * @param {object} [options] - select the separate discovery deadline.
+   * @returns {Promise<*>} the step result, or a rejection on timeout or shutdown.
    * @private
    */
-  raceConnectWatchdog(promise) {
-    if (!this.connectTimeout || typeof this.connectTimeout.once !== 'function') {
-      return promise;
-    }
+  raceConnectWatchdog(promise, {discovery = false} = {}) {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      let timer;
       const onTimeout = () => {
+        settled = true;
         cleanup();
-        reject(new Error('bike connect watchdog expired'));
+        reject(new Error(`bike ${discovery ? 'discovery' : 'connect'} watchdog expired`));
+      };
+      const cancel = () => {
+        settled = true;
+        cleanup();
+        reject(new Error('bike startup cancelled'));
       };
       const cleanup = () => {
+        clearTimeout(timer);
         this.connectTimeout.removeListener('timeout', onTimeout);
+        this.startupCancellations.delete(cancel);
       };
-      this.connectTimeout.once('timeout', onTimeout);
+      this.startupCancellations.add(cancel);
+      if (discovery) {
+        const configured = Number(this.opts.bikeConnectTimeout);
+        const scanMs = configured > 0 && Number.isFinite(configured) ? configured * 1000 : 30000;
+        timer = setTimeout(onTimeout, scanMs + 1000);
+      } else {
+        this.connectTimeout.once('timeout', onTimeout);
+      }
       Promise.resolve(promise).then(
         (value) => {
+          if (settled) {
+            if (discovery && value?.disconnect) {
+              Promise.resolve().then(() => value.disconnect()).catch(() => {});
+            }
+            return;
+          }
+          settled = true;
           cleanup();
           resolve(value);
         },
@@ -975,6 +1020,7 @@ export class App {
           reject(error);
         }
       );
+      if (!this.keepRunning) cancel();
     });
   }
 
@@ -1295,6 +1341,7 @@ export class App {
   }
 
   onBikeStats({ power, cadence, speed }) {
+    if (!this.keepRunning) return;
     const scaledPower = power > 0 ? Math.max(0, Math.round(power * this.powerScale + this.powerOffset)) : 0; // Apply calibration and clamp to non-negative watts.
     const safeCadence = Number.isFinite(cadence) ? Math.max(0, cadence) : 0; // Guard against undefined or negative cadence readings.
     const nativeSpeed = Number.isFinite(speed) ? Math.max(0, speed) : null; // Use bike-provided speed when available.

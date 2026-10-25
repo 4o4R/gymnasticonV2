@@ -9,9 +9,7 @@
  * later is never discovered.
  */
 
-import {stopScanningSafely} from './ble-scan.js';
-
-const ALREADY_SCANNING = /already (?:start(ed)? )?scanning|scan already in progress/i;
+import {startScanningBounded, stopScanningSafely} from './ble-scan.js';
 
 let nextScanTag = 0;
 
@@ -95,6 +93,8 @@ export class ScanCoordinator {
     this.holders = new Set();
     this.scanning = false;
     this.startPromise = null;
+    this.scanRequest = null;
+    this.startTimeoutMs = options.startTimeoutMs;
   }
 
   /**
@@ -179,17 +179,18 @@ export class ScanCoordinator {
     if (this.startPromise) {
       return this.startPromise;
     }
-    this.startPromise = this.startNativeScan().then(
+    const pending = this.startNativeScan().then(
       (started) => {
-        this.startPromise = null;
+        if (this.startPromise === pending) this.startPromise = null;
         return started;
       },
       (error) => {
-        this.startPromise = null;
+        if (this.startPromise === pending) this.startPromise = null;
         throw error;
       }
     );
-    return this.startPromise;
+    this.startPromise = pending;
+    return pending;
   }
 
   /**
@@ -200,29 +201,39 @@ export class ScanCoordinator {
     if (!noble || typeof noble.startScanningAsync !== 'function') {
       throw new Error('noble instance cannot start scanning');
     }
+    const request = startScanningBounded(noble, [], true, {timeoutMs: this.startTimeoutMs, adoptExisting: true});
+    this.scanRequest = request;
     try {
-      await noble.startScanningAsync([], true);
-    } catch (error) {
-      if (!ALREADY_SCANNING.test(String(error?.message || error))) {
-        throw error;
+      await request.promise;
+      if (this.scanRequest !== request || !this.holders.size) {
+        return false;
       }
-      // Teaching note: something already owns the radio (a previous owner or a
-      // fallback code path). Adopt that scan instead of failing discovery.
+      this.scanning = true;
+      return true;
+    } catch (error) {
+      if (this.scanRequest === request) {
+        this.scanRequest = null;
+        request.cancel();
+      }
+      if (error.code === 'BLE_SCAN_CANCELLED') return false;
+      throw error;
     }
-    this.scanning = true;
-    return true;
   }
 
   /**
    * @private
    */
   async stopScanning() {
-    if (!this.scanning) {
+    const request = this.scanRequest;
+    if (!this.scanning && !request) {
       return false;
     }
+    this.scanRequest = null;
+    this.startPromise = null;
     this.scanning = false;
     try {
-      await stopScanningSafely(this.noble);
+      if (request) request.cancel();
+      else await stopScanningSafely(this.noble);
     } catch (error) {
       // Teaching note: a stop failure must never block shutdown or the next
       // connect cycle; noble's scan can already be gone by the time we ask.

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import util from 'util';
 
-import { resolveStartupTimeout, waitForPoweredOn } from './ble-startup.js';
+import { resolveStartupTimeout, STARTUP_TIMEOUT_CODE, waitForPoweredOn } from './ble-startup.js';
 
 /**
  * Bluetooth LE GATT server helper built on top of bleno.
@@ -21,6 +21,8 @@ export class BleServer extends EventEmitter {
     // Teaching note: track active connections so we only call bleno.disconnect()
     // when someone is actually connected (this reduces spurious HCI warnings).
     this.connectionCount = 0;
+    this.startup = null;
+    this.pendingStartOperation = null;
 
     this.bleno.on('accept', this.onAccept.bind(this));
     this.bleno.on('disconnect', this.onDisconnect.bind(this));
@@ -40,56 +42,100 @@ export class BleServer extends EventEmitter {
     if (this.state !== 'stopped') {
       throw new Error('already started');
     }
+    if (this.pendingStartOperation) {
+      throw new Error(`BLE adapter ${this.adapterName} is still completing a cancelled startup`);
+    }
 
     this.state = 'starting';
-    this.connectionCount = 0; // Teaching note: reset connection tracking on each start.
+    this.connectionCount = 0;
+    const attempt = new EventEmitter();
+    attempt.aborted = false;
+    this.startup = attempt;
+    let onAbort;
+    const cancelled = new Promise((_, reject) => {
+      onAbort = () => reject(attempt.error);
+      attempt.once('abort', onAbort);
+    });
+    const timer = setTimeout(() => {
+      const error = new Error(`BLE adapter ${this.adapterName} did not finish starting within ${this.startupTimeoutMs}ms (waiting for poweredOn or advertising; last state: ${this.bleno.state || 'unknown'})`);
+      error.code = STARTUP_TIMEOUT_CODE;
+      error.adapter = this.adapterName;
+      error.state = this.bleno.state || 'unknown';
+      this.cancelStartup(error);
+    }, this.startupTimeoutMs);
 
     try {
-      // Teaching note: the shared helper keeps waiting across intermediate
-      // states (poweredOff, resetting) but gives up at the bound instead of
-      // blocking startup forever.
-      await waitForPoweredOn(this.bleno, {
-        timeoutMs: this.startupTimeoutMs,
-        adapterName: this.adapterName,
-      });
+      await Promise.race([this.startAttempt(attempt), cancelled]);
+      if (attempt.aborted) throw attempt.error;
+      this.state = 'started';
     } catch (error) {
-      this.state = 'stopped';
+      if (!attempt.aborted) this.cancelStartup(error);
+      this.stopAdvertisingBestEffort();
+      if (this.state !== 'stopping') this.state = 'stopped';
       this.connectionCount = 0;
       throw error;
+    } finally {
+      clearTimeout(timer);
+      attempt.removeListener('abort', onAbort);
+      if (this.startup === attempt) this.startup = null;
     }
-
-    try {
-      await this.bleno.startAdvertisingAsync(this.name, this.uuids);
-      await this.bleno.setServicesAsync(this.services);
-    } catch (err) {
-      await this.cleanupFailedStart();
-      throw err;
-    }
-    this.state = 'started';
   }
 
-  async cleanupFailedStart() {
-    // setServices can fail after the controller has begun advertising. Stop it
-    // explicitly before allowing another start attempt, otherwise the next
-    // attempt races a live advertiser that our state no longer represents.
+  async startAttempt(attempt) {
+    await waitForPoweredOn(this.bleno, {
+      timeoutMs: this.startupTimeoutMs,
+      adapterName: this.adapterName,
+      cancellation: attempt,
+    });
+    await this.startStep(attempt, () => this.startAdvertising());
+    await this.startStep(attempt, () => this.bleno.setServicesAsync(this.services));
+  }
+
+  async startStep(attempt, action) {
+    if (attempt.aborted) throw attempt.error;
+    const pending = Promise.resolve().then(action);
+    this.pendingStartOperation = pending;
     try {
-      await this.bleno.stopAdvertisingAsync();
-    } catch (_error) {
-      // Preserve the original startup error; stopping an inactive advertiser
-      // is allowed to fail on some bleno backends.
+      await pending;
     } finally {
-      this.state = 'stopped';
-      this.connectionCount = 0;
+      if (this.pendingStartOperation === pending) this.pendingStartOperation = null;
+      if (attempt.aborted) this.stopAdvertisingBestEffort();
+    }
+    // A controller may complete a command long after our deadline. Finish
+    // stopping that attempt before allowing another start on the same binding.
+    if (attempt.aborted) {
+      throw attempt.error;
+    }
+  }
+
+  startAdvertising() {
+    return this.bleno.startAdvertisingAsync(this.name, this.uuids);
+  }
+
+  cancelStartup(error = new Error('BLE startup cancelled')) {
+    const attempt = this.startup;
+    if (!attempt || attempt.aborted) return;
+    attempt.aborted = true;
+    attempt.error = error;
+    attempt.emit('abort');
+  }
+
+  stopAdvertisingBestEffort() {
+    try {
+      Promise.resolve(this.bleno.stopAdvertisingAsync()).catch(() => {});
+    } catch (_error) {
+      // Closing an unavailable controller is best effort.
     }
   }
 
   /** Disconnect any active connections and stop advertising. */
   async stop() {
+    this.cancelStartup();
     if (this.state === 'stopped' || this.state === 'stopping') return;
 
     this.state = 'stopping';
     try {
-      await this.bleno.stopAdvertisingAsync();
+      await this.stopAdvertisingBounded();
       // Avoid disconnect calls when no centrals are connected to prevent
       // "unknown handle" warnings on some BlueZ stacks.
       if (this.connectionCount > 0) {
@@ -98,6 +144,18 @@ export class BleServer extends EventEmitter {
     } finally {
       this.connectionCount = 0;
       this.state = 'stopped';
+    }
+  }
+
+  async stopAdvertisingBounded() {
+    let timer;
+    try {
+      await Promise.race([
+        this.bleno.stopAdvertisingAsync(),
+        new Promise(resolve => { timer = setTimeout(resolve, 1000); }),
+      ]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 

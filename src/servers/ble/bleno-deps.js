@@ -1,5 +1,14 @@
-import {loadDependency} from '../../util/optional-deps.js'; // pull in the helper that swaps real modules for stubs when optional dependencies are missing
+import {loadDependency} from '../../util/optional-deps.js';
 
-const BLENO_STUB_PATH = '../../../stubs/bleno.cjs'; // resolve the shared bleno stub by walking up from src/servers/ble to the project root
-export const blenoModule = loadDependency('@abandonware/bleno', BLENO_STUB_PATH, import.meta); // request bleno with a fallback so development on systems without BLE still works
-export const {Characteristic, Descriptor, PrimaryService} = blenoModule; // expose the common BLE classes so services can import them directly
+const BLENO_STUB_PATH = '../../../stubs/bleno.cjs';
+
+function loadConstructor(file, name) {
+  // The package entry point opens an HCI socket even before advertising starts.
+  // These pinned constructor modules need no radio and are safe during startup.
+  const loaded = loadDependency(`@abandonware/bleno/lib/${file}`, BLENO_STUB_PATH, import.meta);
+  return loaded[name] || loaded;
+}
+
+export const Characteristic = loadConstructor('characteristic', 'Characteristic');
+export const Descriptor = loadConstructor('descriptor', 'Descriptor');
+export const PrimaryService = loadConstructor('primary-service', 'PrimaryService');

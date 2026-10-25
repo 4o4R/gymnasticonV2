@@ -2,6 +2,83 @@ import {execSync} from 'child_process';
 import {macAddress} from './mac-address.js';
 import {normalizeAdapterName} from './adapter-id.js';
 
+const activeScanRequests = new WeakMap();
+const SCAN_START_TIMEOUT_MS = 10000;
+
+/** Start one scan with a cancellable, bounded wait for noble's scanStart. */
+export function startScanningBounded(noble, serviceUuids = [], allowDuplicates = true, options = {}) {
+  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+    ? options.timeoutMs : SCAN_START_TIMEOUT_MS;
+  // A previous timed-out start must not consume this attempt's scanStart event.
+  activeScanRequests.get(noble)?.cancel(false);
+  const watchedEvents = ['scanStart', 'stateChange'];
+  const previousListeners = watchedEvents.map(event => new Set(noble.listeners(event)));
+  let ownedListeners = [];
+  let settled = false;
+  let cancelled = false;
+  let adopted = false;
+  let timer;
+  let resolveStart;
+  let rejectStart;
+  const promise = new Promise((resolve, reject) => {
+    resolveStart = resolve;
+    rejectStart = reject;
+  });
+  const cleanup = () => {
+    clearTimeout(timer);
+    for (const [event, listener] of ownedListeners) noble.removeListener(event, listener);
+    ownedListeners = [];
+  };
+  const finish = (error) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    if (error) rejectStart(error);
+    else resolveStart(true);
+  };
+  const request = {
+    promise,
+    confirm: () => finish(),
+    cancel(stop = true) {
+      if (cancelled) return;
+      cancelled = true;
+      const ownsRadio = activeScanRequests.get(noble) === request;
+      if (ownsRadio) activeScanRequests.delete(noble);
+      const error = new Error('Bluetooth scan cancelled');
+      error.code = 'BLE_SCAN_CANCELLED';
+      finish(error);
+      cleanup();
+      // Stop while this attempt still owns the radio. A late resolution must
+      // never stop a newer scan that happens to produce the same public event.
+      if (stop && ownsRadio && (!adopted || options.adoptExisting)) void stopScanningSafely(noble);
+    },
+  };
+  activeScanRequests.set(noble, request);
+  timer = setTimeout(() => {
+    const error = new Error(`Bluetooth scan did not start within ${timeoutMs}ms`);
+    error.code = 'BLE_SCAN_START_TIMEOUT';
+    finish(error);
+    request.cancel();
+  }, timeoutMs);
+  try {
+    const started = startScanningWithAdapter(noble, serviceUuids, allowDuplicates, resolveAdapterName(noble, options));
+    // Noble installs scanStart callbacks, or a stateChange callback while a
+    // lazy adapter powers up. Cancel both so power-up cannot revive an old scan.
+    ownedListeners = watchedEvents.flatMap((event, index) => noble.listeners(event)
+      .filter(listener => !previousListeners[index].has(listener))
+      .map(listener => [event, listener]));
+    Promise.resolve(started).then(() => finish(), error => {
+      if (isAlreadyScanningError(error)) {
+        adopted = true;
+        finish();
+      } else finish(error);
+    });
+  } catch (error) {
+    finish(error);
+  }
+  return request;
+}
+
 /**
  * Returns true if the given peripheral matches.
  * @callback FilterFunction
@@ -28,7 +105,6 @@ import {normalizeAdapterName} from './adapter-id.js';
  */
 export async function scan(noble, serviceUuids, filter = () => true, options = {}) {
   const allowDuplicates = options?.allowDuplicates ?? true;
-  const adapter = resolveAdapterName(noble, options);
   const timeoutMs = Number.isFinite(options?.timeoutMs) ? options.timeoutMs : null;
   const stopScanOnMatch = options?.stopScanOnMatch !== false;
   const stopScanOnTimeout = options?.stopScanOnTimeout !== false;
@@ -48,7 +124,7 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
     stopScanOnMatch,
     stopScanOnTimeout,
     onDiscovery,
-    startScan: () => startScanningWithAdapter(noble, serviceUuids, allowDuplicates, adapter),
+    startScan: () => startScanningBounded(noble, serviceUuids, allowDuplicates, options),
   });
 }
 
@@ -189,10 +265,7 @@ function waitForDiscovery(noble, filter, options = {}) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timeoutId = null;
-    let scanningStarted = false;
-    // Set when the caller asked for the scan to be stopped but the scan had not
-    // finished starting yet, so the stop has to happen once startup lands.
-    let stopWhenStarted = false;
+    let request;
 
     let onDiscover = null;
 
@@ -214,16 +287,7 @@ function waitForDiscovery(noble, filter, options = {}) {
       const shouldStop = (didMatch && options.stopScanOnMatch) ||
         (!didMatch && options.stopScanOnTimeout);
 
-      if (shouldStop && !scanningStarted) {
-        // Startup is still in flight (e.g. it timed out). Remember to stop the
-        // scan the moment it actually starts instead of leaving it running.
-        stopWhenStarted = true;
-      } else if (shouldStop) {
-        // Fire-and-forget the stop: it must never delay the result, because
-        // stopScanningAsync() can hang forever in noble's "unknown" state and
-        // that would wedge autodetect and the app's shutdown path.
-        stopScanningSafely(noble);
-      }
+      if (shouldStop) request?.cancel();
 
       resolve(peripheral);
     };
@@ -237,14 +301,13 @@ function waitForDiscovery(noble, filter, options = {}) {
       }
       settled = true;
       removeListeners();
-      if (scanningStarted) {
-        stopScanningSafely(noble);
-      }
+      request?.cancel();
       reject(error);
     };
 
     onDiscover = (result) => {
       if (settled) return;
+      request?.confirm(); // Receiving an advertisement also proves scan startup.
       if (options.onDiscovery) {
         options.onDiscovery(result);
       }
@@ -261,29 +324,10 @@ function waitForDiscovery(noble, filter, options = {}) {
       }, options.timeoutMs);
     }
 
-    // Start scanning without ever awaiting it in the caller's path: the result
-    // is already bounded by the deadline armed above.
-    Promise.resolve()
-      .then(() => options.startScan())
-      .then(() => {
-        scanningStarted = true;
-        if (stopWhenStarted) {
-          console.log('[ble-scan] scan started after the result settled; stopping it now');
-          stopScanningSafely(noble);
-          return;
-        }
-        if (!settled) {
-          console.log('[ble-scan] ✓ Noble scan started successfully');
-        }
-      })
-      .catch((error) => {
-        if (isAlreadyScanningError(error)) {
-          // Someone else owns the scan: never stop a scan we did not start.
-          console.log('[ble-scan] Noble scan already running; reusing existing scan');
-          return;
-        }
-        fail(error);
-      });
+    request = options.startScan();
+    request.promise.catch(error => {
+      if (error.code !== 'BLE_SCAN_CANCELLED') fail(error);
+    });
   });
 }
 

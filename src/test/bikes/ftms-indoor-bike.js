@@ -2,7 +2,8 @@ import test from '../support/tape.js';
 import {
   FTMS_SERVICE_UUID,
   INDOOR_BIKE_DATA_UUID,
-  parseIndoorBikeData
+  parseIndoorBikeData,
+  IndoorBikeDataAssembler
 } from '../../bikes/ftms-indoor-bike.js';
 
 /**
@@ -66,6 +67,7 @@ test('parseIndoorBikeData() walks the 3-byte total distance and the resistance l
   const parsed = parseIndoorBikeData(data);
   t.equal(parsed.cadence, 50, 'cadence read after nothing but the flag word');
   t.equal(parsed.power, 400, 'power read after distance + resistance');
+  t.equal(parsed.resistance, 20, 'resistance is available to the power estimator');
   t.equal(parsed.speed, undefined, 'bit0 set means speed is absent');
   t.end();
 });
@@ -124,5 +126,33 @@ test('parseIndoorBikeData() rejects values that are not an Indoor Bike Data fram
   t.throws(() => parseIndoorBikeData(Buffer.alloc(1)), /unable to parse message/, 'half a flag word');
   t.throws(() => parseIndoorBikeData([0x45, 0x00]), /unable to parse message/, 'plain array instead of a buffer');
   t.throws(() => parseIndoorBikeData('4500'), /unable to parse message/, 'string instead of a buffer');
+  t.end();
+});
+
+test('IndoorBikeDataAssembler emits a complete record without losing earlier notification fields', t => {
+  const assembler = new IndoorBikeDataAssembler();
+  t.equal(assembler.push(frame(0x0045, u16(160), s16(200))), null, 'More Data defers publication');
+  t.deepEqual(assembler.push(frame(0x0021, s16(70))), null, 'an intermediate resistance fragment also waits');
+  t.deepEqual(assembler.push(frame(0x0000, u16(3600))), {
+    cadence: 80, power: 200, resistance: 70, speed: 10,
+  }, 'the last notification completes one coherent measurement');
+  t.deepEqual(assembler.push(frame(0x0000, u16(1800))), {speed: 5}, 'a new record does not inherit optional fields');
+  t.end();
+});
+
+test('IndoorBikeDataAssembler discards incomplete data after timeout, malformed input, and disconnect reset', t => {
+  let now = 0;
+  const assembler = new IndoorBikeDataAssembler({now: () => now});
+  const fragment = frame(0x0045, u16(160), s16(200));
+  const final = frame(0x0000, u16(3600));
+  assembler.push(fragment);
+  now = 2000;
+  t.deepEqual(assembler.push(final), {speed: 10}, 'expired fields cannot leak into a later record');
+  assembler.push(fragment);
+  t.throws(() => assembler.push(frame(0x0045)), /unable to parse message/, 'malformed fragment rejects safely');
+  t.deepEqual(assembler.push(final), {speed: 10}, 'malformed record has been discarded');
+  assembler.push(fragment);
+  assembler.reset();
+  t.deepEqual(assembler.push(final), {speed: 10}, 'disconnect reset discards pending fields');
   t.end();
 });

@@ -1,7 +1,7 @@
 import EventEmitter from 'events';
 
 import test from '../support/tape.js';
-import {stopBluetoothStack} from '../../util/bluetooth-shutdown.js';
+import {captureBluetoothInitialization, stopBluetoothStack} from '../../util/bluetooth-shutdown.js';
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -80,6 +80,44 @@ test('stopBluetoothStack() handles the bleno `_hci` shape', async (t) => {
   const pollsAtShutdown = state.polls;
   await delay(20);
   t.ok(state.polls - pollsAtShutdown <= 1, 'the bleno poll chain also dies');
+});
+
+test('stopBluetoothStack() releases each bleno management socket with its owner', t => {
+  const first = createFakeHci();
+  const second = createFakeHci();
+  const firstControl = createFakeHci();
+  const secondControl = createFakeHci();
+  const stackA = {_bindings: {_hci: first.hci}, __gymnasticonManagement: firstControl.hci};
+  const stackB = {_bindings: {_hci: second.hci}, __gymnasticonManagement: secondControl.hci};
+  stopBluetoothStack(stackA);
+  t.equal(firstControl.state.socketStops, 1, 'closes the first adapter control socket');
+  t.equal(secondControl.state.socketStops, 0, 'does not close another instance control socket');
+  stopBluetoothStack(stackB);
+  t.equal(secondControl.state.socketStops, 1, 'closes the second control socket during its shutdown');
+  t.end();
+});
+
+test('failed Bluetooth initialization releases only its own process handlers', t => {
+  const stack = {};
+  const owned = () => {};
+  const unrelated = () => {};
+  process.on('exit', unrelated);
+  try {
+    t.throws(() => captureBluetoothInitialization(stack, () => {
+      process.on('exit', owned);
+      process.on('SIGINT', owned);
+      throw new Error('adapter missing');
+    }), /adapter missing/, 'preserves the initialization error');
+    stopBluetoothStack(stack);
+    t.notOk(process.listeners('exit').includes(owned), 'removes the native exit writer after failed initialization');
+    t.notOk(process.listeners('SIGINT').includes(owned), 'removes the native signal handler');
+    t.ok(process.listeners('exit').includes(unrelated), 'preserves other process handlers');
+  } finally {
+    process.removeListener('exit', unrelated);
+    process.removeListener('exit', owned);
+    process.removeListener('SIGINT', owned);
+  }
+  t.end();
 });
 
 test('stopBluetoothStack() neutralizes the poller even without a native socket', async (t) => {

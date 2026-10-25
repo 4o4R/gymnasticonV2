@@ -188,3 +188,45 @@ test('HeartRateClient ignores a late discovery after disconnect()', async (t) =>
   await client.disconnect();
   t.end();
 });
+
+test('HeartRateClient resumes discovery when a peripheral disappears during GATT discovery', async t => {
+  const noble = new FakeNoble();
+  const client = createClient(noble);
+  const peripheral = createPeripheral();
+  peripheral.discoverServicesAsync = () => new Promise(() => {});
+  await client.connect();
+  const setup = client.onDiscover(peripheral);
+  await flush();
+  t.equal(peripheral.listenerCount('disconnect'), 1, 'disconnect is observed before GATT setup finishes');
+  peripheral.emit('disconnect');
+  await setup;
+  await flush();
+  t.equal(client.connecting, false, 'a dead GATT request no longer holds the connecting latch');
+  t.equal(client.isScanning, true, 'discovery is rearmed');
+  await client.disconnect();
+  t.end();
+});
+
+test('HeartRateClient bounds a silent GATT peer and never waits on unsubscribe during shutdown', async t => {
+  const noble = new FakeNoble();
+  const client = new HeartRateClient(noble, {
+    connectionManager: {connect: async () => {}},
+    setupTimeoutMs: 20,
+  });
+  const silent = createPeripheral();
+  silent.discoverServicesAsync = () => new Promise(() => {});
+  await client.connect();
+  await client.onDiscover(silent);
+  await flush();
+  t.equal(silent.disconnectCalls, 1, 'the setup deadline releases a silent peer');
+  t.equal(client.isScanning, true, 'a silent peer does not permanently disable discovery');
+  const characteristic = createCharacteristic();
+  characteristic.unsubscribeAsync = () => new Promise(() => {});
+  const good = createPeripheral({characteristics: [characteristic]});
+  await client.onDiscover(good);
+  t.equal(client.connected, true, 'a later peer can finish setup');
+  await client.disconnect();
+  t.equal(good.disconnectCalls, 1, 'shutdown releases the physical link without awaiting a dead unsubscribe');
+  t.equal(characteristic.listenerCount('data'), 0, 'our notification handler is removed');
+  t.end();
+});

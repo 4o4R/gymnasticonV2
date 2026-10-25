@@ -1,11 +1,11 @@
 import {Characteristic, Descriptor} from '../../../bleno-deps.js'; // Import the shared bleno helpers so stub loading stays centralized.
 
-// Op codes defined by the Cycling Speed and Cadence Service (CSC) v1.0 specification, section 3.5.
+// SC Control Point op codes from the GATT specification supplement.
 export const OP_SET_CUMULATIVE_VALUE = 0x01; // Set Cumulative Value: client supplies a wheel revolution baseline.
 export const OP_START_SENSOR_CALIBRATION = 0x02; // Start Sensor Calibration: client asks for a calibration cycle.
-export const OP_RESPONSE_CODE = 0x05; // Response Code: the only op code the server sends back to the client.
+export const OP_RESPONSE_CODE = 0x10;
 
-// Response codes carried inside the 0x05 Response Code indication.
+// Response codes carried inside the Response Code indication.
 export const RESPONSE_SUCCESS = 0x01;
 export const RESPONSE_OP_CODE_NOT_SUPPORTED = 0x02;
 export const RESPONSE_INVALID_PARAMETER = 0x03;
@@ -14,12 +14,14 @@ export const RESPONSE_INVALID_PARAMETER = 0x03;
 export const RESULT_SUCCESS = 0x00;
 export const RESULT_INVALID_OFFSET = 0x07;
 export const RESULT_INVALID_ATTRIBUTE_LENGTH = 0x0d;
+export const RESULT_PROCEDURE_IN_PROGRESS = 0x80;
+export const RESULT_CCCD_IMPROPERLY_CONFIGURED = 0x81;
 
 /**
  * Op codes this server supports, advertised as a bitfield where bit N-1 marks
  * op code N as supported (so 0x01 -> bit 0 and 0x02 -> bit 1).
  */
-export const SC_CONTROL_POINT_OPERATIONS = [OP_SET_CUMULATIVE_VALUE, OP_START_SENSOR_CALIBRATION];
+export const SC_CONTROL_POINT_OPERATIONS = [OP_SET_CUMULATIVE_VALUE];
 
 /** Supported-features bitfield reported by the control point. */
 export const SC_CONTROL_POINT_SUPPORTED_FEATURES = SC_CONTROL_POINT_OPERATIONS
@@ -30,7 +32,7 @@ export const SC_CONTROL_POINT_SUPPORTED_FEATURES = SC_CONTROL_POINT_OPERATIONS
  *
  * Teaching note: the CSC specification makes this characteristic mandatory
  * whenever the service advertises wheel revolution support, so clients can set
- * the cumulative wheel value and request a calibration. Requests arrive as
+ * the cumulative wheel value. Requests arrive as
  * writes and every request is answered with a Response Code indication.
  */
 export class ScControlPointCharacteristic extends Characteristic {
@@ -47,7 +49,7 @@ export class ScControlPointCharacteristic extends Characteristic {
     this.cumulativeWheelRevolutions = null; // Last baseline a client asked us to report.
     this.wheelRevolutionsOffset = 0; // Shift applied to upstream wheel counters to honour the baseline.
     this.pendingCumulativeValue = null; // Baseline waiting for the next measurement to compute an offset.
-    this.calibrationRequested = false; // Records that a client asked for calibration.
+    this.procedurePending = false;
     this.lastResponse = null; // Last Response Code indication, kept observable for diagnostics.
   }
 
@@ -56,7 +58,7 @@ export class ScControlPointCharacteristic extends Characteristic {
     if (!Number.isInteger(opCode) || opCode < 1) {
       return false;
     }
-    return (this.supportedFeatures & (1 << (opCode - 1))) !== 0;
+    return this.supportedOperations.includes(opCode);
   }
 
   onWriteRequest(data, offset, withoutResponse, callback) {
@@ -69,20 +71,34 @@ export class ScControlPointCharacteristic extends Characteristic {
       callback(RESULT_INVALID_ATTRIBUTE_LENGTH);
       return;
     }
+    if (typeof this.updateValueCallback !== 'function') {
+      callback(RESULT_CCCD_IMPROPERLY_CONFIGURED);
+      return;
+    }
+    if (this.procedurePending) {
+      callback(RESULT_PROCEDURE_IN_PROGRESS);
+      return;
+    }
 
     const opCode = request.readUInt8(0);
     let responseCode = RESPONSE_OP_CODE_NOT_SUPPORTED;
     if (opCode === OP_SET_CUMULATIVE_VALUE) {
       responseCode = this.setCumulativeValue(request);
-    } else if (opCode === OP_START_SENSOR_CALIBRATION) {
-      // Teaching note: the bike owns its own sensors, so calibration is only
-      // acknowledged here; the request is recorded so callers can react to it.
-      this.calibrationRequested = true;
-      responseCode = RESPONSE_SUCCESS;
     }
 
+    this.procedurePending = true;
     callback(RESULT_SUCCESS); // The write itself is always well formed; the response code carries the outcome.
     this.sendResponse(opCode, responseCode);
+  }
+
+  onIndicate() {
+    this.procedurePending = false; // Bleno calls this after the central confirms the indication.
+  }
+
+  onUnsubscribe() {
+    this.updateValueCallback = null;
+    this.maxValueSize = null;
+    this.procedurePending = false;
   }
 
   setCumulativeValue(request) {

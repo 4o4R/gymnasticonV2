@@ -1,3 +1,4 @@
+import {EventEmitter} from 'events';
 import test from '../support/tape.js';
 import {parse} from '../../bikes/keiser.js';
 import {bikeVersion} from '../../bikes/keiser.js';
@@ -300,6 +301,30 @@ test('KeiserBikeClient keeps the ride when the pinned console reports an unknown
     client.isMatchingPeripheral(fakeConsole({address: 'c0:ff:ee:00:00:01'})),
     'accepts the pinned console by MAC'
   );
+});
+
+test('Keiser reception agrees with discovery for a configured equipment ID after MAC rotation', async t => {
+  const address = 'c0:ff:ee:00:00:01';
+  const first = fakeConsole({address});
+  const noble = new EventEmitter();
+  noble.state = 'poweredOn';
+  let scanCount = 0;
+  noble.startScanningAsync = async () => {
+    if (++scanCount === 1) setImmediate(() => noble.emit('discover', first));
+  };
+  noble.stopScanning = () => {};
+  const client = new KeiserBikeClient(noble, {address, equipmentId: DOCUMENTED_EQUIPMENT_ID});
+  await client.connect();
+  const rotated = fakeConsole({address: 'c0:ff:ee:00:00:02'});
+  t.ok(createKeiserPeripheralFilter(address, DOCUMENTED_EQUIPMENT_ID)(rotated), 'discovery accepts the configured equipment after rotation');
+  t.ok(client.isMatchingPeripheral(rotated), 'live reception uses the same selector');
+  t.notOk(client.isMatchingPeripheral(fakeConsole({address: 'c0:ff:ee:00:00:03', equipmentId: 7})), 'a different equipment ID remains excluded');
+  let received = 0;
+  client.on('stats', () => received++);
+  client.onReceive(rotated);
+  t.equal(received, 1, 'the rotated console contributes ride telemetry');
+  await client.disconnect();
+  t.end();
 });
 
 test('KeiserBikeClient falls back to the captured payload signature when no equipment ID is available', t => {

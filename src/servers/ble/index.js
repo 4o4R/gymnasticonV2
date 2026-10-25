@@ -1,7 +1,6 @@
 import {CyclingPowerService} from './services/cycling-power/index.js'; // Import the CPS implementation so we can notify power changes.
 import {CyclingSpeedAndCadenceService} from './services/cycling-speed-and-cadence/index.js'; // Import CSC service for wheel/crank updates.
 import {BleServer} from '../../util/ble-server.js'; // Base helper that wires our bleno services together.
-import {DEFAULT_STARTUP_TIMEOUT_MS, STARTUP_TIMEOUT_CODE, waitForPoweredOn} from '../../util/ble-startup.js'; // Shared bounded-startup helpers.
 import {HeartRateService} from './services/heart-rate/index.js'; // Import HR service to forward heart rate metrics.
 
 export const DEFAULT_NAME = 'GymnasticonV2';
@@ -107,7 +106,7 @@ export function createServices({ includeHeartRate = true } = {}) { // Factory th
   return services;
 }
 
-export {DEFAULT_STARTUP_TIMEOUT_MS, STARTUP_TIMEOUT_CODE}; // Re-exported so existing importers keep one import site.
+export {DEFAULT_STARTUP_TIMEOUT_MS, STARTUP_TIMEOUT_CODE} from '../../util/ble-startup.js';
 
 export class GymnasticonServer extends BleServer {
   constructor(bleno, name = DEFAULT_NAME, options = {}) {
@@ -157,63 +156,15 @@ export class GymnasticonServer extends BleServer {
     this.cscService.updateMeasurement(measurement); // Delegate BLE encoding to the service.
   }
 
-  async start() {
-    if (this.state !== 'stopped') {
-      throw new Error('already started');
-    }
-
-    this.state = 'starting';
-
-    try {
-      await this.waitForPoweredOn(); // Bounded: a wedged adapter rejects instead of hanging every caller.
-
-      if (this.advertisingOptions) {
-        const { advertisementData, scanData } = buildAdvertisingPayload(this.name, this.advertisingOptions, this.uuids);
-        await new Promise((resolve, reject) => {
-          this.bleno.startAdvertisingWithEIRData(advertisementData, scanData, (err) => {
-            if (err) {
-              return reject(err);
-            }
-            resolve();
-          });
-        });
-      } else {
-        await this.bleno.startAdvertisingAsync(this.name, this.uuids);
-      }
-
-      await this.bleno.setServicesAsync(this.services); // Commit the service list to the adapter now that advertising is live.
-    } catch (err) {
-      if (err && err.code === STARTUP_TIMEOUT_CODE) {
-        // Teaching note: the adapter already failed to answer within the bound,
-        // so reset our state synchronously and clean up best-effort only. Awaiting
-        // another call into a wedged radio would hang the caller all over again.
-        this.state = 'stopped';
-        this.connectionCount = 0;
-        this.stopAdvertisingBestEffort();
-      } else {
-        await this.cleanupFailedStart();
-      }
-      throw err;
-    }
-    this.state = 'started';
-  }
-
-  async waitForPoweredOn() { // Bounded wait shared with the base BleServer, naming this adapter in errors.
-    await waitForPoweredOn(this.bleno, {
-      timeoutMs: this.startupTimeoutMs,
-      adapterName: this.adapterName,
+  startAdvertising() {
+    if (!this.advertisingOptions) return super.startAdvertising();
+    const {advertisementData, scanData} = buildAdvertisingPayload(this.name, this.advertisingOptions, this.uuids);
+    return new Promise((resolve, reject) => {
+      this.bleno.startAdvertisingWithEIRData(advertisementData, scanData, error => {
+        if (error) reject(error);
+        else resolve();
+      });
     });
-  }
-
-  stopAdvertisingBestEffort() { // Fire-and-forget cleanup for adapters that already proved unresponsive.
-    try {
-      const pending = this.bleno.stopAdvertisingAsync();
-      if (pending && typeof pending.catch === 'function') {
-        pending.catch(() => {});
-      }
-    } catch (_error) {
-      // The adapter is already unusable; nothing else to do here.
-    }
   }
 }
 

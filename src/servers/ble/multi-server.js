@@ -9,6 +9,7 @@ export class MultiBleServer {
     this.activeEntries = null;
     this.degraded = false; // True when at least one adapter could not advertise.
     this.failedAdapters = [];
+    this.generation = 0;
     this.startupTimeoutMs = Number.isFinite(options.startupTimeoutMs) && options.startupTimeoutMs > 0
       ? options.startupTimeoutMs
       : DEFAULT_STARTUP_TIMEOUT_MS;
@@ -20,9 +21,13 @@ export class MultiBleServer {
   }
 
   async start() {
+    const generation = ++this.generation;
     const results = await Promise.allSettled(
       this.entries.map(entry => this.startEntry(entry))
     );
+    if (generation !== this.generation) {
+      throw new Error('BLE startup cancelled');
+    }
 
     const active = [];
     const failed = [];
@@ -70,15 +75,23 @@ export class MultiBleServer {
 
     const boundMs = this.startupTimeoutMs + STARTUP_GRACE_MS; // Backstop for servers without their own timeout.
     return new Promise((resolve, reject) => {
+      let expired = false;
       const timer = setTimeout(() => {
+        expired = true;
         const error = new Error(`BLE adapter ${entry.adapter} did not finish starting within ${boundMs}ms`);
         error.code = STARTUP_TIMEOUT_CODE;
         error.adapter = entry.adapter;
+        server.cancelStartup?.(error);
+        Promise.resolve().then(() => server.stop()).catch(() => {});
         reject(error);
       }, boundMs);
       server.start().then(
         value => {
           clearTimeout(timer);
+          if (expired) {
+            Promise.resolve().then(() => server.stop()).catch(() => {});
+            return;
+          }
           resolve(value);
         },
         error => {
@@ -90,7 +103,9 @@ export class MultiBleServer {
   }
 
   async stop() {
-    const entries = this.activeEntries || this.entries;
+    this.generation += 1;
+    // Failed entries may still have controller callbacks in flight.
+    const entries = this.entries;
     const results = await Promise.allSettled(
       entries.map(({server}) => server.stop())
     );

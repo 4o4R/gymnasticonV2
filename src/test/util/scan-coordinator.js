@@ -1,4 +1,5 @@
 import {EventEmitter} from 'events';
+import {spawnSync} from 'child_process';
 
 import test from '../support/tape.js';
 import {ScanCoordinator, createScanTag, waitForPeripheral} from '../../util/scan-coordinator.js';
@@ -155,6 +156,141 @@ test('createScanTag() returns unique owner tags', (t) => {
 
   t.notEqual(first, second, 'each client instance gets its own tag');
   t.ok(first.startsWith('speed-'), 'the tag keeps the readable prefix');
+  t.end();
+});
+
+test('pinned noble cancels scans and pending links without taking over successor operations', t => {
+  // Keep the actual dependency cache isolated from the rest of the suite. Only
+  // the HCI socket is replaced; all noble, GAP, GATT and Peripheral code is real.
+  const result = spawnSync(process.execPath, ['--input-type=module'], {
+    encoding: 'utf8',
+    timeout: 10000,
+    input: String.raw`
+import assert from 'assert';
+import {EventEmitter} from 'events';
+import {createRequire} from 'module';
+import {pathToFileURL} from 'url';
+import path from 'path';
+const require = createRequire(pathToFileURL(path.join(process.cwd(), 'package.json')));
+class Socket extends EventEmitter {
+  constructor() { super(); this.writes = []; }
+  bindRaw(id) { return id; }
+  start() {} stop() {} isDevUp() { return false; } setFilter() {}
+  write(buffer) { this.writes.push(Buffer.from(buffer)); }
+}
+const native = require.resolve('@abandonware/bluetooth-hci-socket');
+require.cache[native] = {id: native, filename: native, loaded: true, exports: Socket};
+const {initializeBluetooth, disconnectPeripheral, connectWithTimeout} = await import('./src/util/noble-wrapper.js');
+const {scan} = await import('./src/util/ble-scan.js');
+const {ScanCoordinator} = await import('./src/util/scan-coordinator.js');
+const {HeartRateClient} = await import('./src/hr/heart-rate-client.js');
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const makeNoble = async () => {
+  const {noble} = await initializeBluetooth('hci0', {forceNewInstance: true});
+  void noble.state;
+  noble._state = 'poweredOn';
+  noble._bindings._hci.address = '11:22:33:44:55:66';
+  noble._bindings._hci.addressType = 'public';
+  return noble;
+};
+const n = await makeNoble();
+assert.strictEqual(await scan(n, [], () => false, {timeoutMs: 10}), null);
+assert.strictEqual(n.listenerCount('scanStart'), 0, 'expired start callback removed');
+const following = scan(n, [], () => true, {timeoutMs: 100, stopScanOnMatch: false});
+n._bindings._hci.emit('leScanEnableSet', 0);
+await tick();
+assert.strictEqual(n._bindings._gap._scanState, 'started', 'old completion did not stop successor');
+n.emit('discover', {});
+await following;
+const c = await makeNoble();
+const coordinator = new ScanCoordinator(c, {startTimeoutMs: 10});
+await assert.rejects(coordinator.acquire('first'), error => error.code === 'BLE_SCAN_START_TIMEOUT');
+assert.strictEqual(coordinator.holderCount, 0);
+assert.strictEqual(c.listenerCount('scanStart'), 0);
+const cancelled = coordinator.acquire('cancelled');
+await coordinator.releaseAll();
+assert.strictEqual(await cancelled, false);
+const next = coordinator.acquire('next');
+c._bindings._hci.emit('leScanEnableSet', 0);
+assert.strictEqual(await next, true);
+assert.strictEqual(coordinator.isScanning, true);
+await coordinator.releaseAll();
+const {noble: lazy} = await initializeBluetooth('hci1', {forceNewInstance: true});
+const lazyCoordinator = new ScanCoordinator(lazy, {startTimeoutMs: 10});
+await assert.rejects(lazyCoordinator.acquire('lazy'), error => error.code === 'BLE_SCAN_START_TIMEOUT');
+assert.strictEqual(lazy.listenerCount('stateChange'), 0, 'expired lazy-start callback removed');
+lazy.emit('stateChange', 'poweredOn');
+assert.strictEqual(lazy._bindings._hci._socket.writes.filter(b => b[0] === 1 && b.readUInt16LE(1) === 0x200c && b[4] === 1).length, 0);
+const link = await makeNoble();
+let serial = 0;
+const peripheral = () => {
+  const Peripheral = require('@abandonware/noble/lib/peripheral');
+  const id = 'aabbccddee' + (++serial).toString(16).padStart(2, '0');
+  const address = id.match(/../g).join(':');
+  const p = new Peripheral(link, id, address, 'public', true, {serviceUuids: ['180d']}, -20);
+  link._peripherals[id] = p;
+  link._bindings._addresses[id] = address;
+  link._bindings._addresseTypes[id] = 'public';
+  return p;
+};
+const first = peripheral(), queued = peripheral();
+const firstConnect = first.connectAsync().catch(() => {});
+const queuedConnect = queued.connectAsync().catch(() => {});
+assert.strictEqual(await disconnectPeripheral(queued, 30), true);
+await queuedConnect;
+assert.deepStrictEqual(link._bindings._connectionQueue, []);
+const cancelling = disconnectPeripheral(first, 30);
+assert.strictEqual(link._bindings._hci._socket.writes.slice(-1)[0].toString('hex'), '010e2000');
+link._bindings.onLeConnComplete(2, 0, 0, 'public', first.address, 24, 0, 500, 0);
+assert.strictEqual(await cancelling, true);
+await firstConnect;
+assert.strictEqual(link._bindings._pendingConnectionUuid, null);
+const late = peripheral();
+const lateConnect = late.connectAsync();
+assert.strictEqual(await disconnectPeripheral(late, 10), false);
+link._bindings.onLeConnComplete(0, 64, 0, 'public', late.address, 24, 0, 500, 0);
+await lateConnect;
+const disconnects = () => link._bindings._hci._socket.writes.filter(b => b[0] === 1 && b.readUInt16LE(1) === 0x0406);
+assert.strictEqual(disconnects().slice(-1)[0].readUInt16LE(4), 64, 'late link released using real handle');
+link._bindings.onDisconnComplete(64, 0x13);
+const timed = peripheral();
+const timedWork = connectWithTimeout(timed, 10);
+await wait(20);
+link._bindings.onLeConnComplete(2, 0, 0, 'public', timed.address, 24, 0, 500, 0);
+await assert.rejects(timedWork, /Timed out/);
+const hrPeripheral = peripheral();
+const hr = new HeartRateClient(link, {setupTimeoutMs: 100, connectionRetries: 1});
+const setup = hr.onDiscover(hrPeripheral);
+await tick();
+link._bindings.onLeConnComplete(0, 65, 0, 'public', hrPeripheral.address, 24, 0, 500, 0);
+await tick();
+assert.ok(hrPeripheral.listenerCount('disconnect') > 0);
+link._bindings.onDisconnComplete(65, 0x13);
+await setup;
+link._bindings._hci.emit('leScanEnableSet', 0);
+await tick();
+assert.strictEqual(hr.connecting, false);
+assert.strictEqual(hr.isScanning, true, 'mid-GATT loss resumes discovery');
+await hr.disconnect();
+const shutdownPeripheral = peripheral();
+const shutdownHr = new HeartRateClient(link, {setupTimeoutMs: 100, connectionRetries: 1});
+const pendingSetup = shutdownHr.onDiscover(shutdownPeripheral);
+await tick();
+const stopped = shutdownHr.disconnect();
+await tick();
+link._bindings.onLeConnComplete(0, 66, 0, 'public', shutdownPeripheral.address, 24, 0, 500, 0);
+await tick();
+assert.strictEqual(disconnects().slice(-1)[0].readUInt16LE(4), 66);
+link._bindings.onDisconnComplete(66, 0x13);
+await Promise.all([stopped, pendingSetup]);
+assert.strictEqual(shutdownHr.connected, false);
+assert.strictEqual(shutdownPeripheral.state, 'disconnected');
+assert.ok(disconnects().every(b => b.readUInt16LE(4) !== 0), 'never disconnects undefined handle zero');
+process.exit(0);
+`,
+  });
+  t.equal(result.status, 0, result.stderr || result.stdout || 'actual noble lifecycle probes pass');
   t.end();
 });
 
