@@ -114,7 +114,7 @@ After pairing succeeds, keep in mind:
 
 ## Heart Rate Is Not Rebroadcast
 
-Gymnasticon listens for standard BLE Heart Rate Service peripherals. Apple Watch does not advertise that profile directly, so it requires an iPhone bridge app that re-advertises watch heart rate over BLE.
+Gymnasticon listens for standard BLE Heart Rate Service peripherals. Apple Watch supports that service, but it typically only broadcasts while a workout is running and Apple aims it at GymKit-compatible equipment, so Gymnasticon may not find it. The reliable option is an iPhone bridge app that re-advertises watch heart rate over BLE.
 
 Heart-rate rebroadcast is enabled automatically when Gymnasticon has a suitable second adapter. On single-adapter Pi Zero systems it is disabled by default for stability.
 

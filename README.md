@@ -187,7 +187,7 @@ Compatible apps and devices include Zwift, TrainerRoad, Rouvy, FulGaz, mPaceline
 
 ## Apple Watch Heart Rate
 
-Apple Watch does not advertise the standard BLE Heart Rate Service directly. To include Apple Watch heart rate in Gymnasticon output, use an iPhone bridge app that re-advertises watch heart rate over BLE, then keep the iPhone near the Raspberry Pi.
+Apple Watch does support the standard BLE Heart Rate Service, but it typically exposes it only while a workout is running, and Apple targets that capability at GymKit-compatible gym equipment rather than generic BLE receivers. Whether Gymnasticon discovers the watch depends on the watchOS version and workout state, so the reliable option is an iPhone bridge app that re-advertises watch heart rate over BLE; keep the iPhone near the Raspberry Pi.
 
 Known bridge options include:
 
