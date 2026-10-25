@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [3.0.0] - 2026-10-24
 ### Fixed
 - Scan startup and shared ownership now cancel the pinned noble callbacks belonging to an expired request, so a late scan event cannot stop its successor. Optional scan startup also has its own deadline.
 - Pending and queued LE connections use bounded cancellation, including the controller's LE Create Connection Cancel command; late successful links are disconnected using their real handle. An unconfirmed bike cancellation reopens the radio before retrying.
