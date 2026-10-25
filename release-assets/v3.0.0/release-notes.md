@@ -8,6 +8,8 @@ Compared with **v2.0.9**, v3.0 focuses on reliable Bluetooth startup, recovery, 
 
 **Verification:** 726 passing assertions on Windows and Linux, nine deployment checks, lint/syntax checks, a clean Linux native build, and independent probes using the actual pinned Bluetooth libraries.
 
+**Downloads:** Modern image for Pi Zero 2 W / Pi 3 / Pi 4 (Bookworm), legacy image for Pi Zero / Zero W with a USB BLE dongle (Buster), and the npm package. Each asset includes a SHA256 checksum.
+
 Node.js **14.21.3** remains required for the existing native stack and Pi Zero support. Physical Pi/radio/bike validation is still outstanding; IC5/Schwinn 290 protocol captures remain a documented limitation.
 
 [Full changes since v2.0.9](https://github.com/4o4R/gymnasticonV2/compare/v2.0.9...v3.0.0)
