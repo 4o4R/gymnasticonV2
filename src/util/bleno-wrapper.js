@@ -48,6 +48,9 @@ function guardSharedAdapter(bleno) {
   };
   gap.restartAdvertising = function() {
     cancelRestart();
+    // A new attempt supersedes any earlier complaint: only the latest
+    // acknowledgement, or its absence, describes the current advertiser.
+    health.error = null;
     health.restartAt = Date.now();
     onComplete = status => {
       onComplete = null;
@@ -65,7 +68,12 @@ function guardSharedAdapter(bleno) {
     }
   };
   gap.stopAdvertising = function() {
+    // Stopping is deliberate (shutdown, adapter handoff, retry). It cancels any
+    // pending acknowledgement without turning it into a fault, so a normal
+    // stop/start cycle does not force a full binding rebuild.
     cancelRestart();
+    health.error = null;
+    health.restartAt = null;
     return stop.call(this);
   };
 }

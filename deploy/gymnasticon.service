@@ -1,8 +1,11 @@
 [Unit]
 Description=Gymnasticon Bike Bridge
-After=bluetooth.target network-online.target
+# The appliance only needs a working Bluetooth radio to start riding. Waiting
+# for network-online.target can add minutes on a Pi with no Wi-Fi configured,
+# so ordering is limited to Bluetooth and the adapter reprobe unit below.
+After=bluetooth.target gymnasticon-bt-reprobe.service
 Requires=bluetooth.target
-Wants=network-online.target
+Wants=gymnasticon-bt-reprobe.service
 StartLimitIntervalSec=0
 
 [Service]

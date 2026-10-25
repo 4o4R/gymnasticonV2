@@ -428,7 +428,9 @@ export class KeiserBikeClient extends EventEmitter {
     }
 
     try {
-      await this.startScanWithFallback(null, true);
+      // Route through the coordinator: it owns the radio, so this either keeps
+      // the shared scan running or restarts it if something else stopped it.
+      await this.scanCoordinator.acquire(this.scanTag);
     } catch (err) {
       debuglog('Stats timeout: Unable to restart BLE scan', err);
     } finally {
@@ -507,7 +509,10 @@ export class KeiserBikeClient extends EventEmitter {
       return;
     }
     try {
-      await this.startScanWithFallback(null, true);
+      // Re-acquire through the coordinator: it owns the radio, so a scanStop
+      // caused by an accessory cleanup is restarted without stealing the
+      // adapter or fighting another client's scan.
+      await this.scanCoordinator.acquire(this.scanTag);
     } catch (err) {
       debuglog('Unable to restart BLE scan', err);
     }

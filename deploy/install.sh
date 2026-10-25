@@ -211,6 +211,9 @@ sudo mkdir -p "$APP_DIR" # ensure the parent prefix exists before cloning
 if [ -d "$APP_DIR/.git" ]; then
     echo "Updating the existing checkout in $APP_DIR..."
     sudo git -C "$APP_DIR" pull --ff-only || echo "Could not update the existing checkout; continuing with the installed revision."
+elif [ -n "$(sudo ls -A "$APP_DIR" 2>/dev/null)" ]; then
+    echo "$APP_DIR exists but is not a git checkout; move it aside before re-running this installer." >&2
+    exit 1
 else
     sudo git clone https://github.com/4o4R/gymnasticonV2.git "$APP_DIR"
 fi

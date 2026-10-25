@@ -30,7 +30,7 @@ function createTestApp(overrides = {}) {
 }
 
 function destroyTestApp(app) {
-  process.removeListener('unhandledRejection', app.errorHandler);
+  process.removeListener('unhandledRejection', app.rejectionHandler);
   process.removeListener('uncaughtException', app.errorHandler);
 }
 
@@ -790,6 +790,8 @@ test('App.connectHeartRateSensor() keeps the client and retries without a bike c
     t.ok(app.hrRetryAt > Date.now() - 1000, 'a retry is scheduled');
 
     app.bikeConnected = true;
+    app.serverStarted = true;
+    app.server = {recover: async () => true};
     await app.maintainConnections();
     t.equal(connectCalls, 1, 'maintenance honours the retry window');
 
@@ -798,6 +800,145 @@ test('App.connectHeartRateSensor() keeps the client and retries without a bike c
     t.equal(connectCalls, 2, 'maintenance retries once the window expires');
   } finally {
     app.hrClient = null;
+    app.server = null;
+    await app.stop().catch(() => {});
+  }
+  t.end();
+});
+
+test('App.refreshRadioRoles() adopts a USB adapter that appeared after boot', async t => {
+  const app = new App({
+    noble: new EventEmitter(), bike: 'bot', antEnabled: false, heartRateEnabled: false,
+    bikeAdapter: 'hci0', serverAdapter: 'hci0', serverAdapters: ['hci0'],
+    healthMonitor: {on() {}, stop() {}},
+    detectAdapters: () => ({adapters: ['hci0', 'hci1']}),
+  });
+  app.logger = {log() {}, warn() {}, error() {}};
+  try {
+    app.serverAdapters = ['hci0'];
+    app.opts.serverAdapters = ['hci0'];
+    app.opts.serverAdapter = 'hci0';
+    const changed = await app.refreshRadioRoles({reason: 'test', force: true});
+    t.equal(changed, true, 'the new adapter changes the resolved roles');
+    t.equal(app.serverAdapters[0], 'hci1', 'the USB radio becomes the primary advertising adapter');
+    t.equal(app.opts.serverAdapter, 'hci1', 'the primary server adapter follows the resolved roles');
+    t.equal(await app.refreshRadioRoles({reason: 'test', force: true}), false, 'an unchanged set is not re-applied');
+  } finally {
+    await app.stop().catch(() => {});
+  }
+  t.end();
+});
+
+test('App.refreshRadioRoles() keeps an explicitly configured adapter', async t => {
+  const app = new App({
+    noble: new EventEmitter(), bike: 'bot', antEnabled: false, heartRateEnabled: false,
+    bikeAdapter: 'hci0', serverAdapter: 'hci0', serverAdapters: ['hci0'],
+    serverAdapterExplicit: true, bleMultiOutput: false,
+    healthMonitor: {on() {}, stop() {}},
+    detectAdapters: () => ({adapters: ['hci0', 'hci1']}),
+  });
+  app.logger = {log() {}, warn() {}, error() {}};
+  try {
+    app.serverAdapters = ['hci0'];
+    app.opts.serverAdapters = ['hci0'];
+    const changed = await app.refreshRadioRoles({reason: 'test', force: true});
+    t.equal(changed, false, 'a user-selected adapter is never overridden by hotplug');
+    t.deepEqual(app.serverAdapters, ['hci0'], 'the configured adapter stays');
+  } finally {
+    await app.stop().catch(() => {});
+  }
+  t.end();
+});
+
+test('App.maintainConnections() restores advertising that failed to start during a ride', async t => {
+  const app = new App({
+    noble: new EventEmitter(), bike: 'bot', antEnabled: false, heartRateEnabled: false,
+    healthMonitor: {on() {}, stop() {}},
+    detectAdapters: () => ({adapters: []}),
+  });
+  app.logger = {log() {}, warn() {}, error() {}};
+  let started = 0;
+  app.bikeConnected = true;
+  app.serverStarted = false;
+  app.ensureServerStarted = async () => { started += 1; app.serverStarted = true; };
+  try {
+    await app.maintainConnections();
+    t.equal(started, 1, 'a missing output is restarted while the bike is connected');
+    app.serverStarted = false;
+    await app.maintainConnections();
+    t.equal(started, 1, 'the retry floor prevents a hot loop');
+    app.nextServerRetryAt = 0;
+    await app.maintainConnections();
+    t.equal(started, 2, 'the output is retried once the floor expires');
+  } finally {
+    app.serverStarted = false;
+    await app.stop().catch(() => {});
+  }
+  t.end();
+});
+
+test('App.refreshRadioRoles() rebinds the bike radio when the configured adapter disappears', async t => {
+  const app = new App({
+    noble: new EventEmitter(), bike: 'bot', antEnabled: false, heartRateEnabled: false,
+    bikeAdapter: 'hci0', serverAdapter: 'hci1', serverAdapters: ['hci1'],
+    healthMonitor: {on() {}, stop() {}},
+    detectAdapters: () => ({adapters: ['hci1'], bikeAdapter: 'hci1', serverAdapter: 'hci1'}),
+  });
+  app.logger = {log() {}, warn() {}, error() {}};
+  try {
+    app.serverAdapters = ['hci1'];
+    app.opts.serverAdapters = ['hci1'];
+    const changed = await app.refreshRadioRoles({reason: 'test', force: true});
+    t.ok(changed, 'a vanished bike adapter is a change');
+    t.equal(app.opts.bikeAdapter, 'hci1', 'the surviving radio takes over bike scanning');
+    t.equal(app.pendingNobleReinit, true, 'noble is rebound before the next discovery');
+  } finally {
+    await app.stop().catch(() => {});
+  }
+  t.end();
+});
+
+test('App.refreshRadioRoles() never switches the bike radio mid-ride', async t => {
+  const app = new App({
+    noble: new EventEmitter(), bike: 'bot', antEnabled: false, heartRateEnabled: false,
+    bikeAdapter: 'hci0', serverAdapter: 'hci1', serverAdapters: ['hci1'],
+    healthMonitor: {on() {}, stop() {}},
+    detectAdapters: () => ({adapters: ['hci1'], bikeAdapter: 'hci1', serverAdapter: 'hci1'}),
+  });
+  app.logger = {log() {}, warn() {}, error() {}};
+  try {
+    app.bikeConnected = true;
+    app.bike = {address: 'aa:bb'};
+    await app.refreshRadioRoles({reason: 'test', force: true});
+    t.equal(app.opts.bikeAdapter, 'hci0', 'the radio in use is left alone');
+    t.equal(app.pendingNobleReinit, false, 'no rebind is queued');
+  } finally {
+    app.bike = null;
+    await app.stop().catch(() => {});
+  }
+  t.end();
+});
+
+test('App.ensureServerStarted() coalesces concurrent starts into one attempt', async t => {
+  const app = new App({noble: new EventEmitter(), bike: 'bot', antEnabled: false, heartRateEnabled: false,
+    healthMonitor: {on() {}, stop() {}}});
+  app.logger = {log() {}, warn() {}, error() {}};
+  let inits = 0;
+  let starts = 0;
+  app.initializeBleServers = async () => {
+    inits += 1;
+    app.server = {
+      start: async () => { starts += 1; await new Promise(resolve => setTimeout(resolve, 5)); },
+      stop: async () => {},
+    };
+  };
+  try {
+    await Promise.all([app.ensureServerStarted('first'), app.ensureServerStarted('second')]);
+    t.equal(inits, 1, 'only one set of bindings is opened');
+    t.equal(starts, 1, 'only one start attempt is made');
+    t.equal(app.serverStarted, true, 'advertising is live afterwards');
+  } finally {
+    app.server = null;
     await app.stop().catch(() => {});
   }
   t.end();

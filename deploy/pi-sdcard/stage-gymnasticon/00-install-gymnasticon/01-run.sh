@@ -215,7 +215,7 @@ ExecStart=/bin/sh -c '\
   modprobe btusb || true; \
   rfkill unblock all || true; \
   udevadm settle --timeout=15 || true; \
-  for i in 1 2 3 4 5 6 7; do \
+  for i in 1 2 3 4; do \
     if systemctl is-active --quiet gymnasticon; then \
       echo "[gymnasticon-bt-reprobe] Gymnasticon started; leaving the radio alone"; \
       exit 0; \
@@ -240,7 +240,7 @@ ExecStart=/bin/sh -c '\
       fi; \
     fi; \
     printf "[gymnasticon-bt-reprobe] attempt %s, hci count=%s up=%s\n" "$i" "$count" "$up"; \
-    sleep 3; \
+    sleep 2; \
   done; \
   hciconfig hci0 up || true; \
   hciconfig hci1 up || true; \

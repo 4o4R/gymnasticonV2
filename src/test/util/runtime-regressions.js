@@ -91,9 +91,10 @@ test('App.cleanup removes its process-level error handlers', async t => {
   });
 
   t.ok(process.listeners('uncaughtException').includes(app.errorHandler), 'handler starts attached');
+  t.ok(process.listeners('unhandledRejection').includes(app.rejectionHandler), 'rejection handler starts attached');
   await app.cleanup();
   t.notOk(process.listeners('uncaughtException').includes(app.errorHandler), 'handler is removed during cleanup');
-  t.notOk(process.listeners('unhandledRejection').includes(app.errorHandler), 'rejection handler is also removed');
+  t.notOk(process.listeners('unhandledRejection').includes(app.rejectionHandler), 'rejection handler is also removed');
   t.end();
 });
 

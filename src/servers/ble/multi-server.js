@@ -204,7 +204,11 @@ export class MultiBleServer {
   forEachServer(fn) {
     const entries = this.activeEntries || this.entries;
     entries.forEach(({server}) => {
-      if (!server.retired && !server.needsRecovery) fn(server);
+      if (server.retired || server.needsRecovery) return;
+      // Never write to a binding that is stopped or still starting: after a
+      // teardown the characteristic subscribers are gone anyway.
+      if (server.state && server.state !== 'started') return;
+      fn(server);
     });
   }
 }

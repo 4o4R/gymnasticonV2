@@ -52,6 +52,8 @@ const DEFAULT_SENSOR_DISCOVERY_DELAY_MS = 1000;
 const DEFAULT_SENSOR_RETRY_DELAY_MS = 60000;
 const DEFAULT_SENSOR_MAX_RETRY_DELAY_MS = 300000;
 const MAX_INTEGRATION_SECONDS = 30; // Longest cadence/speed gap we integrate in one step (guard against unit mistakes and clock jumps).
+const ADAPTER_PROBE_MIN_INTERVAL_MS = 15000; // How often hotplug re-detects radios, so a late USB dongle is picked up without spawning hciconfig constantly.
+const SERVER_RETRY_MIN_INTERVAL_MS = 15000; // Floor between automatic attempts to restore a missing BLE output.
 
 export {getBikeTypes};
 export const defaults = sharedDefaults;
@@ -151,6 +153,11 @@ export class App {
     this.hrStartOperation = null;
     this.hrRetryAt = 0;
     this.hrRetryDelayMs = 5000;
+    this.lastAdapterProbeAt = 0;
+    this.nextServerRetryAt = 0;
+    this.pendingNobleReinit = false;
+    this.serverStopOperation = null;
+    this.serverStartOperation = null;
     this.connectTimeout = new Timer(opts.bikeConnectTimeout, { repeats: false });
     this.connectTimeout.on('timeout', this.onBikeConnectTimeout.bind(this));
     this.pingInterval = new Timer(opts.serverPingInterval, {unref: true});
@@ -252,7 +259,10 @@ export class App {
     // Enhanced error handling
     this.fatalErrorHandled = false;
     this.errorHandler = this.handleError.bind(this);
-    process.on('unhandledRejection', this.errorHandler);
+    this.rejectionHandler = this.handleRejection.bind(this);
+    // A stray rejection must not end the ride: it is logged and the service
+    // keeps running. Only a genuinely uncaught exception restarts the process.
+    process.on('unhandledRejection', this.rejectionHandler);
     process.on('uncaughtException', this.errorHandler);
   }
 
@@ -260,6 +270,9 @@ export class App {
     if (this.server) {
       return;
     }
+    // Pick up a radio that appeared after the roles were resolved (USB dongle
+    // enumerating late) before opening any bindings.
+    await this.refreshRadioRoles({reason: 'initialize-servers', force: true});
     const adapters = this.serverAdapters?.length
       ? this.serverAdapters
       : [this.opts.serverAdapter].filter(Boolean);
@@ -285,7 +298,12 @@ export class App {
         entries.push({adapter, server, createServer});
       }
     } catch (error) {
-      for (const {server} of entries) stopBluetoothStack(server.bleno);
+      for (const {server} of entries) {
+        // retire() keeps the "never reuse a half-open binding" invariant;
+        // stopBluetoothStack() alone would leave the server startable again.
+        if (typeof server.retire === 'function') server.retire();
+        else stopBluetoothStack(server.bleno);
+      }
       throw error;
     }
     this.server = new MultiBleServer(entries, this.logger);
@@ -308,9 +326,34 @@ export class App {
   }
 
   async ensureServerStarted(reason = 'unspecified') {
+    // One start at a time: the run loop and the maintenance tick can both ask
+    // for advertising while it is still down, and a second initialisation
+    // would replace the server and leak the first set of bindings.
+    if (this.serverStartOperation) return this.serverStartOperation;
+    const operation = this.startServerOnce(reason);
+    this.serverStartOperation = operation;
+    try {
+      return await operation;
+    } finally {
+      if (this.serverStartOperation === operation) this.serverStartOperation = null;
+    }
+  }
+
+  /**
+   * @param {string} reason - short reason for logs.
+   * @returns {Promise<void>}
+   * @private
+   */
+  async startServerOnce(reason) {
     await this.serverStopOperation;
     if (this.serverStarted) {
       return; // Teaching note: skip work when advertising is already live.
+    }
+    if (this.pendingServerRebuild) {
+      // Adapter roles changed while an output was live; the entries still point
+      // at the old radios, so replace them before starting again.
+      this.pendingServerRebuild = false;
+      await this.resetBleServers();
     }
     if (!this.server) {
       await this.initializeBleServers();
@@ -483,7 +526,31 @@ export class App {
   async maintainConnections() {
     if (!this.keepRunning || this.maintenanceOperation) return;
     const operation = (async () => {
-      if (this.bikeConnected && this.serverStarted && !this.serverStopOperation) await this.server?.recover?.();
+      // A dongle that enumerated after boot changes which radios should be
+      // used, so re-detect before deciding whether an output needs repair.
+      await this.refreshRadioRoles({reason: 'maintenance'});
+      if (!this.keepRunning) return;
+      if (this.pendingNobleReinit && !this.bikeConnected && !this.bike) {
+        // The configured bike radio vanished and was replaced; rebind noble so
+        // the next discovery scans the radio that actually exists.
+        this.pendingNobleReinit = false;
+        await this.reinitializeNoble('adapter-hotplug');
+        if (!this.keepRunning) return;
+      }
+      if (this.bikeConnected && !this.serverStopOperation) {
+        const entries = this.server?.entries || [];
+        const needsRepair = Boolean(this.server?.degraded) || entries.some(({server}) =>
+          server?.retired || server?.needsRecovery ||
+          (server?.state && server.state !== 'started' && server.state !== 'starting'));
+        if (this.serverStarted && needsRepair) {
+          await this.server?.recover?.();
+        } else if (!this.serverStarted && Date.now() >= this.nextServerRetryAt) {
+          // Every output failed during the ride; restore one without waiting
+          // for another bike cycle.
+          this.nextServerRetryAt = Date.now() + SERVER_RETRY_MIN_INTERVAL_MS;
+          await this.ensureServerStarted('maintenance-recovery');
+        }
+      }
       if (!this.keepRunning || !this.bikeConnected) return;
       const hr = this.hrClient;
       if (hr && !hr.connected && !hr.connecting && !hr.isScanning && Date.now() >= this.hrRetryAt) {
@@ -493,6 +560,110 @@ export class App {
     this.maintenanceOperation = operation;
     try { await operation; }
     finally { if (this.maintenanceOperation === operation) this.maintenanceOperation = null; }
+  }
+
+  /**
+   * Re-detect Bluetooth adapters and adopt the resulting radio roles.
+   *
+   * Webcams, dongles and USB Bluetooth sticks commonly enumerate seconds after
+   * boot. The roles resolved at startup would then stay pinned to a radio set
+   * that no longer matches the hardware, so the appliance would advertise on
+   * the onboard UART forever instead of using the dongle. Probing is rate
+   * limited because detection shells out to hciconfig/lsusb.
+   *
+   * @param {object} [options]
+   * @param {string} [options.reason] - short reason for the log line.
+   * @param {boolean} [options.force] - probe even inside the rate-limit window.
+   * @returns {Promise<boolean>} true when the roles changed.
+   */
+  async refreshRadioRoles({reason = 'unspecified', force = false} = {}) {
+    const now = Date.now();
+    if (!force && now - this.lastAdapterProbeAt < ADAPTER_PROBE_MIN_INTERVAL_MS) return false;
+    this.lastAdapterProbeAt = now;
+
+    let detected = [];
+    let detection = null;
+    try {
+      // Injectable so tests can model hotplug without touching /sys.
+      const detect = typeof this.opts.detectAdapters === 'function' ? this.opts.detectAdapters : detectAdapters;
+      detection = detect();
+      detected = detection?.adapters || [];
+    } catch (_error) {
+      return false; // A failed probe must never blank working roles.
+    }
+    if (!detected.length) return false;
+
+    // The configured bike radio can disappear too (unplugged dongle). Only
+    // switch it while nothing is riding, then rebind noble before the next scan.
+    const currentBike = normalizeAdapterName(this.opts.bikeAdapter) || this.opts.bikeAdapter;
+    let bikeAdapterChanged = false;
+    if (!this.bikeConnected && !this.bike && currentBike && !detected.includes(currentBike)) {
+      const replacement = detection?.bikeAdapter;
+      if (replacement && detected.includes(replacement)) {
+        this.setBikeAdapter(replacement, `${reason}-hotplug`);
+        bikeAdapterChanged = true;
+        this.pendingNobleReinit = true;
+      }
+    }
+
+    const desired = resolveServerAdapters({
+      ...this.opts,
+      // A derived list must be recomputed; only a user-supplied one is sticky.
+      serverAdapters: this.opts.serverAdapterExplicit ? this.opts.serverAdapters : undefined,
+      detectedAdapters: detected,
+    }, this.multiRoleInfo);
+    const current = (this.serverAdapters || []).map(String);
+    const next = desired.map(String);
+    const rolesChanged = !(current.length === next.length && current.every((adapter, index) => adapter === next[index]));
+    if (!rolesChanged && !bikeAdapterChanged) {
+      return false;
+    }
+    if (rolesChanged) {
+      this.logger.log(
+        `[gym-app] Bluetooth adapters changed (${detected.join(', ')}); ` +
+        `BLE output ${current.join(', ') || 'none'} → ${next.join(', ') || 'none'} [${reason}]`
+      );
+      this.serverAdapters = next;
+      this.opts.serverAdapters = next;
+      if (next.length) this.opts.serverAdapter = next[0];
+      this.configureMultiRole();
+    }
+
+    if (!this.serverStarted) {
+      // Nothing is advertising yet: drop the old bindings so the next start
+      // opens the newly chosen adapters.
+      await this.resetBleServers();
+    } else if (rolesChanged) {
+      // Keep the current output live; the next start rebuilds from the new roles.
+      this.pendingServerRebuild = true;
+      this.logger.log('[gym-app] new adapter roles apply the next time advertising starts');
+    }
+    return true;
+  }
+
+  /**
+   * Release the current BLE server and its bleno bindings without touching the
+   * bike connection, so entries can be rebuilt for a new adapter set.
+   * @returns {Promise<void>}
+   * @private
+   */
+  async resetBleServers() {
+    const server = this.server;
+    this.server = null;
+    this.serverStarted = false;
+    if (!server) return;
+    try {
+      await server.stop();
+    } catch (error) {
+      this.logger.warn(`[gym-app] failed to stop BLE server before rebuilding: ${error.message}`);
+    }
+    for (const entry of server.entries || []) {
+      try {
+        if (typeof entry.server?.retire === 'function') entry.server.retire();
+      } catch (_error) {
+        // A binding that is already closed cannot be released twice.
+      }
+    }
   }
 
   async waitForRestartSignal() {
@@ -741,6 +912,9 @@ export class App {
     // Teaching note: force a fresh noble instance so the HCI socket is reopened.
     this.logger.log(`[gym-app] reinitializing noble (${reason})`);
     const previousNoble = this.noble;
+    // Accessory clients hold references to the old noble instance, so they must
+    // be stopped before its socket is replaced or they scan a dead radio.
+    await this.stopOptionalSensorDiscovery(`reinitialize-${reason}`);
     // Drop every scan claim on the old radio before its socket is replaced.
     await this.releaseScanOwnership(`reinitialize-${reason}`);
     if (!this.keepRunning) return;
@@ -859,6 +1033,12 @@ export class App {
     return this.opts.bike === 'bot';
   }
 
+  handleRejection(reason) {
+    // Async work is expected to handle its own failures; one that escapes is a
+    // bug, but tearing the process down would drop the rider's watch and sensors.
+    this.logger.error('[gym-app] unhandled rejection (service continues):', reason);
+  }
+
   handleError(error) {
     if (this.fatalErrorHandled) {
       return;
@@ -963,7 +1143,7 @@ export class App {
         this.logger.error('Error closing ANT+ stick', e);
       }
     }
-    process.removeListener('unhandledRejection', this.errorHandler);
+    process.removeListener('unhandledRejection', this.rejectionHandler);
     process.removeListener('uncaughtException', this.errorHandler);
   }
 
@@ -981,6 +1161,9 @@ export class App {
       this.logger.log(`[gym-app] startup opts: bike=${this.opts.bike} defaultBike=${this.opts.defaultBike} bikeAdapter=${this.opts.bikeAdapter} serverAdapter=${serverAdapterLabel}`);
       this.logger.log(`[gym-app] ANT+ mode: ${this.antEnabled ? 'enabled (USB ANT stick transport)' : 'disabled'}`); // ANT+ transport is independent from BLE adapter selection.
       this.logRadioMap(); // Emit one compact "which radio does what" line for Pi troubleshooting.
+      // Background upkeep (adapter hotplug, advertising repair, sensor retry)
+      // must run even if the first advertising start failed.
+      this.maintenanceInterval.reset();
 
       while (this.keepRunning) { // Keep looping until shutdown or we successfully complete the full startup sequence.
         try {

@@ -15,6 +15,7 @@ STAGE = REPO / "deploy/pi-sdcard/stage-gymnasticon/00-apt-refresh/00-run.sh"
 INSTALLER = REPO / "deploy/install.sh"
 INSTALL_STAGE = REPO / "deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/01-run.sh"
 LOCK_UNIT = REPO / "deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/lockrootfs.service"
+SERVICE_UNIT = REPO / "deploy/gymnasticon.service"
 
 
 class DeploymentChecks(unittest.TestCase):
@@ -187,5 +188,16 @@ class DeploymentChecks(unittest.TestCase):
                                          "systemctl enable bootfs-ro", "reboot"])
 
 
+    def test_service_unit_does_not_wait_for_the_network(self):
+        settings = [line for line in SERVICE_UNIT.read_text().splitlines()
+                    if line.strip() and not line.lstrip().startswith("#")]
+        network_lines = [line for line in settings if "network-online.target" in line]
+        self.assertEqual(network_lines, [], "BLE startup must not wait for network-online")
+        after = next(line for line in settings if line.startswith("After="))
+        self.assertIn("bluetooth.target", after)
+        self.assertIn("gymnasticon-bt-reprobe.service", after,
+                      "the adapter reprobe must finish before the app opens the radio")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

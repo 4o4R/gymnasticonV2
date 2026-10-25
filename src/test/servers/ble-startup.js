@@ -567,3 +567,18 @@ console.log('real HCI/GAP/GATT recovery and repeated watch connections passed');
   t.equal(result.status, 0, result.stderr || result.stdout || 'pinned bleno recovery exited naturally');
   t.end();
 });
+
+test('MultiBleServer never writes to a stopped or retired binding', t => {
+  const calls = [];
+  const started = {state: 'started', updatePower: () => calls.push('started')};
+  const stoppedServer = {state: 'stopped', updatePower: () => calls.push('stopped')};
+  const retired = {state: 'started', retired: true, updatePower: () => calls.push('retired')};
+  const multi = new MultiBleServer([
+    {adapter: 'hci0', server: started},
+    {adapter: 'hci1', server: stoppedServer},
+    {adapter: 'hci2', server: retired},
+  ], createLogger());
+  multi.updatePower({power: 1});
+  t.deepEqual(calls, ['started'], 'only the live output is updated');
+  t.end();
+});
