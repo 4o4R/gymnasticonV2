@@ -107,6 +107,11 @@ Gymnasticon includes `deploy/firmware/brcm/BCM20702A1-0a5c-21e8.hcd`. The Raspbe
    sudo systemctl restart gymnasticon
    ```
 
+After pairing succeeds, keep in mind:
+
+- Gymnasticon advertises only while a bike is connected. If the console sleeps during a pause, the app or watch sees the sensor disappear; pedal again to wake the console and Gymnasticon will rediscover it and start advertising again.
+- Only one device can connect per advertising adapter; see the Bluetooth and ANT+ Behavior section in the README.
+
 ## Heart Rate Is Not Rebroadcast
 
 Gymnasticon listens for standard BLE Heart Rate Service peripherals. Apple Watch does not advertise that profile directly, so it requires an iPhone bridge app that re-advertises watch heart rate over BLE.

@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.0.1] - 2026-10-25
+### Fixed
+- A controller that never completes an advertising command no longer disables that output until process restart. A retry retires its old native stack and creates a fresh binding while preserving healthy mirrors and rejecting late callbacks.
+- Pi image capability cleanup runs on the build host, outside pi-gen's chroot that drops CAP_SETFCAP. Missing tools, failed reads and failed removal stop the build with explicit errors.
+- Cancelled optional-sensor scan acquisition no longer leaves clients waiting on an unowned scan. Intentional stop cancels pending discovery and retries; HR scan errors release their listeners while continuous discovery still accepts late sensors.
+- Deployment fixtures reject a missing installer boundary before executing any shell commands.
+
+### Documentation
+- The README and troubleshooting guide now state that each advertising adapter serves one training app or watch connection, and that advertising resumes automatically when a client disconnects while a bike is connected.
+
+### Verification
+- Regressions exercise the pinned Bleno/App recovery path, pi-gen's dropped capability context, cancelled sensor ownership and late discovery. Physical Pi boot and radio pairing still require target-hardware validation.
+
 ## [3.0.0] - 2026-10-24
 ### Fixed
 - Pi image services retain both ambient Bluetooth capabilities through Node and child commands. File capabilities on the runtime previously stripped NET_ADMIN under the unprivileged systemd account, leaving adapter-recovery subprocesses without permissions.

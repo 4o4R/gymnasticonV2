@@ -200,6 +200,8 @@ Gymnasticon detects available Bluetooth adapters and assigns radio roles automat
 - The server adapter advertises Gymnasticon to training apps.
 - Dual-adapter Pi Zero setups prefer the onboard adapter for bike scanning and a USB BLE dongle for advertising.
 - Multi-output mode can mirror BLE advertising across multiple suitable adapters.
+- Each advertising adapter accepts one training app or watch connection at a time. To use two devices at once (for example a watch plus a phone), enable multi-output with two adapters; both advertise the same data and each can host one connection.
+- While a bike is connected, Gymnasticon resumes advertising automatically when the app or watch disconnects, so a watch can leave and reconnect without restarting the service. Advertising stops when the bike goes idle or disconnects and resumes once the bike is rediscovered.
 - ANT+ uses a separate USB ANT+ stick and does not consume a Bluetooth adapter.
 
 On single-adapter Pi Zero / Zero W systems, power/cadence/speed output still works, but heart-rate rebroadcast is disabled by default to avoid unstable scan/advertise switching.
