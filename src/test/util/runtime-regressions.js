@@ -1,5 +1,9 @@
 import {EventEmitter} from 'events';
-import {existsSync, readFileSync} from 'fs';
+import {existsSync, readFileSync, mkdtempSync, writeFileSync, unlinkSync, rmdirSync} from 'fs';
+import {spawnSync} from 'child_process';
+import {tmpdir} from 'os';
+import {join} from 'path';
+import {fileURLToPath} from 'url';
 
 import test from '../support/tape.js';
 import {App} from '../../app/app.js';
@@ -393,5 +397,27 @@ test('GymnasticonApp seeds ConfigManager with documented defaults when config fi
     powerScale: 1,
     powerOffset: 0,
   }, 'configManager receives the full set of documented defaults');
+  t.end();
+});
+
+test('CLI version and help exit naturally from an unrelated project directory', t => {
+  const cwd = mkdtempSync(join(tmpdir(), 'gymnasticon-cli.'));
+  const foreignManifest = join(cwd, 'package.json');
+  const cli = fileURLToPath(new URL('../../app/cli.js', import.meta.url));
+  const expectedVersion = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')).version;
+  writeFileSync(foreignManifest, JSON.stringify({name: 'unrelated-project', version: '99.0.0'}));
+  try {
+    const version = spawnSync(process.execPath, [cli, '--version'], {cwd, encoding: 'utf8', timeout: 5000});
+    t.equal(version.status, 0, version.stderr || 'version command exits successfully');
+    t.equal(version.signal, null, 'version needs no forced termination');
+    t.equal(version.stdout.trim().split(/\r?\n/).pop(), expectedVersion, 'reports the installed package version, regardless of caller package');
+    const help = spawnSync(process.execPath, [cli, '--help'], {cwd, encoding: 'utf8', timeout: 5000});
+    t.equal(help.status, 0, help.stderr || 'help command exits successfully');
+    t.equal(help.signal, null, 'help needs no forced termination');
+    t.match(help.stdout, /--bike\s/, 'help displays the supported bike option without starting Bluetooth');
+  } finally {
+    unlinkSync(foreignManifest);
+    rmdirSync(cwd);
+  }
   t.end();
 });

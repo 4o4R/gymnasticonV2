@@ -12,6 +12,7 @@ import unittest
 REPO = Path(__file__).resolve().parent.parent
 STAGE = REPO / "deploy/pi-sdcard/stage-gymnasticon/00-apt-refresh/00-run.sh"
 INSTALLER = REPO / "deploy/install.sh"
+INSTALL_STAGE = REPO / "deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/01-run.sh"
 LOCK_UNIT = REPO / "deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/lockrootfs.service"
 
 
@@ -113,6 +114,16 @@ class DeploymentChecks(unittest.TestCase):
         self.env["APT_EXIT"] = "100"
         self.assertEqual(self.run_stage().returncode, 100)
         self.assertEqual(self.actions(), ["apt-get"])
+
+    def test_image_install_user_and_group_reach_the_chroot_child(self):
+        self.env["FIRST_USER_NAME"] = "image-user"
+        self.env.pop("GYMNASTICON_USER", None)
+        self.env.pop("GYMNASTICON_GROUP", None)
+        setup = INSTALL_STAGE.read_text().split("# Download and extract Node.js", 1)[0]
+        child = "sh -c 'printf \"%s:%s\" \"$GYMNASTICON_USER\" \"$GYMNASTICON_GROUP\"'"
+        result = self.run_shell(setup + "\n" + child)
+        self.assert_ok(result)
+        self.assertEqual(result.stdout, "image-user:image-user")
 
     def test_installer_repairs_sources_left_by_previous_installer(self):
         self.release("buster", "10")

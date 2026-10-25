@@ -6,8 +6,8 @@ NODE_VERSION=14.21.3  # Node.js build compatible with Pi Zero/Zero W (ARMv6)
 NODE_SHASUM256=6f526790724dce3693eefdf7d23f2c82da4403dd76b9d4bbd384d733ea44a7f6
 NODE_ARCHIVE="node-v${NODE_VERSION}-linux-armv6l.tar.xz"
 NODE_URL="https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/${NODE_ARCHIVE}"
-GYMNASTICON_USER=${FIRST_USER_NAME}  # default pi-gen user
-GYMNASTICON_GROUP=${FIRST_USER_NAME} # keep npm install permissions aligned
+export GYMNASTICON_USER=${FIRST_USER_NAME}  # inherited by on_chroot's child shell
+export GYMNASTICON_GROUP=${FIRST_USER_NAME} # keep npm install permissions aligned
 BOOTFS_DIR="${ROOTFS_DIR}/boot" # Buster mounts the FAT boot partition here.
 if [ -d "${ROOTFS_DIR}/boot/firmware" ]; then
   BOOTFS_DIR="${ROOTFS_DIR}/boot/firmware" # Bookworm moved the FAT partition here.
