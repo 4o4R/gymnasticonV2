@@ -42,6 +42,8 @@ export class GymnasticonApp {
       defaultBike: appDefaults.defaultBike,
       serverName: appDefaults.serverName,
       bikeReceiveTimeout: appDefaults.bikeReceiveTimeout,
+      bikeDisconnectTimeout: appDefaults.bikeDisconnectTimeout,
+      serverReconnectGrace: appDefaults.serverReconnectGrace,
       powerScale: appDefaults.powerScale,
       powerOffset: appDefaults.powerOffset,
     });

@@ -134,9 +134,26 @@ export class App {
 
     this.statsTimeout = new Timer(opts.bikeReceiveTimeout, { repeats: false });
     this.statsTimeout.on('timeout', this.onBikeStatsTimeout.bind(this));
+    this.bikeDisconnectTimeout = new Timer(opts.bikeDisconnectTimeout, {repeats: false, unref: true});
+    this.bikeDisconnectTimeout.on('timeout', () => this.onBikeUnavailable('bike-telemetry-lost'));
+    this.receiverGrace = new Timer(opts.serverReconnectGrace, {repeats: false, unref: true});
+    this.receiverGrace.on('timeout', () => {
+      this.expireReceiverGrace().catch(error => this.logger.warn(`Receiver cleanup failed: ${error.message}`));
+    });
+    this.receiverGraceActive = false;
+    this.bikeConnected = false;
+    this.bikeSession = 0;
+    this.maintenanceInterval = new Timer(5, {unref: true});
+    this.maintenanceInterval.on('timeout', () => {
+      this.maintainConnections().catch(error => this.logger.warn(`Connection recovery failed: ${error.message}`));
+    });
+    this.maintenanceOperation = null;
+    this.hrStartOperation = null;
+    this.hrRetryAt = 0;
+    this.hrRetryDelayMs = 5000;
     this.connectTimeout = new Timer(opts.bikeConnectTimeout, { repeats: false });
     this.connectTimeout.on('timeout', this.onBikeConnectTimeout.bind(this));
-    this.pingInterval = new Timer(opts.serverPingInterval);
+    this.pingInterval = new Timer(opts.serverPingInterval, {unref: true});
     this.pingInterval.on('timeout', this.onPingInterval.bind(this));
 
     this.simulation = new Simulation();
@@ -291,6 +308,7 @@ export class App {
   }
 
   async ensureServerStarted(reason = 'unspecified') {
+    await this.serverStopOperation;
     if (this.serverStarted) {
       return; // Teaching note: skip work when advertising is already live.
     }
@@ -307,6 +325,7 @@ export class App {
       return;
     }
     this.serverStarted = true;
+    this.maintenanceInterval.reset();
     this.logger.log('[gym-app] BLE server advertising');
   }
 
@@ -420,13 +439,60 @@ export class App {
   }
 
   async stopServerAdvertising(reason = 'unspecified') {
+    if (this.serverStopOperation) return this.serverStopOperation;
     if (typeof this.server?.stop !== 'function') return;
     const starting = this.server.entries?.some(({server}) => server.state === 'starting' || server.state === 'started');
     if (!this.serverStarted && !starting) return;
     this.logger.log(`[gym-app] stopping BLE server (${reason})`);
-    await this.server.stop();
     this.serverStarted = false;
-    this.logger.log('[gym-app] BLE server stopped');
+    const operation = this.server.stop();
+    this.serverStopOperation = operation;
+    try {
+      await operation;
+      this.logger.log('[gym-app] BLE server stopped');
+    } finally {
+      if (this.serverStopOperation === operation) this.serverStopOperation = null;
+    }
+  }
+
+  zeroBikeMetrics() {
+    this.stopPedalSimulation();
+    this.metricsProcessor.reset?.();
+    this.power = 0;
+    this.currentCadence = 0;
+    this.kinematics.lastTimestamp = null;
+    this.publishTelemetry();
+  }
+
+  holdReceiverDuringReconnect() {
+    if (this.receiverGraceActive || (!this.serverStarted && !this.antServer?.isRunning)) return;
+    this.receiverGraceActive = true;
+    if (this.receiverGrace.interval > 0) this.receiverGrace.reset();
+    else this.expireReceiverGrace().catch(error => this.logger.warn(`Receiver cleanup failed: ${error.message}`));
+  }
+
+  async expireReceiverGrace() {
+    if (!this.receiverGraceActive || this.bikeConnected) return;
+    this.receiverGraceActive = false;
+    this.stopAnt();
+    this.pingInterval.cancel();
+    await this.stopServerAdvertising('bike-reconnect-grace-expired');
+    if (!this.bikeConnected) this.maintenanceInterval.cancel();
+  }
+
+  async maintainConnections() {
+    if (!this.keepRunning || this.maintenanceOperation) return;
+    const operation = (async () => {
+      if (this.bikeConnected && this.serverStarted && !this.serverStopOperation) await this.server?.recover?.();
+      if (!this.keepRunning || !this.bikeConnected) return;
+      const hr = this.hrClient;
+      if (hr && !hr.connected && !hr.connecting && !hr.isScanning && Date.now() >= this.hrRetryAt) {
+        await this.connectHeartRateSensor();
+      }
+    })();
+    this.maintenanceOperation = operation;
+    try { await operation; }
+    finally { if (this.maintenanceOperation === operation) this.maintenanceOperation = null; }
   }
 
   async waitForRestartSignal() {
@@ -469,11 +535,14 @@ export class App {
   async stopBikeConnection({ stopServer = false, discardBike = false } = {}) {
     // Teaching note: this cleans up the bike connection and optionally stops
     // advertising when we should not broadcast without a bike.
-    this.pingInterval.cancel(); // Stop BLE keep-alives immediately so reconnect loops do not keep publishing stale telemetry.
+    this.bikeConnected = false;
+    this.bikeSession += 1;
     this.statsTimeout.cancel();
+    this.bikeDisconnectTimeout.cancel();
     this.connectTimeout.cancel();
-    this.stopPedalSimulation(); // Cancel any pending synthetic pedal stroke before the bike goes away.
-    this.kinematics.lastTimestamp = null; // Do not integrate an outage as if the rider were still pedaling.
+    this.zeroBikeMetrics();
+    this.healthMonitor?.metrics?.delete('bikeStats');
+    this.clearRestartRequest();
     if (this.bike) {
       this.bike.off('disconnect', this.onBikeDisconnectBound);
       this.bike.off('stats', this.onBikeStatsBound);
@@ -483,9 +552,9 @@ export class App {
       this.bike = null;
     }
     if (stopServer) {
-      // Teaching note: stop ANT+ broadcasts when the bike is unavailable so
-      // we do not send stale data to head units.
-      this.stopAnt();
+      // Give an existing receiver time to survive an automatic bike reconnect.
+      if (this.keepRunning) this.holdReceiverDuringReconnect();
+      else this.stopAnt();
       // Teaching note: stop the HR bridge so we are not rebroadcasting HR
       // when there is no bike session in progress.
       if (this.hrClient) {
@@ -493,7 +562,7 @@ export class App {
       }
       await this.stopOptionalSensorDiscovery('bike-connection-stop');
       await this.releaseScanOwnership('bike-connection-stop');
-      await this.stopServerAdvertising('bike-connection-stop');
+      if (!this.keepRunning) await this.stopServerAdvertising('bike-connection-stop');
     }
   }
 
@@ -810,6 +879,12 @@ export class App {
 
   async stop() {
     this.keepRunning = false;
+    this.bikeConnected = false;
+    this.bikeSession += 1;
+    this.receiverGraceActive = false;
+    this.receiverGrace.cancel();
+    this.maintenanceInterval.cancel();
+    this.bikeDisconnectTimeout.cancel();
     for (const cancel of this.startupCancellations) cancel();
     if (this.restartSignal && !this.restartSignal.resolved) {
       this.restartSignal.resolved = true;
@@ -909,35 +984,37 @@ export class App {
 
       while (this.keepRunning) { // Keep looping until shutdown or we successfully complete the full startup sequence.
         try {
+          this.clearRestartRequest();
           this.logger.log('connecting to bike...'); // Show progress on the console so headless installs still provide feedback.
           // Free the radio from optional sensor scans before bike discovery.
           await this.releaseScanOwnership('bike-connect');
           if (!this.keepRunning) break;
           // Discovery needs its own budget: autodetect consumes the scan window
           // before returning a fallback, which still needs time to connect.
-          this.bike = await this.raceConnectWatchdog(this.createBikeClient(this.opts, this.noble), {discovery: true});
+          this.bike = await this.raceConnectWatchdog(this.createBikeClient({...this.opts, scanCoordinator: this.scanCoordinator}, this.noble), {discovery: true});
           // Teaching note: using bound handlers allows us to remove listeners when we reconnect.
           this.bike.on('disconnect', this.onBikeDisconnectBound); // Restart the app when the bike disconnects unexpectedly.
           this.bike.on('stats', this.onBikeStatsBound); // Stream bike telemetry into the BLE/ANT broadcasters.
           this.connectTimeout.reset();
           await this.raceConnectWatchdog(this.bike.connect()); // Begin scanning or connecting based on the specific bike implementation.
           this.connectTimeout.cancel(); // Clear the watchdog because the connect phase finished successfully.
+          this.bikeConnected = true;
+          this.receiverGraceActive = false;
+          this.receiverGrace.cancel();
           this.logger.log(`bike connected ${this.bike.address}`); // Log the MAC so users can confirm which console paired.
           // Teaching note: only advertise once the bike is connected so we do
           // not broadcast phantom sensors while idle.
           await this.ensureServerStarted('bike-connected');
           if (!this.keepRunning) break;
-          if (this.antEnabled) { // Only talk to the ANT+ stick when the user opted in.
+          if (this.antEnabled && !this.antServer?.isRunning) {
             this.startAnt(); // Fire up ANT+ broadcasting (no-op if the stick is missing).
           }
 
-          // Multi-sensor parallel startup (critical feature)
-          // Launch all optional sensor discovery concurrently so they connect faster
-          await this.startOptionalSensors();
-          if (!this.keepRunning) break;
-
-          this.pingInterval.reset(); // Kick off the BLE keep-alive timer so Zwift sees data even when you pause pedaling.
-          this.statsTimeout.reset(); // Start the "bike telemetry" watchdog so we can log when stats go stale.
+          this.pingInterval.reset();
+          this.statsTimeout.reset();
+          this.bikeDisconnectTimeout.reset();
+          // Accessories must not delay receiver keep-alives or bike recovery.
+          this.startOptionalSensors().catch(error => this.logger.warn(`Optional sensor startup failed: ${error.message}`));
           // Teaching note: stay in the loop and wait for a disconnect/timeout so
           // we can reconnect without killing the whole systemd service.
           await this.waitForRestartSignal();
@@ -1035,6 +1112,8 @@ export class App {
    * output does not depend on these optional clients.
    */
   async startOptionalSensors() {
+    const session = this.bikeSession;
+    const cancelled = () => !this.keepRunning || session !== this.bikeSession;
     const enabledCount = [
       this.hrClient ? 1 : 0,
       this.speedSensorEnabled ? 1 : 0,
@@ -1049,6 +1128,7 @@ export class App {
       this.logger.log(`[sensors] waiting ${this.sensorDiscoveryDelayMs}ms before optional sensor discovery`);
       await this.sleep(this.sensorDiscoveryDelayMs);
     }
+    if (cancelled()) return;
 
     this.logger.log(`[sensors] starting ${enabledCount} optional sensor(s) conservatively...`);
 
@@ -1057,12 +1137,14 @@ export class App {
         this.logger.warn(`Heart-rate sensor startup failed: ${err.message}`);
       });
     }
+    if (cancelled()) return;
 
     if (this.speedSensorEnabled) {
       await this.connectSpeedSensor().catch((err) => {
         this.logger.warn(`Speed sensor startup failed: ${err.message}`);
       });
     }
+    if (cancelled()) return;
 
     if (this.cadenceSensorEnabled) {
       await this.connectCadenceSensor().catch((err) => {
@@ -1084,14 +1166,24 @@ export class App {
    * Failures don't block app startup (app continues without HR).
    */
   async connectHeartRateSensor() {
-    try {
-      await this.hrClient.connect();
-      this.logger.log('[HeartRate] sensor discovery started');
-    } catch (err) {
-      this.logger.error(`[HeartRate] connection failed: ${err.message}`);
-      await this.hrClient.disconnect().catch(() => {});
-      this.hrClient = null;
-    }
+    if (!this.hrClient || this.hrStartOperation) return this.hrStartOperation;
+    const client = this.hrClient;
+    const operation = (async () => {
+      try {
+        await client.connect();
+        this.hrRetryAt = 0;
+        this.hrRetryDelayMs = 5000;
+        this.logger.log('[HeartRate] sensor discovery started');
+      } catch (err) {
+        this.logger.warn(`[HeartRate] discovery failed; retrying automatically: ${err.message}`);
+        await client.disconnect().catch(() => {});
+        this.hrRetryAt = Date.now() + this.hrRetryDelayMs;
+        this.hrRetryDelayMs = Math.min(60000, this.hrRetryDelayMs * 2);
+      }
+    })();
+    this.hrStartOperation = operation;
+    try { await operation; }
+    finally { if (this.hrStartOperation === operation) this.hrStartOperation = null; }
   }
 
   /**
@@ -1338,8 +1430,8 @@ export class App {
 
   onHealthMetricStale(metricName) {
     if (metricName === 'bikeStats') {
-      this.logger.log('health monitor detected stale bike telemetry');
-      this.onBikeStatsTimeout();
+      // Diagnostics must not impose a second, conflicting disconnect deadline.
+      debuglog('health monitor detected stale bike telemetry');
     }
   }
 
@@ -1358,6 +1450,7 @@ export class App {
 
     this.logger.log(`received stats from bike [power=${processed.power}W cadence=${processed.cadence}rpm speed=${(processed.speed ?? inferredSpeed).toFixed(2)}m/s]`); // Log the normalized metrics for debugging.
     this.statsTimeout.reset(); // Clear the bike stats timeout since we just received fresh data.
+    this.bikeDisconnectTimeout.reset();
     this.power = processed.power; // Store the smoothed power for ping intervals and ANT+ updates.
     this.currentCadence = processed.cadence; // Track cadence for ANT+ and BLE keep-alives.
     if (this.isSimulationMode()) {
@@ -1383,67 +1476,33 @@ export class App {
   }
 
   onBikeStatsTimeout() {
-    this.logger.log(`timed out waiting for bike stats after ${this.statsTimeout.interval}s`);
-    // Teaching note: treat missing stats as a disconnect; zero metrics so we
-    // do not broadcast stale power/cadence while we reconnect.
-    this.stopPedalSimulation(); // No simulated stroke may resurrect cadence after the timeout.
-    this.power = 0;
-    this.currentCadence = 0;
-    this.publishTelemetry();
-    // Teaching note: stop ANT+ immediately so head units stop seeing stale data.
-    this.stopAnt();
-    // Teaching note: stop HR scanning during reconnect to reduce BLE contention.
-    if (this.hrClient) {
-      this.hrClient.disconnect().catch(() => {});
-    }
-    this.stopOptionalSensorDiscovery('bike-stats-timeout').catch(() => {});
-    // Teaching note: stop advertising asynchronously so we only broadcast when
-    // a bike is actively connected.
-    this.stopServerAdvertising('bike-stats-timeout').catch(() => {});
-    this.requestRestart('bike-stats-timeout');
+    if (!this.keepRunning) return;
+    this.logger.log(`bike telemetry stale after ${this.statsTimeout.interval}s; reporting zero while waiting`);
+    this.zeroBikeMetrics();
   }
 
   onBikeDisconnect({ address }) {
     this.logger.log(`bike disconnected ${address}`);
-    // Teaching note: disconnects should trigger a clean reconnect cycle rather
-    // than killing the whole service.
-    // Teaching note: zero out the metrics immediately so apps don't keep
-    // showing stale power/cadence while we reconnect.
-    this.stopPedalSimulation(); // Cancel any pending synthetic stroke before zeroing metrics.
-    this.power = 0;
-    this.currentCadence = 0;
-    this.publishTelemetry();
-    // Teaching note: stop ANT+ immediately so head units stop seeing stale data.
-    this.stopAnt();
-    // Teaching note: stop HR scanning during reconnect to reduce BLE contention.
-    if (this.hrClient) {
-      this.hrClient.disconnect().catch(() => {});
-    }
-    this.stopOptionalSensorDiscovery('bike-disconnect').catch(() => {});
-    // Teaching note: stop advertising so clients do not see a phantom sensor.
-    this.stopServerAdvertising('bike-disconnect').catch(() => {});
-    this.requestRestart('bike-disconnect');
+    this.onBikeUnavailable('bike-disconnect');
+  }
+
+  onBikeUnavailable(reason) {
+    if (!this.keepRunning) return;
+    this.bikeConnected = false;
+    this.bikeSession += 1;
+    this.statsTimeout.cancel();
+    this.bikeDisconnectTimeout.cancel();
+    this.zeroBikeMetrics();
+    this.holdReceiverDuringReconnect();
+    if (this.hrClient) this.hrClient.disconnect().catch(() => {});
+    this.stopOptionalSensorDiscovery(reason).catch(() => {});
+    this.requestRestart(reason);
   }
 
   onBikeConnectTimeout() {
     this.logger.log(`bike connection timed out after ${this.connectTimeout.interval}s`);
-    // Teaching note: force a reconnect attempt instead of exiting so systemd
-    // restarts are no longer required to recover.
-    this.stopPedalSimulation(); // Nothing synthetic may keep publishing after a failed connect.
-    if (this.bike?.disconnect) {
-      this.bike.disconnect().catch(() => {});
-    }
-    // Teaching note: stop ANT+ immediately so we do not broadcast with no bike.
-    this.stopAnt();
-    // Teaching note: stop HR scanning during reconnect to reduce BLE contention.
-    if (this.hrClient) {
-      this.hrClient.disconnect().catch(() => {});
-    }
-    this.stopOptionalSensorDiscovery('bike-connect-timeout').catch(() => {});
-    // Teaching note: stop advertising during connection failures so we only
-    // broadcast once a bike is actually connected.
-    this.stopServerAdvertising('bike-connect-timeout').catch(() => {});
-    this.requestRestart('bike-connect-timeout');
+    this.onBikeUnavailable('bike-connect-timeout');
+    if (this.bike?.disconnect) this.bike.disconnect().catch(() => {});
   }
 
   startAnt() {

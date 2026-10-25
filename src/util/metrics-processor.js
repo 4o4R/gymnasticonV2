@@ -5,6 +5,10 @@ export class MetricsProcessor {
     this.powerSmoother = new PowerSmoother(options.smoothingFactor);
   }
 
+  reset() {
+    this.powerSmoother.reset();
+  }
+
   process(metrics = {}) {
     const power = Number.isFinite(metrics.power) ? metrics.power : 0;
     const cadence = Number.isFinite(metrics.cadence) ? metrics.cadence : 0;

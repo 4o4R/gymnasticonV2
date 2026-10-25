@@ -25,6 +25,10 @@ export class BleServer extends EventEmitter {
     this.startup = null;
     this.pendingStartOperation = null;
     this.retired = false;
+    this.radioLost = false;
+    this.onRadioState = state => {
+      if (state !== 'poweredOn') this.radioLost = true;
+    };
 
     this.bleno.on('accept', this.onAccept.bind(this));
     this.bleno.on('disconnect', this.onDisconnect.bind(this));
@@ -37,6 +41,16 @@ export class BleServer extends EventEmitter {
 
   get adapterName() {
     return this.adapterLabel || 'default';
+  }
+
+  get needsRecovery() {
+    const health = this.bleno.__gymnasticonAdvertising;
+    return this.radioLost || Boolean(health?.error) ||
+      (health?.restartAt != null && Date.now() - health.restartAt >= this.startupTimeoutMs);
+  }
+
+  get healthy() {
+    return this.state === 'started' && !this.retired && !this.needsRecovery && this.bleno.state === 'poweredOn';
   }
 
   /** Start advertising and wait for a connection. */
@@ -70,7 +84,10 @@ export class BleServer extends EventEmitter {
     try {
       await Promise.race([this.startAttempt(attempt), cancelled]);
       if (attempt.aborted) throw attempt.error;
+      if (this.bleno.state !== 'poweredOn') throw new Error(`BLE adapter ${this.adapterName} lost power during startup`);
       this.state = 'started';
+      this.radioLost = false;
+      this.bleno.on('stateChange', this.onRadioState);
     } catch (error) {
       if (!attempt.aborted) this.cancelStartup(error);
       this.stopAdvertisingBestEffort();
@@ -137,6 +154,7 @@ export class BleServer extends EventEmitter {
 
   retire() {
     if (this.retired) return;
+    this.bleno.removeListener('stateChange', this.onRadioState);
     this.cancelStartup(new Error(`BLE adapter ${this.adapterName} binding was retired`));
     this.retired = true;
     // Issue the final stop before closing the old stack. Its late callbacks
@@ -153,6 +171,7 @@ export class BleServer extends EventEmitter {
   /** Disconnect any active connections and stop advertising. */
   async stop() {
     if (this.retired) return;
+    this.bleno.removeListener('stateChange', this.onRadioState);
     this.cancelStartup();
     if (this.state === 'stopped' || this.state === 'stopping') return;
 

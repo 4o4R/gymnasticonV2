@@ -88,7 +88,9 @@ test('BleServer.start() advertises when the adapter is already powered on', asyn
   t.equal(server.state, 'started', 'reaches the started state');
   t.equal(server.startupTimeoutMs, SHORT_TIMEOUT_MS, 'keeps the configured bound');
   t.ok(bleno.advertising, 'starts advertising');
-  t.equal(bleno.listenerCount('stateChange'), 0, 'leaves no stateChange listener behind');
+  t.equal(bleno.listenerCount('stateChange'), 1, 'keeps one runtime radio-state monitor');
+  await server.stop();
+  t.equal(bleno.listenerCount('stateChange'), 0, 'removes the runtime monitor on stop');
   await server.stop();
   t.end();
 });
@@ -109,7 +111,9 @@ test('BleServer.start() waits through a transient powered-off state', async t =>
 
   t.equal(server.state, 'started', 'starts once the adapter powers on');
   t.ok(bleno.advertising, 'starts advertising after the wait');
-  t.equal(bleno.listenerCount('stateChange'), 0, 'removes its listener after the transient states');
+  t.equal(bleno.listenerCount('stateChange'), 1, 'replaces the startup wait with one runtime monitor');
+  await server.stop();
+  t.equal(bleno.listenerCount('stateChange'), 0, 'the runtime monitor does not leak after stopping');
   await server.stop();
   t.end();
 });

@@ -34,11 +34,14 @@ export class Ic4BikeClient extends EventEmitter {
    * @param {Noble} noble - a Noble instance.
    * @param {function} filter - filter to specify bike when more than one is present
    */
-  constructor(noble, filter) {
+  constructor(noble, filter, options = {}) {
     super();
     this.noble = noble;
     this.filter = filter;
     this.state = 'disconnected';
+    // Autodetect already matched a peripheral; reuse it instead of scanning again.
+    this.preDiscoveredPeripheral = options.peripheral || null;
+    this.connectionAttempt = null;
     this.indoorBikeDataAssembler = new IndoorBikeDataAssembler();
     this.onReceive = this.onReceive.bind(this);
     this.onDisconnect = this.onDisconnect.bind(this);
@@ -52,13 +55,23 @@ export class Ic4BikeClient extends EventEmitter {
       throw new Error('Already connected');
     }
 
+    const attempt = new EventEmitter();
+    attempt.cancelled = false;
+    this.connectionAttempt = attempt;
     const scanOptions = {
       allowDuplicates: false,
-      active: true
+      active: true,
+      cancellation: attempt,
     };
 
     this.state = 'connecting';
-    this.peripheral = await scan(this.noble, [FTMS_SERVICE_UUID], this.filter, scanOptions);
+    const preDiscovered = this.preDiscoveredPeripheral;
+    this.preDiscoveredPeripheral = null;
+    const peripheral = preDiscovered && this.filter(preDiscovered)
+      ? preDiscovered
+      : await scan(this.noble, [FTMS_SERVICE_UUID], this.filter, scanOptions);
+    if (this.connectionAttempt !== attempt) throw new Error('IC4 connection cancelled');
+    this.peripheral = peripheral;
     if (!this.peripheral) {
       this.state = 'disconnected';
       throw new Error('Unable to find IC4 bike');
@@ -67,11 +80,16 @@ export class Ic4BikeClient extends EventEmitter {
     // connect() only accepts a callback, so no options object may be passed.
     // The 10s connect budget is enforced by connectWithTimeout() instead.
     await connectWithTimeout(this.peripheral);
+    if (this.connectionAttempt !== attempt) {
+      if (this.peripheral !== peripheral) await disconnectPeripheral(peripheral);
+      throw new Error('IC4 connection cancelled');
+    }
     this.peripheral.on('disconnect', this.onDisconnect);
 
     // discover services/characteristics
     const {characteristics} = await this.peripheral.discoverSomeServicesAndCharacteristicsAsync(
       [FTMS_SERVICE_UUID], [INDOOR_BIKE_DATA_UUID]);
+    if (this.connectionAttempt !== attempt) throw new Error('IC4 connection cancelled');
     const [indoorBikeData] = characteristics;
     this.indoorBikeData = indoorBikeData;
 
@@ -101,6 +119,7 @@ export class Ic4BikeClient extends EventEmitter {
     await this.indoorBikeData.discoverDescriptorsAsync();
     const cccd = this.indoorBikeData.descriptors.find(d => d.uuid == '2902');
     await cccd.writeValueAsync(Buffer.from([1,0])); // 0100 <- enable notifications
+    if (this.connectionAttempt !== attempt) throw new Error('IC4 connection cancelled');
 
     this.state = 'connected';
   }
@@ -145,7 +164,14 @@ export class Ic4BikeClient extends EventEmitter {
    * Disconnect from the bike.
    */
   async disconnect() {
+    const attempt = this.connectionAttempt;
+    this.connectionAttempt = null;
+    if (attempt) {
+      attempt.cancelled = true;
+      attempt.emit('cancel');
+    }
     if (this.state === 'disconnected' || !this.peripheral) {
+      this.state = 'disconnected';
       return;
     }
     this.state = 'disconnecting';
@@ -166,6 +192,7 @@ export class Ic4BikeClient extends EventEmitter {
    * @private
    */
   onDisconnect() {
+    this.connectionAttempt = null;
     this.indoorBikeDataAssembler.reset();
     if (this.state === 'disconnected') {
       return;

@@ -10,12 +10,15 @@ export class Timer extends EventEmitter {
    * @param {object} options
    * @param {boolean} [options.repeats=true] - restart the timer each time it expires
    * @param {boolean} [options.immediate=false] - fire the first tick immediately on the first reset
+   * @param {boolean} [options.unref=false] - keep the ticker off the event loop so it never
+   *   prevents process exit (only for background maintenance work)
    */
-  constructor(interval, { repeats = true, immediate = false }={}) {
+  constructor(interval, { repeats = true, immediate = false, unref = false }={}) {
     super();
     this._interval = interval;
     this._repeats = repeats;
     this._immediate = immediate;
+    this._unref = unref;
     this._everStarted = false;
     this._timeout = null;
     this.onExpire = this.onExpire.bind(this);
@@ -43,6 +46,10 @@ export class Timer extends EventEmitter {
     const delay = this._immediate && !this._everStarted ? 0 : this._interval * 1000;
     this._everStarted = true;
     this._timeout = setTimeout(this.onExpire, delay);
+    // Background maintenance must never be the reason a process stays alive.
+    if (this._unref && typeof this._timeout.unref === 'function') {
+      this._timeout.unref();
+    }
   }
 
   /**

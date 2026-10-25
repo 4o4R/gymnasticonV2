@@ -2,6 +2,7 @@ import {EventEmitter} from 'events';
 import test from '../support/tape.js';
 import {parse} from '../../bikes/keiser.js';
 import {bikeVersion} from '../../bikes/keiser.js';
+import {ScanCoordinator} from '../../util/scan-coordinator.js';
 import {
   KeiserBikeClient,
   createKeiserPeripheralFilter,
@@ -350,3 +351,36 @@ test('KeiserBikeClient falls back to the captured payload signature when no equi
   );
 });
 
+
+test('Keiser holds the shared scan so accessory cleanup cannot stop reception', async t => {
+  const address = 'c0:ff:ee:00:00:01';
+  const consoleAd = fakeConsole({address});
+  const noble = new EventEmitter();
+  noble.state = 'poweredOn';
+  let scans = 0;
+  let stops = 0;
+  noble.startScanningAsync = async () => {
+    scans += 1;
+    if (scans === 1) setImmediate(() => noble.emit('discover', consoleAd));
+  };
+  noble.stopScanning = () => { stops += 1; };
+
+  const coordinator = new ScanCoordinator(noble, {logger: {warn() {}}});
+  const client = new KeiserBikeClient(noble, {address, scanCoordinator: coordinator});
+  await client.connect();
+  t.ok(coordinator.has(client.scanTag), 'the ride holds a shared scan claim');
+
+  await coordinator.acquire('speed-sensor-1');
+  t.equal(await coordinator.release('speed-sensor-1'), false, 'an accessory timeout does not stop the shared scan');
+  t.equal(stops, 0, 'the radio was never stopped behind the rider');
+
+  let received = 0;
+  client.on('stats', () => received++);
+  client.onReceive(consoleAd);
+  t.equal(received, 1, 'beacon reception still works after the accessory released');
+
+  await client.disconnect();
+  t.equal(coordinator.has(client.scanTag), false, 'disconnect drops the scan claim');
+  t.equal(stops, 1, 'the last owner stops the shared scan once');
+  t.end();
+});

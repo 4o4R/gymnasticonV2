@@ -50,6 +50,9 @@ export class FlywheelBikeClient extends EventEmitter {
     // connectWithTimeout), so the budget is owned here.
     this.connectTimeoutMs = Number.isFinite(options.connectTimeoutMs) ? options.connectTimeoutMs : CONNECT_TIMEOUT_MS;
     this.state = 'disconnected';
+    // Autodetect already matched a peripheral; reuse it instead of scanning again.
+    this.preDiscoveredPeripheral = options.peripheral || null;
+    this.connectionAttempt = null;
     this.onReceive = this.onReceive.bind(this);
     this.onDisconnect = this.onDisconnect.bind(this);
   }
@@ -64,13 +67,23 @@ export class FlywheelBikeClient extends EventEmitter {
 
     this.fixPowerDropout = createDropoutFilter();
 
+    const attempt = new EventEmitter();
+    attempt.cancelled = false;
+    this.connectionAttempt = attempt;
     const scanOptions = {
       allowDuplicates: false,
-      active: true
+      active: true,
+      cancellation: attempt,
     };
 
     this.state = 'connecting';
-    this.peripheral = await scan(this.noble, [UART_SERVICE_UUID], this.filter, scanOptions);
+    const preDiscovered = this.preDiscoveredPeripheral;
+    this.preDiscoveredPeripheral = null;
+    const peripheral = preDiscovered && this.filter(preDiscovered)
+      ? preDiscovered
+      : await scan(this.noble, [UART_SERVICE_UUID], this.filter, scanOptions);
+    if (this.connectionAttempt !== attempt) throw new Error('Flywheel connection cancelled');
+    this.peripheral = peripheral;
 
     if (!this.peripheral) {
       this.state = 'disconnected';
@@ -83,6 +96,10 @@ export class FlywheelBikeClient extends EventEmitter {
     // "callback is not a function". Connect with a bounded wait instead and let
     // updateConnectionParameters() (below) push the LE parameters.
     await connectWithTimeout(this.peripheral, this.connectTimeoutMs);
+    if (this.connectionAttempt !== attempt) {
+      if (this.peripheral !== peripheral) await disconnectPeripheral(peripheral);
+      throw new Error('Flywheel connection cancelled');
+    }
     try {
       // The Nordic UART firmware expects the central to acknowledge its desired
       // connection parameters. BlueZ sometimes ignores this, which causes the
@@ -103,6 +120,7 @@ export class FlywheelBikeClient extends EventEmitter {
     // discover services/characteristics
     const {characteristics} = await this.peripheral.discoverSomeServicesAndCharacteristicsAsync(
       [UART_SERVICE_UUID], [UART_TX_UUID, UART_RX_UUID]);
+    if (this.connectionAttempt !== attempt) throw new Error('Flywheel connection cancelled');
     const [tx, rx] = characteristics;
     this.tx = tx;
     this.rx = rx;
@@ -110,6 +128,7 @@ export class FlywheelBikeClient extends EventEmitter {
     // subscribe to receive data
     this.tx.on('read', this.onReceive);
     await this.tx.subscribeAsync();
+    if (this.connectionAttempt !== attempt) throw new Error('Flywheel connection cancelled');
 
     this.state = 'connected';
   }
@@ -168,7 +187,14 @@ export class FlywheelBikeClient extends EventEmitter {
    * Disconnect from the bike.
    */
   async disconnect() {
+    const attempt = this.connectionAttempt;
+    this.connectionAttempt = null;
+    if (attempt) {
+      attempt.cancelled = true;
+      attempt.emit('cancel');
+    }
     if (this.state === 'disconnected' || !this.peripheral) {
+      this.state = 'disconnected';
       return;
     }
     const disconnectingPeripheral = this.peripheral;
@@ -190,6 +216,7 @@ export class FlywheelBikeClient extends EventEmitter {
    * @private
    */
   onDisconnect() {
+    this.connectionAttempt = null;
     if (this.state === 'disconnected') {
       return;
     }

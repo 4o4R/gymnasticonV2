@@ -768,3 +768,37 @@ test('App.onBikeDisconnect() cancels the synthetic pedal timer', (t) => {
   t.end();
 });
 
+
+test('App.connectHeartRateSensor() keeps the client and retries without a bike cycle', async t => {
+  const app = new App({noble: new EventEmitter(), bike: 'bot', antEnabled: false, heartRateEnabled: false,
+    healthMonitor: {on() {}, stop() {}}});
+  app.logger = {log() {}, warn() {}, error() {}};
+  let connectCalls = 0;
+  let disconnectCalls = 0;
+  app.hrClient = {
+    connected: false,
+    connecting: false,
+    isScanning: false,
+    connect: async () => { connectCalls += 1; throw new Error('radio denied scan'); },
+    disconnect: async () => { disconnectCalls += 1; },
+  };
+  try {
+    await app.connectHeartRateSensor();
+    t.equal(connectCalls, 1, 'the failing discovery is attempted once');
+    t.equal(disconnectCalls, 1, 'the failed client is reset');
+    t.ok(app.hrClient, 'the client is kept instead of being disabled');
+    t.ok(app.hrRetryAt > Date.now() - 1000, 'a retry is scheduled');
+
+    app.bikeConnected = true;
+    await app.maintainConnections();
+    t.equal(connectCalls, 1, 'maintenance honours the retry window');
+
+    app.hrRetryAt = 0;
+    await app.maintainConnections();
+    t.equal(connectCalls, 2, 'maintenance retries once the window expires');
+  } finally {
+    app.hrClient = null;
+    await app.stop().catch(() => {});
+  }
+  t.end();
+});

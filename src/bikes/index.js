@@ -29,33 +29,35 @@ const NAME_MATCHERS = { // Heuristics used during autodetect to match advertisin
   keiser: matchesKeiserName, // Keiser M series broadcasts names that start with "M3".
 };
 
-function createFlywheelBikeClient(options, noble) { // Factory for Flywheel bikes using optional MAC filter override.
+function createFlywheelBikeClient(options, noble, peripheral) { // Factory for Flywheel bikes using optional MAC filter override.
   const filter = options.flywheelAddress
     ? createAddressFilter(macAddress(options.flywheelAddress)) // When caller specifies a MAC, narrow the scan accordingly.
     : createNameFilter(options.flywheelName); // Otherwise match on the advertised name.
-  return new FlywheelBikeClient(noble, filter);
+  return new FlywheelBikeClient(noble, filter, {peripheral});
 }
 
 function createPelotonBikeClient(options) { // Factory for Peloton bikes using USB serial connection.
   return new PelotonBikeClient(options.pelotonPath);
 }
 
-function createIc4BikeClient(_options, noble) { // Factory for Schwinn IC4 bikes.
-  return new Ic4BikeClient(noble, matchesIc4OrSchwinn290); // Match original IC Bike plus Schwinn 290 advert variations.
+function createIc4BikeClient(_options, noble, peripheral) { // Factory for Schwinn IC4 bikes.
+  return new Ic4BikeClient(noble, matchesIc4OrSchwinn290, {peripheral}); // Match original IC Bike plus Schwinn 290 advert variations.
 }
 
-function createIc5BikeClient(_options, noble) { // Factory for LifeFitness IC5 bikes (inherits FTMS logic from IC4).
-  return new Ic5BikeClient(noble); // The subclass provides its own advertisement matcher.
+function createIc5BikeClient(_options, noble, peripheral) { // Factory for LifeFitness IC5 bikes (inherits FTMS logic from IC4).
+  return new Ic5BikeClient(noble, {peripheral}); // The subclass provides its own advertisement matcher.
 }
 
-function createIc8BikeClient(_options, noble) { // Factory for Schwinn IC8 / Bowflex C6 bikes.
-  return new Ic8BikeClient({ noble }); // Construct the dedicated IC8 client with the shared noble instance.
+function createIc8BikeClient(_options, noble, peripheral) { // Factory for Schwinn IC8 / Bowflex C6 bikes.
+  return new Ic8BikeClient({noble, peripheral}); // Construct the dedicated IC8 client with the shared noble instance.
 }
 
-function createKeiserBikeClient(options, noble) { // Factory for Keiser bikes that broadcast as beacons.
+function createKeiserBikeClient(options, noble, peripheral) { // Factory for Keiser bikes that broadcast as beacons.
   return new KeiserBikeClient(noble, {
     address: options.keiserAddress,
     equipmentId: options.keiserEquipmentId,
+    scanCoordinator: options.scanCoordinator,
+    peripheral,
   });
 }
 

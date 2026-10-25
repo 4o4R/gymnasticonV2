@@ -124,6 +124,7 @@ export async function scan(noble, serviceUuids, filter = () => true, options = {
     stopScanOnMatch,
     stopScanOnTimeout,
     onDiscovery,
+    cancellation: options.cancellation,
     startScan: () => startScanningBounded(noble, serviceUuids, allowDuplicates, options),
   });
 }
@@ -273,6 +274,7 @@ function waitForDiscovery(noble, filter, options = {}) {
       if (onDiscover) {
         noble.removeListener('discover', onDiscover);
       }
+      options.cancellation?.removeListener('cancel', onCancel);
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
@@ -316,6 +318,12 @@ function waitForDiscovery(noble, filter, options = {}) {
       }
     };
 
+    const onCancel = () => settle(null, false);
+    if (options.cancellation?.cancelled) {
+      settle(null, false);
+      return;
+    }
+    options.cancellation?.once('cancel', onCancel);
     noble.on('discover', onDiscover);
 
     if (Number.isFinite(options.timeoutMs) && options.timeoutMs > 0) {
@@ -326,7 +334,9 @@ function waitForDiscovery(noble, filter, options = {}) {
 
     request = options.startScan();
     request.promise.catch(error => {
-      if (error.code !== 'BLE_SCAN_CANCELLED') fail(error);
+      if (error.code === 'BLE_SCAN_CANCELLED') {
+        if (!settled) settle(null, false);
+      } else fail(error);
     });
   });
 }

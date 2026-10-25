@@ -16,8 +16,8 @@ export class Ic5BikeClient extends Ic4BikeClient { // LifeFitness IC5 shares the
   // documented well enough to guess, and a fabricated wattage would corrupt
   // recorded rides. Confirming power support needs real GATT captures from
   // those consoles.
-  constructor(noble) {
-    super(noble, matchesPeripheral); // Reuse the IC4 flow but supply a broader filter that matches IC5 advertising names.
+  constructor(noble, options = {}) {
+    super(noble, matchesPeripheral, options); // Reuse the IC4 flow but supply a broader filter that matches IC5 advertising names.
   }
 
   static get label() { // Provide a stable label so logs and UI can identify the bike profile.

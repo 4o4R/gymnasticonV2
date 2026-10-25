@@ -10,7 +10,8 @@ export const defaults = {
   // bike options
   bike: 'autodetect',            // allow Gymnasticon to pick a bike profile at runtime
   defaultBike: 'keiser',         // fallback profile when autodetect sees nothing
-  bikeReceiveTimeout: 10,         // seconds before we consider bike telemetry stale
+  bikeReceiveTimeout: 10,         // seconds without telemetry before reporting zero
+  bikeDisconnectTimeout: 60,     // seconds without telemetry before reconnecting the bike
   bikeConnectTimeout: 30,        // seconds to wait while establishing a connection (was 0, caused infinite hangs)
   bikeAdapter: 'hci0',           // BLE adapter used to connect to the bike (BlueZ index)
 
@@ -36,6 +37,7 @@ export const defaults = {
   serverAdapter: 'hci0',         // BLE adapter used to advertise Gymnasticon
   serverName: 'GymnasticonV2',   // Distinguish this bridge from nearby legacy Gymnasticon instances on BLE scans.
   serverPingInterval: 1,         // seconds between keep-alive power frames
+  serverReconnectGrace: 60,      // keep receivers connected during a brief bike reconnection
   bleMultiOutput: undefined,     // auto-enable multi-adapter BLE mirroring when possible
 
   // ANT+ server options

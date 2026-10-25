@@ -408,3 +408,162 @@ try {
   t.equal(result.status, 0, result.stderr || result.stdout || 'actual App and pinned bleno recovery passed');
   t.end();
 });
+
+test('output recovery coalesces retries and shutdown cancels a pending factory', async t => {
+  const old = createServer(createFakeBleno());
+  let finishOpen;
+  let opens = 0;
+  const entry = {adapter: 'hci0', server: old, createServer: () => {
+    opens++;
+    return new Promise(resolve => { finishOpen = resolve; });
+  }};
+  const multi = new MultiBleServer([entry], createLogger());
+  await multi.start();
+  old.radioLost = true;
+  const first = multi.recover();
+  const second = multi.recover();
+  t.equal(opens, 1, 'concurrent health checks open one replacement');
+  await multi.stop();
+  t.deepEqual(await Promise.all([first, second]), [false, false], 'shutdown cancels both callers without waiting for the factory');
+  const replacement = createServer(createFakeBleno());
+  finishOpen(replacement);
+  await new Promise(resolve => setImmediate(resolve));
+  t.equal(replacement.retired, true, 'the late factory result releases its binding');
+  t.equal(entry.server, old, 'the cancelled replacement never becomes current');
+  t.equal(await multi.recover(), false, 'a health check cannot undo an intentional stop');
+  t.equal(opens, 1, 'stopped health checks do not open radios');
+  t.equal(multi.activeEntries, null, 'late recovery cannot revive the output list');
+  t.equal(multi.startCancellations.size, 0, 'startup cancellation hooks are released');
+  t.end();
+});
+
+test('pinned bleno preserves shared-radio watch links and repairs failed outputs', t => {
+  const result = spawnSync(process.execPath, ['--unhandled-rejections=strict', '--input-type=module'], {
+    encoding: 'utf8', timeout: 15000,
+    input: String.raw`
+import assert from 'assert';
+import {createRequire} from 'module';
+import {EventEmitter} from 'events';
+import path from 'path';
+const require = createRequire(path.join(process.cwd(), 'package.json'));
+const radioUp = new Map([[0, true], [1, false]]);
+class Socket extends EventEmitter {
+  constructor() { super(); this.writes = []; this.stops = 0; }
+  bindRaw(id) { this.id = id; this.raw = true; return id; }
+  bindControl() { return 0; }
+  start() {} stop() { this.stops++; } setFilter() {}
+  isDevUp() { return radioUp.get(this.id); }
+  write(buffer) {
+    this.writes.push(Buffer.from(buffer));
+    if (!this.raw || buffer[0] !== 1) return;
+    const opcode = buffer.readUInt16LE(1);
+    let result = [], status = 0;
+    if (opcode === 0x1001) result = [7, 0, 0, 7, 15, 0, 0, 0];
+    else if (opcode === 0x1009) result = [6, 5, 4, 3, 2, 1];
+    else if (opcode === 0x2002) result = [27, 0, 4];
+    else if (opcode === 0x0c6c) result = [1, 0];
+    else if (opcode === 0x200a && buffer[4] === 1) {
+      if (this.dropRestart) return;
+      if (this.failRestart) { status = 12; this.failRestart = false; }
+    }
+    const params = Buffer.from([1, opcode & 255, opcode >> 8, status, ...result]);
+    setImmediate(() => this.emit('data', Buffer.concat([Buffer.from([4, 14, params.length]), params])));
+  }
+}
+const native = require.resolve('@abandonware/bluetooth-hci-socket');
+require.cache[native] = {id: native, filename: native, loaded: true, exports: Socket};
+const {initializeBleno} = await import('./src/util/bleno-wrapper.js');
+const {stopBluetoothStack} = await import('./src/util/bluetooth-shutdown.js');
+const {GymnasticonServer} = await import('./src/servers/ble/index.js');
+const {MultiBleServer} = await import('./src/servers/ble/multi-server.js');
+const stacks = [];
+const exitHooks = process.listenerCount('exit');
+const tick = () => new Promise(resolve => setImmediate(resolve));
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+const createServer = async adapter => {
+  const {bleno} = await initializeBleno(adapter, {forceNewInstance: true});
+  stacks.push(bleno);
+  return new GymnasticonServer(bleno, 'recovery-test', {includeHeartRate: false, startupTimeoutMs: 50});
+};
+const entries = [];
+for (const adapter of ['hci0', 'hci1']) entries.push({adapter, server: await createServer(adapter), createServer: () => createServer(adapter)});
+const multi = new MultiBleServer(entries, {log() {}, warn() {}, error() {}}, {startupTimeoutMs: 50});
+const socket = server => server.bleno._bindings._hci._socket;
+const measurement = server => server.cpsService.characteristics[0];
+const connect = (server, handle, role = 1) => socket(server).emit('data', Buffer.from([
+  4, 62, 19, 1, 0, handle & 255, handle >> 8, role, 0, 6, 5, 4, 3, 2, 1, 24, 0, 0, 0, 200, 0, 0,
+]));
+const disconnect = (server, handle) => socket(server).emit('data', Buffer.from([4, 5, 4, 0, handle & 255, handle >> 8, 19]));
+const subscribe = (server, handle) => {
+  const descriptor = server.bleno._bindings._gatt._handles.findIndex(h => h && h.uuid === '2902' && h.attribute.uuid === '2a63');
+  const att = [0x12, descriptor & 255, descriptor >> 8, 1, 0];
+  socket(server).emit('data', Buffer.from([2, handle & 255, (handle >> 8) | 0x20, att.length + 4, 0, att.length, 0, 4, 0, ...att]));
+};
+try {
+  await multi.start();
+  assert.strictEqual(multi.degraded, true);
+  const healthy = entries[0].server;
+  for (let handle = 10; handle < 13; handle++) {
+    connect(healthy, handle); subscribe(healthy, handle);
+    assert.ok(measurement(healthy).updateValueCallback);
+    disconnect(healthy, handle); await tick();
+    assert.strictEqual(measurement(healthy).updateValueCallback, null);
+    assert.strictEqual(healthy.bleno._bindings._gap._advertiseState, 'started');
+    assert.strictEqual(healthy.needsRecovery, false);
+  }
+  connect(healthy, 30); subscribe(healthy, 30); connect(healthy, 40, 0);
+  const subscription = measurement(healthy).updateValueCallback;
+  disconnect(healthy, 40); await tick();
+  assert.strictEqual(healthy.bleno._bindings._handle, 30);
+  assert.strictEqual(healthy.connectionCount, 1);
+  assert.strictEqual(measurement(healthy).updateValueCallback, subscription);
+  const healthyWrites = socket(healthy).writes.length;
+  radioUp.set(1, true); await pause(1100);
+  assert.strictEqual(await multi.recover(), true);
+  assert.strictEqual(multi.degraded, false, 'a late adapter joins without a bike reconnect');
+  let old = entries[1].server;
+  radioUp.set(1, false); await pause(1100);
+  radioUp.set(1, true); await pause(1100);
+  assert.strictEqual(old.bleno.state, 'poweredOn');
+  assert.strictEqual(old.needsRecovery, true, 'power-up alone cannot restore advertising');
+  assert.strictEqual(await multi.recover(), true);
+  assert.notStrictEqual(entries[1].server, old);
+  assert.strictEqual(old.retired, true);
+  old = entries[1].server;
+  connect(old, 50); subscribe(old, 50); socket(old).failRestart = true;
+  disconnect(old, 50); await tick();
+  assert.strictEqual(old.needsRecovery, true, 'a rejected automatic restart is observable');
+  await multi.recover();
+  assert.notStrictEqual(entries[1].server, old);
+  old = entries[1].server;
+  connect(old, 60); socket(old).dropRestart = true; disconnect(old, 60);
+  await pause(70);
+  assert.strictEqual(old.needsRecovery, true, 'an unacknowledged automatic restart has a deadline');
+  await multi.recover();
+  assert.notStrictEqual(entries[1].server, old);
+  const oldWrites = socket(old).writes.length;
+  old.bleno._bindings._hci.emit('leAdvertiseEnableSet', 0); await tick();
+  assert.strictEqual(socket(old).writes.length, oldWrites, 'late commands cannot touch a replacement');
+  assert.strictEqual(old.bleno._bindings._hci.listenerCount('leAdvertiseEnableSet'), 1, 'retirement removes the pending restart observer');
+  assert.strictEqual(entries[0].server, healthy);
+  assert.strictEqual(socket(healthy).writes.length, healthyWrites, 'healthy connected mirror receives no recovery commands');
+  assert.strictEqual(healthy.connectionCount, 1);
+  assert.strictEqual(measurement(healthy).updateValueCallback, subscription);
+  await multi.stop();
+  const stoppedWrites = stacks.map(bleno => bleno._bindings._hci._socket.writes.length);
+  assert.strictEqual(await multi.recover(), false);
+  assert.deepStrictEqual(stacks.map(bleno => bleno._bindings._hci._socket.writes.length), stoppedWrites);
+  assert.strictEqual(multi.startCancellations.size, 0);
+  for (const {server} of entries) assert.strictEqual(server.bleno.listenerCount('stateChange'), 0);
+} finally {
+  await multi.stop();
+  stacks.forEach(stopBluetoothStack);
+}
+assert.strictEqual(process.listenerCount('exit'), exitHooks);
+assert.ok(stacks.every(bleno => bleno._bindings._hci._socket.stops === 1));
+console.log('real HCI/GAP/GATT recovery and repeated watch connections passed');
+`,
+  });
+  t.equal(result.status, 0, result.stderr || result.stdout || 'pinned bleno recovery exited naturally');
+  t.end();
+});

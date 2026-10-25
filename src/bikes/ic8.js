@@ -29,20 +29,24 @@ const CSC_SERVICE_UUID = '1816'; // Cycling Speed and Cadence service for cadenc
 const CSC_MEASUREMENT_UUID = '2a5b'; // CSC Measurement characteristic.
 
 export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 client that estimates power from cadence + resistance.
-  constructor({ noble, log = console, config = {}, now = () => performance.now() } = {}) {
+  constructor({ noble, log = console, config = {}, now = () => performance.now(), peripheral = null } = {}) {
     super();
     this.noble = noble || resolveNoble(); // Accept the shared noble instance from the App when provided; otherwise fall back to the lazy loader above.
     this.log = log; // Logger interface (console by default).
     this.config = config; // Optional calibration config for power estimation.
     this.now = now;
+    // Autodetect already matched a peripheral; reuse it instead of scanning again.
+    this.preDiscoveredPeripheral = peripheral;
     this.indoorBikeDataAssembler = new IndoorBikeDataAssembler({now});
     this.lastCrankChangeAt = null;
     this.crankIntervalMs = 0;
     this.device = null; // Active noble peripheral once connected.
+    this.connectionAttempt = null;
     this.characteristics = []; // Track subscribed characteristics so disconnect() can detach listeners.
     this.state = { rpm: 0, resistance: 0, watts: 0, speed: undefined }; // Track the latest cadence/resistance/power/speed values.
     this.nativePower = undefined; // Latest instantaneous power reported natively over FTMS (undefined when the console omits it).
     this.nativeCadence = undefined; // Latest instantaneous cadence reported natively over FTMS.
+    this.nativeReceivedAt = null;
     this.powerFilter = new Ewma(0.25); // Smooth power readings to reduce jitter for downstream apps.
     this.onPeripheralDisconnectBound = this.onPeripheralDisconnect.bind(this); // Keep a stable ref so we can remove the listener cleanly.
   }
@@ -66,14 +70,26 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
   }
 
   async connect() { // Discover and subscribe to the bike's CSC notifications and optional resistance characteristic.
-    const scanOptions = { allowDuplicates: false, active: true }; // Active scan improves discovery time for these bikes.
+    const attempt = new EventEmitter();
+    attempt.cancelled = false;
+    this.connectionAttempt = attempt;
+    const scanOptions = { allowDuplicates: false, active: true, cancellation: attempt };
     this.log.info?.('Scanning for Schwinn IC8 / Bowflex C6');
-    const peripheral = await scan(this.noble, [CSC_SERVICE_UUID, FTMS_SERVICE_UUID], Ic8BikeClient.matchesAdvertisement, scanOptions);
+    const preDiscovered = this.preDiscoveredPeripheral;
+    this.preDiscoveredPeripheral = null;
+    const peripheral = preDiscovered && Ic8BikeClient.matchesAdvertisement(preDiscovered)
+      ? preDiscovered
+      : await scan(this.noble, [CSC_SERVICE_UUID, FTMS_SERVICE_UUID], Ic8BikeClient.matchesAdvertisement, scanOptions);
+    if (this.connectionAttempt !== attempt) throw new Error('IC8 connection cancelled');
     if (!peripheral) {
       throw new Error('Unable to find Schwinn IC8 / Bowflex C6 bike');
     }
     this.device = peripheral;
     await connectWithTimeout(peripheral);
+    if (this.connectionAttempt !== attempt) {
+      if (this.device !== peripheral) await disconnectPeripheral(peripheral);
+      throw new Error('IC8 connection cancelled');
+    }
     this.log.info?.('Connected to IC8 peripheral', peripheral.address);
     // Teaching note: without a peripheral disconnect listener the app would
     // keep broadcasting the last power/cadence after the bike drops.
@@ -83,6 +99,7 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
       [CSC_SERVICE_UUID, FTMS_SERVICE_UUID],
       []
     );
+    if (this.connectionAttempt !== attempt) throw new Error('IC8 connection cancelled');
     this.characteristics = characteristics;
 
     const cscMeasurement = characteristics.find(ch => ch.uuid === CSC_MEASUREMENT_UUID);
@@ -119,10 +136,17 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
       resistanceChar.on('data', buf => this.onResistance(buf));
     }
 
+    if (this.connectionAttempt !== attempt) throw new Error('IC8 connection cancelled');
     this.emit('ready', { bike: Ic8BikeClient.label });
   }
 
   async disconnect() { // Disconnect cleanly when the app shuts down.
+    const attempt = this.connectionAttempt;
+    this.connectionAttempt = null;
+    if (attempt) {
+      attempt.cancelled = true;
+      attempt.emit('cancel');
+    }
     try {
       if (this.characteristics.length) {
         for (const ch of this.characteristics) {
@@ -144,12 +168,14 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
       this.indoorBikeDataAssembler.reset();
       this.nativePower = undefined; // Drop native FTMS values so a reconnect cannot replay the last ride.
       this.nativeCadence = undefined;
+      this.nativeReceivedAt = null;
       this.state = { rpm: 0, resistance: 0, watts: 0, speed: undefined };
       this.powerFilter.reset();
     }
   }
 
   onPeripheralDisconnect() { // Emit a disconnect event so the app stops advertising stale data.
+    this.connectionAttempt = null;
     this.indoorBikeDataAssembler.reset();
     this.log.warn?.('IC8 peripheral disconnected');
     const address = this.device?.address;
@@ -176,6 +202,7 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
       return;
     }
     if (!parsed) return;
+    this.nativeReceivedAt = this.now();
     // Only a completed data record can replace native fields. Individual
     // notifications can omit fields carried by another fragment of that record.
     this.nativeCadence = Number.isFinite(parsed.cadence) ? parsed.cadence : undefined;
@@ -242,6 +269,12 @@ export class Ic8BikeClient extends EventEmitter { // Schwinn IC8 / Bowflex C6 cl
   }
 
   publish() { // Emit smoothed power/cadence whenever either input changes.
+    if (this.nativeReceivedAt !== null && this.now() - this.nativeReceivedAt >= 10000) {
+      this.nativePower = undefined;
+      this.nativeCadence = undefined;
+      this.state.speed = undefined;
+      this.nativeReceivedAt = null;
+    }
     // Allow at least two revolutions at the last observed cadence so slow
     // pedaling does not look like a stop between notifications.
     const inactivityMs = Math.max(3000, this.crankIntervalMs * 2);

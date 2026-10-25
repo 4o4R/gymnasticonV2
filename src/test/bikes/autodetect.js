@@ -84,3 +84,27 @@ test('autodetect warns when the radio sees no advertisements at all', async (t) 
   }
   t.end();
 });
+
+test('autodetect reuses the matched peripheral instead of scanning twice', async (t) => {
+  const peripheral = {
+    id: 'ic4-1',
+    address: 'aa:bb:cc:dd:ee:01',
+    connectAsync: () => Promise.reject(new Error('connect not part of this test')),
+    advertisement: {localName: 'ftms-bike'},
+  };
+  const noble = new EventEmitter();
+  noble.state = 'poweredOn';
+  let scans = 0;
+  noble.startScanningAsync = async () => {
+    scans += 1;
+    setImmediate(() => noble.emit('discover', peripheral));
+  };
+  noble.stopScanning = () => {};
+
+  const client = await createBikeClient({bike: 'autodetect', defaultBike: 'keiser', bikeConnectTimeout: 5}, noble);
+  t.equal(scans, 1, 'autodetect performed exactly one scan');
+  t.equal(client.preDiscoveredPeripheral, peripheral, 'the matched peripheral is handed to the bike client');
+  await client.connect().catch(() => {});
+  t.equal(scans, 1, 'connecting to the matched bike does not scan again');
+  t.end();
+});

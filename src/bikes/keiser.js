@@ -1,6 +1,7 @@
 import {EventEmitter} from 'events';
 import {Timer} from '../util/timer.js';
-import {scan, stopScanningSafely} from '../util/ble-scan.js';
+import {stopScanningSafely} from '../util/ble-scan.js';
+import {ScanCoordinator, createScanTag, waitForPeripheral} from '../util/scan-coordinator.js';
 import {macAddress} from '../util/mac-address.js';
 import {createDropoutFilter} from '../util/dropout-filter.js';
 
@@ -202,6 +203,12 @@ export class KeiserBikeClient extends EventEmitter {
     this.targetAddress = normalizeAddress(options.address);
     this.targetEquipmentId = normalizeEquipmentId(options.equipmentId ?? options.keiserEquipmentId);
     this.state = 'disconnected';
+    // Beacon reception needs the radio scanning for the whole ride, so this
+    // client holds a shared scan claim instead of restarting scans on its own.
+    this.scanCoordinator = options.scanCoordinator || new ScanCoordinator(noble, {logger: options.logger || console});
+    this.scanTag = options.scanTag || createScanTag('keiser');
+    // Autodetect already matched a peripheral; reuse it instead of scanning again.
+    this.preDiscoveredPeripheral = options.peripheral || null;
     this.onReceive = this.onReceive.bind(this);
     this.restartScan = this.restartScan.bind(this);
     this.onStatsTimeout = this.onStatsTimeout.bind(this);
@@ -271,13 +278,24 @@ export class KeiserBikeClient extends EventEmitter {
       console.log(`[keiser] Starting Keiser bike scan (timeout: ${scanTimeoutMs}ms)...`);
     }
     debuglog(`Starting Keiser bike scan with timeout ${scanTimeoutMs}ms`);
-    const peripheral = await scan(this.noble, null, filter, {
-      allowDuplicates: true,
-      active: true,
-      timeoutMs: scanTimeoutMs,
-    });
+    // Hold the shared scan for the ride: accessory discovery timing out must
+    // not stop the radio this client depends on for every later advertisement.
+    await this.scanCoordinator.acquire(this.scanTag);
+    let peripheral;
+    const preDiscovered = this.preDiscoveredPeripheral;
+    this.preDiscoveredPeripheral = null;
+    try {
+      peripheral = preDiscovered && filter(preDiscovered)
+        ? preDiscovered
+        : await waitForPeripheral(this.noble, filter, {timeoutMs: scanTimeoutMs});
+    } catch (error) {
+      await this.releaseScan();
+      this.state = 'disconnected';
+      throw error;
+    }
 
     if (!peripheral) {
+      await this.releaseScan();
       this.state = 'disconnected';
     console.log('[keiser] ERROR: Bike not found (scan failed or interrupted)');
       console.log('[keiser] Check: Is M3i powered on? Is it in BLE range? Does console show "M3i" or "M3"?');
@@ -331,21 +349,8 @@ export class KeiserBikeClient extends EventEmitter {
 
     this.fixDropout = createDropoutFilter();
 
-    try {
-      await this.startScanWithFallback(null, true);
-    } catch (err) {
-      this.state = 'disconnected';
-      if (this.statsTimeout) {
-        this.statsTimeout.cancel();
-        this.statsTimeout = null;
-      }
-      if (this.bikeTimeout) {
-        this.bikeTimeout.cancel();
-        this.bikeTimeout = null;
-      }
-      this.fixDropout = null;
-      throw err;
-    }
+    // The coordinator's scan is still running; only attach the beacon listener
+    // and the scanStop repair hook.
     this.noble.on('discover', this.onReceive);
     this.noble.on('scanStop', this.restartScan);
 
@@ -452,9 +457,11 @@ export class KeiserBikeClient extends EventEmitter {
     this.noble.off('discover', this.onReceive);
     this.noble.off('scanStop', this.restartScan);
 
-    // Bounded stop: stopScanningAsync() can hang forever in noble's "unknown"
-    // state and would wedge disconnect/shutdown.
-    await stopScanningSafely(this.noble);
+    // Only stop the radio if nothing else (accessories) still needs it.
+    await this.releaseScan();
+    if (!this.scanCoordinator) {
+      await stopScanningSafely(this.noble);
+    }
 
     const address = this.address;
     this.peripheral = null;
@@ -476,6 +483,18 @@ export class KeiserBikeClient extends EventEmitter {
   onBikeTimeout() {
     debuglog('M3 Bike disconnected');
     this.disconnect().catch((err) => debuglog('error disconnecting after timeout', err));
+  }
+
+  /**
+   * Drop this client's claim on the shared scan.
+   * @private
+   */
+  async releaseScan() {
+    try {
+      await this.scanCoordinator.release(this.scanTag);
+    } catch (error) {
+      debuglog('Unable to release shared Keiser scan', error);
+    }
   }
 
   /**

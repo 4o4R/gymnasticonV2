@@ -10,6 +10,9 @@ export class MultiBleServer {
     this.degraded = false; // True when at least one adapter could not advertise.
     this.failedAdapters = [];
     this.generation = 0;
+    this.running = false;
+    this.startPromise = null;
+    this.startCancellations = new Set();
     this.startupTimeoutMs = Number.isFinite(options.startupTimeoutMs) && options.startupTimeoutMs > 0
       ? options.startupTimeoutMs
       : DEFAULT_STARTUP_TIMEOUT_MS;
@@ -21,7 +24,40 @@ export class MultiBleServer {
   }
 
   async start() {
+    if (this.startPromise) return this.startPromise;
+    this.running = true;
     const generation = ++this.generation;
+    const pending = this.startServers(generation);
+    this.startPromise = pending;
+    try {
+      return await pending;
+    } finally {
+      if (this.startPromise === pending) this.startPromise = null;
+    }
+  }
+
+  /** Repair failed outputs without restarting an already connected mirror. */
+  async recover() {
+    if (!this.running) return false;
+    const pending = this.start();
+    const generation = this.generation;
+    try {
+      await pending;
+      return this.running && generation === this.generation &&
+        this.activeEntries.some(({server}) => server.healthy ?? server.state === 'started');
+    } catch (_error) {
+      // Individual failures were logged by startServers; the next scheduled
+      // health check can retry even when every adapter is currently absent.
+      if (this.running && generation === this.generation) {
+        this.activeEntries = [];
+        this.failedAdapters = this.entries.map(entry => entry.adapter);
+        this.degraded = true;
+      }
+      return false;
+    }
+  }
+
+  async startServers(generation) {
     const results = await Promise.allSettled(
       this.entries.map(entry => this.startEntry(entry, generation))
     );
@@ -69,8 +105,16 @@ export class MultiBleServer {
     return new Promise((resolve, reject) => {
       let expired = false;
       let server = entry.server;
+      const cancel = () => {
+        expired = true;
+        clearTimeout(timer);
+        this.startCancellations.delete(cancel);
+        server.cancelStartup?.(new Error('BLE startup cancelled'));
+        reject(new Error('BLE startup cancelled'));
+      };
       const timer = setTimeout(() => {
         expired = true;
+        this.startCancellations.delete(cancel);
         const error = new Error(`BLE adapter ${entry.adapter} did not finish starting within ${boundMs}ms`);
         error.code = STARTUP_TIMEOUT_CODE;
         error.adapter = entry.adapter;
@@ -78,8 +122,10 @@ export class MultiBleServer {
         Promise.resolve().then(() => server.stop()).catch(() => {});
         reject(error);
       }, boundMs);
+      this.startCancellations.add(cancel);
       const start = async () => {
-        if ((server.retired || server.pendingStartOperation) && typeof entry.createServer === 'function') {
+        if (server.retired || server.pendingStartOperation || server.needsRecovery) {
+          if (typeof entry.createServer !== 'function') throw new Error(`BLE adapter ${entry.adapter} needs a fresh binding`);
           server.retire();
           const replacement = await entry.createServer(); // The factory must reopen bleno, even for the first adapter.
           if (expired || generation !== this.generation) {
@@ -100,6 +146,7 @@ export class MultiBleServer {
       start().then(
         value => {
           clearTimeout(timer);
+          this.startCancellations.delete(cancel);
           if (expired || generation !== this.generation) {
             Promise.resolve().then(() => server.stop()).catch(() => {});
             if (!expired) reject(new Error('BLE startup cancelled'));
@@ -109,6 +156,7 @@ export class MultiBleServer {
         },
         error => {
           clearTimeout(timer);
+          this.startCancellations.delete(cancel);
           reject(error);
         }
       );
@@ -116,7 +164,10 @@ export class MultiBleServer {
   }
 
   async stop() {
+    this.running = false;
     this.generation += 1;
+    this.startPromise = null;
+    for (const cancel of this.startCancellations) cancel();
     // Failed entries may still have controller callbacks in flight.
     const entries = this.entries;
     const results = await Promise.allSettled(
@@ -152,6 +203,8 @@ export class MultiBleServer {
 
   forEachServer(fn) {
     const entries = this.activeEntries || this.entries;
-    entries.forEach(({server}) => fn(server));
+    entries.forEach(({server}) => {
+      if (!server.retired && !server.needsRecovery) fn(server);
+    });
   }
 }

@@ -394,6 +394,8 @@ test('GymnasticonApp seeds ConfigManager with documented defaults when config fi
     defaultBike: 'keiser',
     serverName: 'GymnasticonV2',
     bikeReceiveTimeout: 10,
+    bikeDisconnectTimeout: 60,
+    serverReconnectGrace: 60,
     powerScale: 1,
     powerOffset: 0,
   }, 'configManager receives the full set of documented defaults');

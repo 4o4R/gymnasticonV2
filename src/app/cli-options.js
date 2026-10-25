@@ -30,9 +30,19 @@ export const options = {
     default: defaults.bikeConnectTimeout,
   },
   'bike-receive-timeout': {
-    describe: '<seconds>',
+    describe: '<seconds> without bike telemetry before reporting zero',
     type: 'number',
     default: defaults.bikeReceiveTimeout,
+  },
+  'bike-disconnect-timeout': {
+    describe: '<seconds> without bike telemetry before reconnecting (0 disables)',
+    type: 'number',
+    default: defaults.bikeDisconnectTimeout,
+  },
+  'server-reconnect-grace': {
+    describe: '<seconds> to keep receivers connected during bike reconnection (0 stops immediately)',
+    type: 'number',
+    default: defaults.serverReconnectGrace,
   },
   'bike-adapter': {
     describe: '<name> for bike connection (auto-detected when omitted)',

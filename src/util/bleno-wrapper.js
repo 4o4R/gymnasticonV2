@@ -20,6 +20,56 @@ function clearDependencyCache(request) {
   }
 }
 
+function guardSharedAdapter(bleno) {
+  const bindings = bleno._bindings;
+  if (!bindings || bleno.__gymnasticonAdvertising) return;
+  const gap = bindings._gap;
+  const hci = bindings._hci;
+  const health = {restartAt: null, error: null};
+  bleno.__gymnasticonAdvertising = health;
+
+  // Raw HCI sockets also see central-role bike/accessory disconnects. Bleno
+  // must only end the GATT stream belonging to its accepted watch/app.
+  const disconnectComplete = bindings.onDisconnComplete;
+  bindings.onDisconnComplete = function(handle, reason) {
+    if (this._handle === null || this._handle !== handle) return;
+    return disconnectComplete.call(this, handle, reason);
+  };
+
+  const restart = gap.restartAdvertising;
+  const stop = gap.stopAdvertising;
+  let onComplete;
+  const cancelRestart = () => {
+    if (!onComplete) return;
+    hci.removeListener('leAdvertiseEnableSet', onComplete);
+    onComplete = null;
+    health.restartAt = null;
+    health.error = health.error || new Error('Advertising restart ended without a controller acknowledgement');
+  };
+  gap.restartAdvertising = function() {
+    cancelRestart();
+    health.restartAt = Date.now();
+    onComplete = status => {
+      onComplete = null;
+      health.restartAt = null;
+      health.error = status ? new Error(`Advertising restart failed (HCI status ${status})`) : null;
+      // The pinned GAP implementation ignores acknowledgements in restarting.
+      this._advertiseState = status ? 'stopped' : 'started';
+    };
+    hci.once('leAdvertiseEnableSet', onComplete);
+    try {
+      return restart.call(this);
+    } catch (error) {
+      cancelRestart();
+      health.error = error;
+    }
+  };
+  gap.stopAdvertising = function() {
+    cancelRestart();
+    return stop.call(this);
+  };
+}
+
 export const initializeBleno = async (adapter = 'hci0', options = {}) => {
   const {forceNewInstance = false} = options;
   const previousAdapter = process.env.BLENO_HCI_DEVICE_ID;
@@ -57,6 +107,7 @@ export const initializeBleno = async (adapter = 'hci0', options = {}) => {
       }
     }
     if (!usingStub) {
+      guardSharedAdapter(bleno);
       // SMP loads a second, management-channel socket at package import time.
       // Cache eviction gives each forced instance a different singleton, so
       // capture its owner now rather than looking up the last one at shutdown.
