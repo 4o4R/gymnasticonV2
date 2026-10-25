@@ -109,7 +109,29 @@ At the top level of `bootfs`, optionally add:
 - `gymnasticon-wifi.env` for Wi-Fi credentials.
 - `gymnasticon.json` for bike-specific Gymnasticon settings.
 
-The image copies these settings into the installed system during boot.
+## First Boot
+
+Expect **one automatic reboot** on the first boot of a freshly flashed image.
+`lockrootfs.service` enables the read-only overlay root and reboots once; the
+second boot comes up with the overlay active. If you need to keep the root
+filesystem writable, create an empty file named `no_read_only` on `bootfs`
+before the first boot (both `/boot/no_read_only` and `/boot/firmware/no_read_only`
+are honoured) and the overlay is skipped.
+
+`bootfs` itself stays writable and is re-read on **every** boot:
+
+- `gymnasticon-wifi-setup.service` applies `gymnasticon-wifi.env` each boot, so
+  editing the SSID or passphrase on the card is enough to change networks.
+- `gymnasticon-mods.service` copies `gymnasticon.json` to
+  `/etc/gymnasticon.json` each boot when the file exists. That means the copy on
+  `bootfs` is the source of truth: editing `/etc/gymnasticon.json` on the running
+  Pi is overwritten at the next boot while `bootfs/gymnasticon.json` is present.
+  Remove the file from `bootfs` if you prefer to manage `/etc/gymnasticon.json`
+  on the running system, or keep editing it on the card.
+
+The service reads `/etc/gymnasticon.json`; the image's defaults live in
+`deploy/pi-sdcard/stage-gymnasticon/00-install-gymnasticon/files/gymnasticon.json`.
+Manual installs and upgrades do not overwrite an existing `/etc/gymnasticon.json`.
 
 On the appliance image, run standalone hardware commands with `sudo`. The
 installed systemd service supplies its Bluetooth capabilities automatically.

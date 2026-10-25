@@ -111,6 +111,7 @@ After pairing succeeds, keep in mind:
 
 - A short pause is normal: Gymnasticon reports zero while telemetry is stale and keeps the app or watch connected for `serverReconnectGrace` seconds (60 by default) while it rediscovers the bike. Pedal again to resume real values. If the console sleeps longer than `bikeDisconnectTimeout` (60 seconds by default), the output stops and returns once the bike is rediscovered.
 - Only one device can connect per advertising adapter; see the Bluetooth and ANT+ Behavior section in the README.
+- A USB Bluetooth adapter plugged in after boot is picked up automatically within about 15 seconds and becomes the advertising radio; no reboot is needed. Watch the log for `Bluetooth adapters changed`.
 
 ## Heart Rate Is Not Rebroadcast
 

@@ -42,7 +42,8 @@ Use this path for the fastest appliance-style setup.
 3. Flash the `.img.xz` with Raspberry Pi Imager, balenaEtcher, or `dd`.
 4. Open the FAT partition named `bootfs` (the only partition macOS normally shows). Copy `gymnasticon-wifi.env.example` to `gymnasticon-wifi.env`, then set `WIFI_COUNTRY`, `WIFI_SSID`, and `WIFI_PSK`.
 5. Optional: copy `gymnasticon.json` to the top level of `bootfs` to override the default bike profile.
-6. Boot the Pi, power on the bike, and pair your app with `GymnasticonV2`.
+6. Boot the Pi. The first boot of a fresh image reboots once on its own while it enables the read-only overlay; let it finish.
+7. Power on the bike, then pair your app with `GymnasticonV2`. The sensor stays available after you stop pedaling, so you can pause, leave and come back without re-pairing.
 
 Check the service:
 
@@ -207,6 +208,7 @@ Gymnasticon detects available Bluetooth adapters and assigns radio roles automat
 - Multi-output mode can mirror BLE advertising across multiple suitable adapters.
 - Each advertising adapter accepts one training app or watch connection at a time. To use two devices at once (for example a watch plus a phone), enable multi-output with two adapters; both advertise the same data and each can host one connection.
 - While a bike is connected, Gymnasticon resumes advertising automatically when the app or watch disconnects, so a watch can leave and reconnect without restarting the service.
+- Radio roles follow the hardware. A USB adapter that appears after boot (or after the app has started) becomes the advertising radio, and a failed advertising output is recreated while the ride continues, so plugging a dongle in later does not require a reboot.
 - A pause keeps the connection: after `bikeReceiveTimeout` seconds without telemetry the outputs report zero, and the app or watch stays connected for `serverReconnectGrace` seconds while Gymnasticon rediscovers the bike. The bike is only treated as lost after `bikeDisconnectTimeout` seconds without telemetry.
 - ANT+ uses a separate USB ANT+ stick and does not consume a Bluetooth adapter.
 

@@ -12,6 +12,14 @@
 - Advertising recovers during an ongoing ride: a stalled or reset output is retired and rebuilt by a background health check without disturbing healthy mirrors.
 - Power smoothing restarts at a stop and at teardown, so a returning rider sees real watts instead of the previous ride's average. IC8/C6 native FTMS values expire after 10 seconds of silence.
 - The Wi-Fi bootstrap helper reads credentials as literal text (spaces, `$`, `#`, quotes), the installer keeps an existing checkout and `/etc/gymnasticon.json` on re-runs, and overlayroot ships in modern images so first boot works offline.
+- Startup no longer waits for `network-online.target`, so a Pi with no Wi-Fi configured reaches "advertising" in seconds instead of minutes. The adapter reprobe is bounded and finishes before the app opens the radio.
+- Bluetooth radio roles follow the hardware: a USB adapter that enumerates after boot is promoted to the advertising radio, a vanished bike radio is replaced when nothing is riding, and advertising is rebuilt when a live output fails.
+- A stray unhandled promise rejection is logged instead of terminating the service, so an unexpected async failure no longer drops the watch and all sensors.
+- Concurrent advertising starts are serialized so a maintenance retry cannot open a second set of bindings for the same adapter.
+- Keiser's stats-timeout scan restart now goes through the shared scan owner instead of starting a second scan behind the coordinator's back.
+
+### Documentation
+- Document the expected single reboot on first boot, the `no_read_only` opt-out and that `bootfs` settings are re-applied on every boot, including how `gymnasticon.json` is copied over `/etc/gymnasticon.json`.
 
 ### Added
 - `bikeDisconnectTimeout` / `--bike-disconnect-timeout` and `serverReconnectGrace` / `--server-reconnect-grace` control how long a pause reports zero and how long a receiver stays connected during bike recovery.
